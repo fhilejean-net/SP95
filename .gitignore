@@ -5,3 +5,5 @@ dist/
 dev-server.log
 *.log
 .DS_Store
+.preview.pid
+preview.log
