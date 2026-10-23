@@ -1,0 +1,508 @@
+import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
+import './styles.css';
+import { Vehicle, type VehicleInput } from './physics/vehicle.ts';
+import { RACE_START, SPAWN, buildRaceCheckpoints } from './world/layout.ts';
+import { buildRaceGates, buildRoads, buildTerrain } from './world/terrain.ts';
+import { buildCity, syncProps } from './world/city.ts';
+import { createEnvironmentMaterials } from './render/materials.ts';
+import { createSky } from './render/sky.ts';
+import { createCar, updateCarVisual } from './render/car.ts';
+import { createPost } from './render/post.ts';
+import { ChaseCamera } from './core/camera.ts';
+import { InputManager } from './core/input.ts';
+import { Hud, type GameMode } from './game/hud.ts';
+import { DriftScore } from './game/drift.ts';
+import { Race } from './game/race.ts';
+import { CarAudio } from './game/audio.ts';
+
+const FIXED = 1 / 120;
+
+const canvas = document.getElementById('game') as HTMLCanvasElement;
+const loading = document.getElementById('loading') as HTMLDivElement;
+const loadingText = document.getElementById('loading-text') as HTMLParagraphElement;
+const loadingFill = document.getElementById('loading-fill') as HTMLSpanElement;
+const menu = document.getElementById('menu') as HTMLDivElement;
+const pause = document.getElementById('pause') as HTMLDivElement;
+const hudElement = document.getElementById('hud') as HTMLDivElement;
+const menuBest = document.getElementById('menu-best') as HTMLParagraphElement;
+
+function setLoading(progress: number, text: string): Promise<void> {
+  loadingFill.style.width = `${Math.round(progress * 100)}%`;
+  loadingText.textContent = text;
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function makeRenderer(lowFx: boolean): THREE.WebGLRenderer {
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    powerPreference: 'high-performance',
+    stencil: false,
+  });
+  const mobile = matchMedia('(pointer: coarse)').matches;
+  renderer.setPixelRatio(lowFx ? 0.7 : Math.min(window.devicePixelRatio, mobile ? 1.5 : 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = !lowFx;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.02;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // Debug telemetry should count every pass of the composer.
+  renderer.info.autoReset = false;
+  return renderer;
+}
+
+function forwardFromHeading(heading: number): THREE.Vector3 {
+  return new THREE.Vector3(-Math.sin(heading), 0, -Math.cos(heading));
+}
+
+function readBestLap(): number | null {
+  try {
+    const raw = localStorage.getItem('sp95.bestLap');
+    if (!raw) return null;
+    const value = Number.parseFloat(raw);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function refreshMenuBest(): void {
+  const best = readBestLap();
+  menuBest.textContent =
+    best === null ? 'Aucun temps enregistré — lance une course pour établir la référence.'
+      : `Meilleur tour : ${Race.formatTime(best)}`;
+}
+
+async function boot(): Promise<void> {
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  const lowFx = new URLSearchParams(window.location.search).get('fx') === 'low';
+  if (coarse) document.body.classList.add('touch');
+  hudElement.classList.add('hidden');
+  menu.classList.add('hidden');
+  pause.classList.add('hidden');
+
+  await setLoading(0.08, 'Initialisation du moteur…');
+  await RAPIER.init();
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.15, 3200);
+  const renderer = makeRenderer(lowFx);
+  const chase = new ChaseCamera(camera);
+
+  await setLoading(0.18, 'Ciel et éclairage…');
+  const sky = createSky(scene, renderer);
+  const materials = createEnvironmentMaterials();
+
+  await setLoading(0.3, 'Génération du terrain…');
+  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  world.timestep = FIXED;
+  const terrain = buildTerrain(scene, world, materials);
+
+  await setLoading(0.52, 'Tracé des routes…');
+  buildRoads(scene, materials);
+
+  await setLoading(0.68, 'Construction de la ville…');
+  const props = buildCity(scene, world, materials);
+
+  await setLoading(0.76, 'Installation du circuit…');
+  const checkpoints = buildRaceCheckpoints(12);
+  buildRaceGates(scene, materials, checkpoints);
+
+  await setLoading(0.84, 'Montage de la voiture…');
+  const spawnY = terrain.sample(SPAWN.x, SPAWN.z) + 1.0;
+  const vehicle = new Vehicle(world, {
+    x: SPAWN.x,
+    y: spawnY,
+    z: SPAWN.z,
+    heading: SPAWN.heading,
+  });
+  const car = createCar();
+  car.group.position.set(SPAWN.x, spawnY, SPAWN.z);
+  scene.add(car.group);
+
+  const input = new InputManager(canvas);
+  const hud = new Hud();
+  const audio = new CarAudio();
+  const drift = new DriftScore();
+  const post = lowFx ? null : createPost(renderer, scene, camera);
+  post?.composer.setPixelRatio(renderer.getPixelRatio());
+
+  let mode: GameMode = 'menu';
+  let paused = false;
+  let accumulator = 0;
+  let race: Race | null = null;
+  let menuTime = 0;
+  let lastSpeed = 0;
+  let lastCrashTime = -10;
+  let lastFrame = performance.now();
+  let fpsFrames = 0;
+  let fpsTime = 0;
+  let fps = 0;
+
+  const carPosition = new THREE.Vector3(SPAWN.x, spawnY, SPAWN.z);
+  const carForward = forwardFromHeading(SPAWN.heading);
+  const cameraGround = (x: number, z: number) => terrain.sample(x, z);
+
+  const updateMenuBest = () => refreshMenuBest();
+
+  function setCarPose(x: number, z: number, heading: number): void {
+    const ground = terrain.sample(x, z);
+    vehicle.respawn(x, ground + 0.9, z, heading);
+    // Let the springs settle so the car sits on its wheels immediately.
+    for (let i = 0; i < 45; i++) {
+      vehicle.step(FIXED, { throttle: 0, brake: 1, steer: 0, handbrake: true }, world);
+      world.step();
+    }
+    const p = vehicle.position;
+    carPosition.set(p.x, p.y, p.z);
+    carForward.copy(forwardFromHeading(heading));
+    chase.snap(carPosition, carForward, ground);
+    accumulator = 0;
+    lastSpeed = 0;
+  }
+
+  function spawnFree(): void {
+    setCarPose(SPAWN.x, SPAWN.z, SPAWN.heading);
+    drift.reset();
+    lastSpeed = 0;
+  }
+
+  function startMode(next: GameMode): void {
+    mode = next;
+    paused = false;
+    menu.classList.add('hidden');
+    pause.classList.add('hidden');
+    hudElement.classList.remove('hidden');
+    hud.setMode(next);
+    input.clear();
+    audio.init();
+    race = null;
+    hud.hideMessage();
+    hudElement.dataset.count = '';
+
+    if (next === 'race') {
+      race = new Race(checkpoints);
+      setCarPose(RACE_START.x, RACE_START.z, RACE_START.heading);
+      drift.reset();
+      lastSpeed = 0;
+      hud.flash('Prêt ?', { accent: true, duration: 900 });
+    } else {
+      spawnFree();
+      hud.flash('Conduite libre', { duration: 1100 });
+    }
+    updateMenuBest();
+  }
+
+  function togglePause(): void {
+    if (mode === 'menu') return;
+    paused = !paused;
+    pause.classList.toggle('hidden', !paused);
+    if (paused) {
+      input.clear();
+      audio.update({ rpm: 900, throttle: 0, speed: 0, slip: 0, gear: 1, grounded: true });
+    }
+  }
+
+  function respawn(): void {
+    if (mode === 'race' && race && race.phase === 'running') {
+      const pose = race.respawnPose();
+      setCarPose(pose.x, pose.z, pose.heading);
+    } else {
+      spawnFree();
+    }
+    hud.flash('Réapparition', { duration: 700 });
+  }
+
+  document.getElementById('btn-free')?.addEventListener('click', () => startMode('free'));
+  document.getElementById('btn-race')?.addEventListener('click', () => startMode('race'));
+  document.getElementById('btn-resume')?.addEventListener('click', () => togglePause());
+  document.getElementById('btn-pause-free')?.addEventListener('click', () => startMode('free'));
+  document.getElementById('btn-pause-race')?.addEventListener('click', () => startMode('race'));
+  document.getElementById('btn-pause-menu')?.addEventListener('click', () => {
+    mode = 'menu';
+    paused = false;
+    race = null;
+    pause.classList.add('hidden');
+    hudElement.classList.add('hidden');
+    menu.classList.remove('hidden');
+    hud.setMode('menu');
+    hud.hideMessage();
+    drift.reset();
+    setCarPose(SPAWN.x, SPAWN.z, SPAWN.heading);
+    updateMenuBest();
+  });
+
+  const unlockAudio = () => audio.init();
+  window.addEventListener('pointerdown', unlockAudio, { once: true });
+  window.addEventListener('keydown', unlockAudio, { once: true });
+
+  window.addEventListener('resize', () => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(width, height);
+    post?.composer.setSize(width, height);
+  });
+
+  refreshMenuBest();
+  setCarPose(SPAWN.x, SPAWN.z, SPAWN.heading);
+  await setLoading(1, 'Prêt');
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  loading.classList.add('done');
+  window.setTimeout(() => loading.classList.add('hidden'), 500);
+  menu.classList.remove('hidden');
+
+  function simulate(dt: number, controls: VehicleInput): void {
+    const locked = race ? race.locked : false;
+    // Handbrake only: holding the brake would engage reverse during the
+    // countdown. The vehicle's parking hold keeps the car still.
+    const carInput: VehicleInput = locked
+      ? { throttle: 0, brake: 0, steer: 0, handbrake: true }
+      : controls;
+
+    accumulator += dt;
+    let steps = 0;
+    while (accumulator >= FIXED && steps < 8) {
+      vehicle.step(FIXED, carInput, world);
+      world.step();
+      accumulator -= FIXED;
+      steps++;
+    }
+    if (steps >= 8) accumulator = 0;
+
+    const telemetry = vehicle.telemetryState;
+    const speed = telemetry.speed;
+    const crash = lastSpeed - speed > 4.2 && lastSpeed > 9 && performance.now() / 1000 - lastCrashTime > 0.4;
+    if (crash) {
+      lastCrashTime = performance.now() / 1000;
+      audio.impact(Math.min(1, (lastSpeed - speed) / 14));
+    }
+    lastSpeed = speed;
+
+    const driftEvent = drift.update(
+      dt,
+      telemetry.speed,
+      telemetry.slipAngle,
+      !telemetry.airborne,
+      crash,
+    );
+    if (driftEvent.banked > 0) {
+      hud.flash(`+${driftEvent.banked}`, { accent: true, duration: 950 });
+    } else if (driftEvent.lost) {
+      hud.flash('Dérapage perdu', { duration: 900 });
+    }
+
+    if (race) {
+      const carPos = vehicle.position;
+      const event = race.update(dt, new THREE.Vector3(carPos.x, carPos.y, carPos.z));
+      if (event === 'beep') audio.impact(0.12);
+      if (event === 'go') {
+        hud.flash('GO !', { accent: true, duration: 800 });
+      } else if (event === 'lap') {
+        hud.flash(`Tour ${race.lap} / ${race.totalLaps}`, { duration: 1200 });
+        updateMenuBest();
+      } else if (event === 'finish') {
+        hud.flash('Course terminée', { accent: true, duration: 2400 });
+        updateMenuBest();
+      } else if (race.phase === 'countdown') {
+        const count = Math.ceil(race.countdown);
+        hud.updateRace(race.snapshot());
+        if (count > 0 && count < 4) {
+          const label = String(count);
+          if (hudElement.dataset.count !== label) {
+            hudElement.dataset.count = label;
+            hud.flash(label, { duration: 700 });
+          }
+        }
+      }
+    }
+
+    if (vehicle.isFlipped) {
+      respawn();
+    }
+
+    audio.update({
+      rpm: telemetry.rpm,
+      throttle: controls.throttle,
+      speed: telemetry.speed,
+      slip: vehicle.rearSlipIntensity(),
+      gear: telemetry.gear,
+      grounded: !telemetry.airborne,
+    });
+  }
+
+  function updateVisuals(dt: number): void {
+    const telemetry = vehicle.telemetryState;
+    const state = vehicle.state;
+    carPosition.set(state.position.x, state.position.y, state.position.z);
+    carForward.set(0, 0, -1).applyQuaternion(
+      new THREE.Quaternion(state.rotation.x, state.rotation.y, state.rotation.z, state.rotation.w),
+    );
+
+    updateCarVisual(
+      car,
+      state.position,
+      state.rotation,
+      telemetry.wheels,
+      telemetry.brake > 0.1 && telemetry.speed > 0.5,
+      telemetry.gear === -1,
+    );
+
+    const lightPos = carPosition.clone().addScaledVector(sky.sunDirection, 260);
+    sky.sun.position.copy(lightPos);
+    sky.sun.target.position.copy(carPosition);
+    sky.sun.target.updateMatrixWorld();
+
+    syncProps(props);
+    if (mode === 'menu') {
+      menuTime += dt;
+      const radius = 10.5;
+      const angle = menuTime * 0.14 + 0.6;
+      const ground = terrain.sample(SPAWN.x, SPAWN.z);
+      camera.position.set(
+        SPAWN.x + Math.cos(angle) * radius,
+        ground + 3.4 + Math.sin(menuTime * 0.25) * 0.35,
+        SPAWN.z + Math.sin(angle) * radius,
+      );
+      camera.lookAt(SPAWN.x, ground + 0.55, SPAWN.z);
+      camera.fov += (52 - camera.fov) * Math.min(1, dt * 2);
+      camera.updateProjectionMatrix();
+    } else {
+      chase.update(
+        dt,
+        carPosition,
+        carForward,
+        telemetry.speed,
+        input.orbitYaw,
+        input.orbitPitch,
+        input.zoom,
+        cameraGround,
+      );
+    }
+
+    hud.updateSpeed(telemetry.speedKmh, telemetry.gear, telemetry.rpm / 7300);
+    hud.updateDrift(drift.pending, drift.total, drift.multiplier, drift.active);
+
+    if (mode === 'race' && race) {
+      hud.updateRace(race.snapshot(carPosition));
+    }
+
+    if (mode !== 'menu') {
+      const next = race ? checkpoints[race.next] : null;
+      const yaw = Math.atan2(-carForward.x, -carForward.z);
+      hud.drawMinimap(carPosition.x, carPosition.z, yaw, next);
+    }
+  }
+
+  function render(): void {
+    renderer.info.reset();
+    if (post) post.composer.render();
+    else renderer.render(scene, camera);
+  }
+
+  function frame(now: number): void {
+    requestAnimationFrame(frame);
+    const rawDt = Math.max(0.0001, (now - lastFrame) / 1000);
+    const dt = Math.min(0.05, rawDt);
+    lastFrame = now;
+
+    fpsFrames++;
+    fpsTime += rawDt;
+    if (fpsTime > 0.5) {
+      fps = Math.round(fpsFrames / fpsTime);
+      fpsFrames = 0;
+      fpsTime = 0;
+    }
+
+    const controls = input.update(dt);
+
+    if (input.consume('pause')) togglePause();
+    if (input.consume('mute')) audio.setMuted(!audio.isMuted);
+    if (mode !== 'menu' && !paused && input.consume('reset')) {
+      respawn();
+    }
+
+    if (mode !== 'menu' && !paused) {
+      simulate(dt, controls);
+    }
+    updateVisuals(dt);
+    render();
+  }
+
+  requestAnimationFrame((now) => {
+    lastFrame = now;
+    requestAnimationFrame(frame);
+  });
+
+  window.__sp95 = {
+    ready: true,
+    get mode() {
+      return mode;
+    },
+    get paused() {
+      return paused;
+    },
+    get speedKmh() {
+      return vehicle.telemetryState.speedKmh;
+    },
+    get gear() {
+      return vehicle.telemetryState.gear;
+    },
+    get rpm() {
+      return vehicle.telemetryState.rpm;
+    },
+    get driftTotal() {
+      return drift.total;
+    },
+    get racePhase() {
+      return race?.phase ?? null;
+    },
+    get raceLap() {
+      return race?.lap ?? 0;
+    },
+    get position() {
+      const p = vehicle.position;
+      return { x: p.x, y: p.y, z: p.z };
+    },
+    get debug() {
+      return {
+        fps,
+        drawCalls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        driftPending: drift.pending,
+      };
+    },
+    startFree: () => startMode('free'),
+    startRace: () => startMode('race'),
+  };
+}
+
+declare global {
+  interface Window {
+    __sp95?: {
+      ready: boolean;
+      readonly mode: GameMode;
+      readonly paused: boolean;
+      readonly speedKmh: number;
+      readonly gear: number;
+      readonly rpm: number;
+      readonly driftTotal: number;
+      readonly racePhase: string | null;
+      readonly raceLap: number;
+      readonly position: { x: number; y: number; z: number };
+      readonly debug: { fps: number; drawCalls: number; triangles: number; driftPending: number };
+      startFree: () => void;
+      startRace: () => void;
+    };
+  }
+}
+
+boot().catch((error) => {
+  console.error(error);
+  loadingText.textContent = `Impossible de démarrer le jeu : ${(error as Error).message}`;
+  loadingFill.style.background = '#d8342c';
+});
+

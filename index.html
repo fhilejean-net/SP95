@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0b0d10" />
+    <meta
+      name="description"
+      content="SP95 — jeu de conduite dans le navigateur : conduite libre, drift et course, avec une physique de pneus réaliste."
+    />
+    <title>SP95 — Conduite libre, drift & course</title>
+  </head>
+  <body>
+    <canvas id="game" aria-label="Vue 3D du jeu de conduite"></canvas>
+
+    <div id="loading">
+      <div class="loading-inner">
+        <div class="brand-mark">SP95</div>
+        <div class="loading-bar"><span id="loading-fill"></span></div>
+        <p id="loading-text">Démarrage du moteur…</p>
+      </div>
+    </div>
+
+    <div id="menu" class="overlay">
+      <div class="menu-card">
+        <p class="eyebrow">Simulation de conduite</p>
+        <h1 class="logo">SP95</h1>
+        <p class="tagline">Propulsion · 420 Nm · 6 rapports · routes ouvertes</p>
+        <div class="menu-actions">
+          <button id="btn-free" class="primary">Conduite libre</button>
+          <button id="btn-race">Course · 2 tours</button>
+        </div>
+        <p class="menu-best" id="menu-best"></p>
+        <div class="controls-grid">
+          <span>ZQSD / Flèches</span><span>Conduire</span>
+          <span>Espace</span><span>Frein à main</span>
+          <span>Souris (glisser)</span><span>Caméra</span>
+          <span>R</span><span>Réapparaître</span>
+          <span>M</span><span>Couper le son</span>
+          <span>Échap</span><span>Pause</span>
+        </div>
+        <p class="menu-footnote">Manette et commandes tactiles prises en charge.</p>
+      </div>
+    </div>
+
+    <div id="hud" class="hidden">
+      <div id="hud-top">
+        <div id="mode-badge">Conduite libre</div>
+        <div id="race-panel" class="hidden">
+          <div class="race-row"><span class="label">Tour</span><span id="race-lap">1 / 2</span></div>
+          <div class="race-row"><span class="label">Temps</span><span id="race-time">0:00.00</span></div>
+          <div class="race-row"><span class="label">Meilleur</span><span id="race-best">—</span></div>
+        </div>
+        <div id="drift-total-wrap">
+          <span class="label">Score drift</span>
+          <span id="drift-total">0</span>
+        </div>
+      </div>
+
+      <div id="drift-panel">
+        <div class="drift-main">
+          <span id="drift-points">0</span>
+          <span id="drift-mult">×1</span>
+        </div>
+        <div id="drift-label">DÉRAPAGE</div>
+      </div>
+
+      <div id="speedo">
+        <div class="speed-row">
+          <span id="speed-value">0</span>
+          <span id="speed-unit">km/h</span>
+        </div>
+        <div class="speed-meta">
+          <span id="gear">1</span>
+          <div id="rpm-bar"><span id="rpm-fill"></span></div>
+        </div>
+      </div>
+
+      <canvas id="minimap" width="190" height="190"></canvas>
+
+      <div id="message"></div>
+      <div id="hint">ZQSD conduire · Espace frein à main · Souris caméra · Échap menu</div>
+
+      <div id="touch-controls">
+        <div id="touch-steer"><div id="touch-steer-knob"></div></div>
+        <div id="touch-pedals">
+          <div id="touch-brake" class="touch-btn">FREIN</div>
+          <div id="touch-throttle" class="touch-btn">GAZ</div>
+        </div>
+        <div id="touch-handbrake" class="touch-btn">DRIFT</div>
+      </div>
+    </div>
+
+    <div id="pause" class="overlay hidden">
+      <div class="menu-card compact">
+        <p class="eyebrow">Pause</p>
+        <h2 class="logo small">SP95</h2>
+        <div class="menu-actions">
+          <button id="btn-resume" class="primary">Reprendre</button>
+          <button id="btn-pause-free">Conduite libre</button>
+          <button id="btn-pause-race">Course · 2 tours</button>
+          <button id="btn-pause-menu">Menu principal</button>
+        </div>
+        <p class="menu-footnote">Échap pour reprendre.</p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

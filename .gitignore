@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.browser-libs/
+.dev.pid
+dev-server.log
+*.log
+.DS_Store

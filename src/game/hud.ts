@@ -1,0 +1,196 @@
+import { DRIFT_PAD, RACE_START, SAMPLED_ROADS } from '../world/layout.ts';
+import { Race, type RaceSnapshot } from './race.ts';
+
+export type GameMode = 'menu' | 'free' | 'race';
+
+function el<T extends HTMLElement>(id: string): T {
+  const node = document.getElementById(id);
+  if (!node) throw new Error(`Missing HUD element #${id}`);
+  return node as T;
+}
+
+export class Hud {
+  private modeBadge = el('mode-badge');
+  private racePanel = el('race-panel');
+  private raceLap = el('race-lap');
+  private raceTime = el('race-time');
+  private raceBest = el('race-best');
+  private driftTotal = el('drift-total');
+  private driftPanel = el('drift-panel');
+  private driftPoints = el('drift-points');
+  private driftMult = el('drift-mult');
+  private speedValue = el('speed-value');
+  private gearValue = el('gear');
+  private rpmFill = el('rpm-fill');
+  private message = el('message');
+  private minimap = el<HTMLCanvasElement>('minimap');
+  private minimapBase: HTMLCanvasElement;
+  private messageTimer = 0;
+  private messageSeq = 0;
+  private mapScale = 1;
+  private mapCenter = 0;
+  private lastSpeed = -1;
+  private lastGear = -99;
+
+  constructor() {
+    this.minimapBase = document.createElement('canvas');
+    this.minimapBase.width = this.minimap.width;
+    this.minimapBase.height = this.minimap.height;
+    this.mapCenter = this.minimap.width / 2;
+    this.mapScale = (this.minimap.width - 18) / 1080;
+    this.drawMinimapBase();
+  }
+
+  private drawMinimapBase(): void {
+    const ctx = this.minimapBase.getContext('2d');
+    if (!ctx) return;
+    const cx = this.mapCenter;
+    const cy = this.mapCenter;
+    const s = this.mapScale;
+    ctx.clearRect(0, 0, this.minimapBase.width, this.minimapBase.height);
+
+    for (const road of SAMPLED_ROADS) {
+      if (road.def.id === 'ring') continue;
+      ctx.beginPath();
+      for (let i = 0; i < road.points.length; i++) {
+        const p = road.points[i];
+        const x = cx + p.x * s;
+        const y = cy + p.z * s;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = road.def.kind === 'city' ? 'rgba(150,160,172,0.5)' : 'rgba(170,180,192,0.6)';
+      ctx.lineWidth = road.def.kind === 'city' ? 1.6 : 2.4;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+
+    const ring = SAMPLED_ROADS.find((r) => r.def.id === 'ring');
+    if (ring) {
+      ctx.beginPath();
+      for (let i = 0; i <= ring.points.length; i++) {
+        const p = ring.points[i % ring.points.length];
+        const x = cx + p.x * s;
+        const y = cy + p.z * s;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(242,163,60,0.8)';
+      ctx.lineWidth = 3.2;
+      ctx.stroke();
+    }
+
+    // Drift pad.
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(
+      cx + (DRIFT_PAD.cx - DRIFT_PAD.halfX) * s,
+      cy + (DRIFT_PAD.cz - DRIFT_PAD.halfZ) * s,
+      DRIFT_PAD.halfX * 2 * s,
+      DRIFT_PAD.halfZ * 2 * s,
+    );
+
+    // Start line tick.
+    ctx.fillStyle = '#f6f2e7';
+    ctx.fillRect(cx + RACE_START.x * s - 1.5, cy + RACE_START.z * s - 1.5, 3, 3);
+  }
+
+  setMode(mode: GameMode): void {
+    this.racePanel.classList.toggle('hidden', mode !== 'race');
+    this.modeBadge.textContent =
+      mode === 'race' ? 'Course · 2 tours' : mode === 'free' ? 'Conduite libre' : 'SP95';
+  }
+
+  updateSpeed(kmh: number, gear: number, rpmRatio: number): void {
+    const rounded = Math.round(kmh);
+    if (rounded !== this.lastSpeed) {
+      this.speedValue.textContent = String(rounded);
+      this.lastSpeed = rounded;
+    }
+    if (gear !== this.lastGear) {
+      this.gearValue.textContent = gear === -1 ? 'R' : gear === 0 ? 'N' : String(gear);
+      this.lastGear = gear;
+    }
+    const fill = Math.max(2, Math.min(100, rpmRatio * 100));
+    this.rpmFill.style.width = `${fill}%`;
+  }
+
+  updateDrift(pending: number, total: number, multiplier: number, active: boolean): void {
+    this.driftTotal.textContent = String(Math.round(total));
+    this.driftPanel.classList.toggle('active', active || pending > 10);
+    this.driftPoints.textContent = String(Math.round(pending));
+    this.driftMult.textContent = `×${multiplier}`;
+  }
+
+  updateRace(snapshot: RaceSnapshot | null): void {
+    if (!snapshot) return;
+    this.raceLap.textContent = `${Math.min(snapshot.lap, snapshot.totalLaps)} / ${snapshot.totalLaps}`;
+    this.raceTime.textContent = Race.formatTime(snapshot.lapTime);
+    this.raceBest.textContent = Race.formatTime(snapshot.bestLap);
+  }
+
+  drawMinimap(
+    x: number,
+    z: number,
+    yaw: number,
+    nextCheckpoint: { x: number; z: number } | null,
+  ): void {
+    const ctx = this.minimap.getContext('2d');
+    if (!ctx) return;
+    const cx = this.mapCenter;
+    const cy = this.mapCenter;
+    const s = this.mapScale;
+    ctx.clearRect(0, 0, this.minimap.width, this.minimap.height);
+    ctx.drawImage(this.minimapBase, 0, 0);
+
+    if (nextCheckpoint) {
+      const px = cx + nextCheckpoint.x * s;
+      const py = cy + nextCheckpoint.z * s;
+      const pulse = 3.5 + Math.sin(performance.now() / 220) * 1.2;
+      ctx.beginPath();
+      ctx.arc(px, py, pulse + 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(242,163,60,0.22)';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(px, py, pulse, 0, Math.PI * 2);
+      ctx.fillStyle = '#f2a33c';
+      ctx.fill();
+    }
+
+    ctx.save();
+    ctx.translate(cx + x * s, cy + z * s);
+    ctx.rotate(-yaw);
+    ctx.beginPath();
+    ctx.moveTo(0, -6);
+    ctx.lineTo(4.4, 5);
+    ctx.lineTo(0, 2.6);
+    ctx.lineTo(-4.4, 5);
+    ctx.closePath();
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = '#111418';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  flash(text: string, options: { accent?: boolean; duration?: number } = {}): void {
+    this.message.textContent = text;
+    this.message.classList.toggle('accent', options.accent ?? false);
+    this.message.classList.add('show');
+    this.messageTimer = options.duration ?? 1400;
+    const seq = ++this.messageSeq;
+    window.setTimeout(() => {
+      if (this.messageSeq === seq) {
+        this.message.classList.remove('show');
+        this.messageTimer = 0;
+      }
+    }, this.messageTimer);
+  }
+
+  hideMessage(): void {
+    this.messageTimer = 0;
+    this.messageSeq++;
+    this.message.classList.remove('show');
+  }
+}
