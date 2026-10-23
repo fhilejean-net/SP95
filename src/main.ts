@@ -41,7 +41,7 @@ function makeRenderer(lowFx: boolean): THREE.WebGLRenderer {
     stencil: false,
   });
   const mobile = matchMedia('(pointer: coarse)').matches;
-  renderer.setPixelRatio(lowFx ? 0.7 : Math.min(window.devicePixelRatio, mobile ? 1.5 : 2));
+  renderer.setPixelRatio(lowFx ? 0.7 : Math.min(window.devicePixelRatio, mobile ? 1.35 : 1.6));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = !lowFx;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -320,7 +320,7 @@ async function boot(): Promise<void> {
       }
     }
 
-    if (vehicle.isFlipped) {
+    if (vehicle.isFlipped || vehicle.position.y < -25) {
       respawn();
     }
 
