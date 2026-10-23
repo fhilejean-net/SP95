@@ -61,9 +61,13 @@ try {
   await page.waitForTimeout(700);
 
   await page.keyboard.press('Escape');
-  const pausedVisible = await page.evaluate(() => !document.getElementById('pause').classList.contains('hidden'));
+  const paused = await waitFor(() => window.__sp95.paused === true, 8000);
+  const overlayVisible = await page.evaluate(
+    () => !document.getElementById('pause').classList.contains('hidden'),
+  );
   await page.keyboard.press('Escape');
-  check('pause overlay opens and closes', pausedVisible);
+  const resumed = await waitFor(() => window.__sp95.paused === false, 8000);
+  check('pause overlay opens and closes', Boolean(paused) && overlayVisible && Boolean(resumed));
 
   await page.keyboard.down('KeyW');
   const accelerated = await waitFor(() => window.__sp95.speedKmh > 35);

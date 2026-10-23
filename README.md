@@ -94,6 +94,8 @@ Le workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) const
 
 Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite sur `/SP95/`. Sans Pages activé, le workflow de déploiement échouera à l'étape `configure-pages` (le build et les tests passent quand même).
 
+> **Dépôt privé :** GitHub Pages n'est pas disponible sur l'offre gratuite pour un dépôt privé. Pour publier sans changer d'offre, rendre le dépôt public (**Settings → General → Danger zone → Change visibility**), puis **Settings → Pages → Source : GitHub Actions** et relancer le workflow.
+
 ## Limites connues
 
 - **Pas de photoréalisme** : la voiture est un coupé procédural, les immeubles sont des volumes texturés. Un rendu photoréaliste demanderait des modèles 3D sur mesure, hors de portée de ce dépôt.
