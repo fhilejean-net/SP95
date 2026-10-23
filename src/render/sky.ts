@@ -11,12 +11,14 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer): Sk
   const sky = new Sky();
   sky.scale.setScalar(8000);
   const uniforms = sky.material.uniforms;
-  uniforms.turbidity.value = 4.2;
-  uniforms.rayleigh.value = 1.35;
-  uniforms.mieCoefficient.value = 0.0045;
-  uniforms.mieDirectionalG.value = 0.82;
+  uniforms.turbidity.value = 3.4;
+  uniforms.rayleigh.value = 1.5;
+  // A strong Mie term balloons the sun into a white blob that washes out the
+  // whole frame once tone mapping lifts it.
+  uniforms.mieCoefficient.value = 0.0022;
+  uniforms.mieDirectionalG.value = 0.76;
 
-  const elevation = 24;
+  const elevation = 32;
   const azimuth = 132;
   const sunDirection = new THREE.Vector3().setFromSphericalCoords(
     1,
@@ -42,10 +44,10 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer): Sk
   envScene.add(envSky);
   const envTexture = pmrem.fromScene(envScene, 0, 1, 12000).texture;
   scene.environment = envTexture;
-  scene.environmentIntensity = 0.85;
+  scene.environmentIntensity = 0.55;
   pmrem.dispose();
 
-  const sun = new THREE.DirectionalLight(0xfff1dc, 3.4);
+  const sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
   sun.position.copy(sunDirection).multiplyScalar(400);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -60,9 +62,12 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer): Sk
   scene.add(sun);
   scene.add(sun.target);
 
-  const hemi = new THREE.HemisphereLight(0xcfe2ff, 0x6e6650, 0.55);
+  const hemi = new THREE.HemisphereLight(0xcfe2ff, 0x6e6650, 0.35);
   scene.add(hemi);
 
+  // A solid colour behind everything: if any frame ever fails to draw the sky
+  // dome, the player sees haze instead of a black flash.
+  scene.background = new THREE.Color(0xb9cfdd);
   scene.fog = new THREE.Fog(0xc4d6e2, 380, 1750);
 
   return { sun, sunDirection, sky };

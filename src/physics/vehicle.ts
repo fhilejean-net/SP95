@@ -93,12 +93,19 @@ export interface VehicleState {
 }
 
 const WHEEL_RADIUS = 0.34;
-const REST_LENGTH = 0.4;
-const MAX_LENGTH = 0.56;
-const BUMP_STOP = 0.185;
+// 46 cm of free length leaves roughly 10 cm of static compression (7 cm of
+// droop, 24 cm of bump travel) and puts the chassis 18 cm off the road.
+const REST_LENGTH = 0.46;
+const MAX_LENGTH = 0.6;
+const MIN_LENGTH = 0.1;
+const BUMP_STOP = 0.245;
 const SPRING_K = 34000;
-const SPRING_C = 3000;
-const BUMP_K = 220000;
+const SPRING_C = 3800;
+/** First-stage bump stop: firm, but it lets the body settle instead of jamming. */
+const BUMP_K = 90000;
+/** Second stage, only reached in a real impact. */
+const BUMP_K_HARD = 1_600_000;
+const MAX_SPRING_FORCE = 45000;
 const ARB_FRONT = 14000;
 const ARB_REAR = 9000;
 const WHEEL_INERTIA = 1.6;
@@ -250,10 +257,14 @@ export class Vehicle {
     const speed = length(velocity);
 
     // --- Steering -----------------------------------------------------------
-    const speedFactor = 1 / (1 + Math.abs(vLong) * 0.052);
+    const speedFactor = 1 / (1 + Math.abs(vLong) * 0.1);
     const maxSteer = 0.6 * speedFactor;
     const target = clamp(input.steer, -1, 1) * maxSteer;
-    const rate = Math.abs(target) > Math.abs(this.steerAngle) ? 3.4 : 7.5;
+    // A rack takes time to travel, and it is slower the faster you go. Without
+    // this, a flick of the stick applies full lock in three frames and pitches
+    // the car straight into a spin.
+    const steerRate = 2.8 / (1 + Math.abs(vLong) * 0.055);
+    const rate = Math.abs(target) > Math.abs(this.steerAngle) ? steerRate : 7.5;
     this.steerAngle += clamp(target - this.steerAngle, -rate * dt, rate * dt);
 
     // --- Drivetrain ---------------------------------------------------------
@@ -311,7 +322,7 @@ export class Vehicle {
       wheel.contactPoint = contactPoint;
       wheel.contactNormal = normal;
 
-      const suspensionLength = clamp(hit.timeOfImpact - wheel.radius, 0.06, MAX_LENGTH);
+      const suspensionLength = clamp(hit.timeOfImpact - wheel.radius, MIN_LENGTH, MAX_LENGTH);
       wheel.suspensionLength = suspensionLength;
       const compression = REST_LENGTH - suspensionLength;
       wheel.compression = compression;
@@ -322,9 +333,10 @@ export class Vehicle {
 
       let springForce = SPRING_K * compression + SPRING_C * -vAlongUp;
       if (compression > BUMP_STOP) {
-        springForce += BUMP_K * (compression - BUMP_STOP);
+        const over = compression - BUMP_STOP;
+        springForce += BUMP_K * over + BUMP_K_HARD * over * over;
       }
-      springForce = clamp(springForce, 0, 26000);
+      springForce = clamp(springForce, 0, MAX_SPRING_FORCE);
 
       // Wheel frame, steered around the body's up axis.
       const wheelForward = rotateAxis(forward, up, wheel.steer);
@@ -357,7 +369,7 @@ export class Vehicle {
         // a road-going sports car does. The handbrake bypasses it on purpose.
         const absFactor =
           serviceBrake > 0.15 && Math.abs(kappa) > 0.14 && Math.abs(cvLong) > 2 ? 0.3 : 1;
-        const brakeTorque = serviceBrake * 1250 * absFactor + (input.handbrake ? 5000 : 0);
+        const brakeTorque = serviceBrake * 1250 * absFactor + (input.handbrake ? 2200 : 0);
         this.integrateWheelSpin(
           wheel,
           dt,
@@ -435,10 +447,12 @@ export class Vehicle {
 
     // --- Parking hold -------------------------------------------------------
     // Tire forces are noisy at ~0 m/s; without this the car slowly creeps
-    // while parked. A real car in gear would either creep forward or stall.
-    if (input.throttle < 0.03 && speed < 0.45) {
-      this.body.setLinvel({ x: 0, y: linvel.y, z: 0 }, true);
-      this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    // while parked. Only the horizontal velocity is cancelled: the vertical
+    // one carries the suspension, so it must be read *after* the impulses were
+    // applied (using the stale value here would pin the body on its bump stops).
+    if (input.throttle < 0.03 && speed < 0.45 && airborneCount < 4) {
+      const current = this.body.linvel();
+      this.body.setLinvel({ x: 0, y: current.y, z: 0 }, true);
     }
 
     // --- Upside-down recovery ----------------------------------------------
@@ -493,16 +507,19 @@ export class Vehicle {
     const left = this.wheels[leftIndex];
     const right = this.wheels[rightIndex];
     if (!left.contact || !right.contact) return;
+    // A stiffer spring on the compressed side, a softer one on the drooping
+    // side: the bar must *resist* the roll, so the compressed corner gets
+    // pushed back up and the unloaded corner is pulled down.
     const diff = left.compression - right.compression;
     const force = clamp(stiffness * diff, -9000, 9000);
     const upLeft = left.contactNormal;
     const upRight = right.contactNormal;
     impulses.push({
-      impulse: { x: -upLeft.x * force * dt, y: -upLeft.y * force * dt, z: -upLeft.z * force * dt },
+      impulse: { x: upLeft.x * force * dt, y: upLeft.y * force * dt, z: upLeft.z * force * dt },
       point: left.contactPoint,
     });
     impulses.push({
-      impulse: { x: upRight.x * force * dt, y: upRight.y * force * dt, z: upRight.z * force * dt },
+      impulse: { x: -upRight.x * force * dt, y: -upRight.y * force * dt, z: -upRight.z * force * dt },
       point: right.contactPoint,
     });
   }

@@ -101,7 +101,7 @@ test('rear-wheel-drive car accelerates, tracks straight and stops', async () => 
     assert.ok(Number.isFinite(car.position.x), 'car position went NaN');
   }
 
-  assert.ok(timeTo100 > 3 && timeTo100 < 9, `0-100 km/h in ${timeTo100.toFixed(2)}s`);
+  assert.ok(timeTo100 > 4.2 && timeTo100 < 6.2, `0-100 km/h in ${timeTo100.toFixed(2)}s`);
   assert.ok(topSpeed > 200 && topSpeed < 330, `top speed ${topSpeed.toFixed(0)} km/h`);
   assert.ok(Math.abs(car.position.x) < 4, `car drifted ${car.position.x.toFixed(2)}m sideways`);
   assert.ok(car.telemetryState.rpm > 1000, 'engine should be turning');
@@ -138,6 +138,69 @@ test('handbrake initiates a controllable drift', async () => {
     Math.abs(car.telemetryState.driftAngleDeg) < 25,
     `drift did not recover (${car.telemetryState.driftAngleDeg.toFixed(1)}°)`,
   );
+});
+
+test('suspension carries the car at rest instead of sitting on its bump stops', async () => {
+  const world = await makeWorld();
+  const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 });
+  simulate(world, car, 3, NEUTRAL_INPUT);
+  const wheels = car.telemetryState.wheels;
+  const totalLoad = wheels.reduce((sum, w) => sum + w.load, 0);
+  const weight = 1350 * 9.81;
+
+  assert.ok(
+    Math.abs(totalLoad - weight) < weight * 0.12,
+    `springs carry ${(totalLoad / 1000).toFixed(1)} kN for a ${(weight / 1000).toFixed(1)} kN car`,
+  );
+  for (const w of wheels) {
+    assert.ok(w.contact, `${w.name} lost contact while parked`);
+    assert.ok(
+      w.suspensionLength > 0.25 && w.suspensionLength < 0.42,
+      `${w.name} rests at ${w.suspensionLength.toFixed(3)}m of travel`,
+    );
+  }
+  assert.ok(car.position.y > 0.5, `chassis sits ${car.position.y.toFixed(2)}m high, dragging on the road`);
+});
+
+test('suspension absorbs a curb and settles back on its springs', async () => {
+  const world = await makeWorld();
+  // 12 cm kerb across the road, 3 m wide.
+  const kerb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.94, -20));
+  world.createCollider(RAPIER.ColliderDesc.cuboid(4, 0.06, 1.5).setFriction(1), kerb);
+  const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 });
+  simulate(world, car, 1.2, NEUTRAL_INPUT);
+  simulate(world, car, 2.6, { throttle: 0.5, brake: 0, steer: 0, handbrake: false });
+  simulate(world, car, 2.5, NEUTRAL_INPUT);
+
+  const wheels = car.telemetryState.wheels;
+  assert.ok(car.position.y > 0.45, `chassis sank to ${car.position.y.toFixed(2)}m after the kerb`);
+  for (const w of wheels) {
+    assert.ok(w.contact, `${w.name} stayed off the ground after the kerb`);
+    assert.ok(
+      w.suspensionLength > 0.2,
+      `${w.name} is stuck at ${w.suspensionLength.toFixed(3)}m of travel`,
+    );
+  }
+});
+
+test('full lock at motorway speed does not spin the car', async () => {
+  const world = await makeWorld();
+  const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 });
+  simulate(world, car, 1, NEUTRAL_INPUT);
+  let guard = 0;
+  while (car.telemetryState.speed < 50 && guard < 120 * 40) {
+    simulate(world, car, 0.1, { throttle: 1, brake: 0, steer: 0, handbrake: false });
+    guard += 12;
+    assert.ok(Number.isFinite(car.position.x), 'car position went NaN while accelerating');
+  }
+  assert.ok(car.telemetryState.speedKmh > 170, `only reached ${car.telemetryState.speedKmh.toFixed(0)} km/h`);
+
+  let maxDrift = 0;
+  simulate(world, car, 1.6, { throttle: 0.4, brake: 0, steer: 1, handbrake: false }, () => {
+    maxDrift = Math.max(maxDrift, Math.abs(car.telemetryState.driftAngleDeg));
+  });
+  assert.ok(maxDrift < 22, `steering at 180 km/h reached a ${maxDrift.toFixed(0)}° slide`);
+  assert.ok(Number.isFinite(car.position.x), 'car position went NaN in the corner');
 });
 
 test('car rests without jitter or creeping', async () => {

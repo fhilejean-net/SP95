@@ -44,9 +44,10 @@ La boîte est automatique 6 rapports + marche arrière : maintenir le frein à l
 - [Vite](https://vite.dev/) + TypeScript, [Three.js](https://threejs.org/) 0.186 pour le rendu, [Rapier](https://rapier.rs/) 0.21 (WASM) comme solveur de corps rigides.
 - Simulation physique à **pas fixe de 120 Hz**, rendu découplé.
 - **Modèle de pneus** : formule magique de Pacejka simplifiée, angle de dérive et taux de glissement combinés dans une ellipse de friction, sensibilité à la charge. Les forces sont appliquées au point de contact.
-- **Châssis** : masse 1 350 kg, centre de gravité bas, 4 roues rayon-castées, ressorts/amortisseurs, butées de compression, barres anti-roulis avant/arrière, appui et traînée aérodynamiques, résistance au roulement.
+- **Châssis** : masse 1 350 kg, centre de gravité bas, 4 roues rayon-castées, ressorts/amortisseurs (46 cm de débattement, ~10 cm de compression statique), butées de compression progressives, barres anti-roulis avant/arrière, appui et traînée aérodynamiques, résistance au roulement.
+- **Direction** : démultiplication variable — la limite de braquage et la vitesse de la crémaillère baissent avec la vitesse, comme sur une vraie voiture, pour éviter le tête-à-queue au moindre coup de volant sur autoroute.
 - **Transmission** : courbe de couple, embrayage progressif au démarrage, boîte auto, frein moteur, autobloquant simulé par répartition égale, ABS arrière, frein à main qui verrouille l'essieu arrière (le drift vient de la perte d'adhérence latérale, pas d'une animation).
-- **Rendu** : ciel de Preetham + carte d'environnement PMREM, matériaux PBR (peinture vernie), ombres dynamiques qui suivent la voiture, brouillard de distance, bloom, SMAA, tone mapping ACES.
+- **Rendu** : ciel de Preetham + carte d'environnement PMREM, matériaux PBR (peinture vernie), ombres dynamiques qui suivent la voiture, brouillard de distance, MSAA du canvas, tone mapping ACES. Rendu direct à la canvas (pas de chaîne de post-traitement) : c'était la source de surcoût GPU et de frames noires. Le pixel ratio est plafonné à 1,25 et une régulation automatique baisse la résolution puis les ombres si la machine tient moins de 48 fps.
 - **Assets** : tous les modèles (carrosserie, roues, bâtiments, arbres, cônes), textures et sons sont générés par code au chargement. Les seules dépendances sont les bibliothèques ci-dessus.
 - **Déterminisme** : la carte est générée avec une graine fixe ; elle est identique à chaque partie.
 
@@ -57,7 +58,7 @@ src/
   main.ts              boucle de jeu, modes, caméra, audio, HUD
   physics/             pneus, transmission, véhicule Rapier
   world/               tracé des routes, terrain, ville, props
-  render/              voiture, matériaux, ciel, post-traitement
+  render/              voiture, matériaux, ciel, régulation de qualité
   core/                entrées clavier/manette/tactile, caméra
   game/                drift, course, HUD, audio
 tests/                 physique et logique de jeu (Node)
@@ -71,7 +72,7 @@ npm ci
 npm run dev        # serveur de dev
 npm run build      # typecheck + build de production dans dist/
 npm run preview    # sert le build
-npm test           # 13 tests Node : pneus, boîte, véhicule complet, drift, course
+npm test           # 16 tests Node : pneus, boîte, véhicule complet, suspension, drift, course
 ```
 
 Test navigateur (optionnel) :
@@ -100,7 +101,7 @@ Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite su
 - **Pas de photoréalisme** : la voiture est un coupé procédural, les immeubles sont des volumes texturés. Un rendu photoréaliste demanderait des modèles 3D sur mesure, hors de portée de ce dépôt.
 - Pas de dégâts, pas de choix de voiture, pas d'adversaires IA pour l'instant.
 - Le pad de drift et les routes sont des surfaces visuelles posées sur le terrain ; la physique roule sur le terrain (écart de 3 cm).
-- La caméra ne gère pas les collisions avec le bâti (elle peut traverser un mur).
+- Les performances dépendent du GPU : au-delà de 12 immeubles visibles simultanément, une carte intégrée peut descendre sous 60 fps (la régulation baisse alors la qualité toute seule).
 - Testé automatiquement (physique + fumée navigateur) ; l'appréciation visuelle et le ressenti au volant restent à valider sur une vraie machine.
 
 ## Crédits

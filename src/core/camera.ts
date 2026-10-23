@@ -1,11 +1,20 @@
 import * as THREE from 'three';
 
+/**
+ * Returns how much of the segment `from` -> `to` is free, in 0..1. Used to keep
+ * the chase camera out of walls: a camera inside a building renders the black
+ * inside of its box, which players read as the screen going black.
+ */
+export type ClearanceProbe = (from: THREE.Vector3, to: THREE.Vector3) => number;
+
 export class ChaseCamera {
   readonly camera: THREE.PerspectiveCamera;
   private current = new THREE.Vector3();
   private desired = new THREE.Vector3();
   private look = new THREE.Vector3();
   private lookTarget = new THREE.Vector3();
+  private pivot = new THREE.Vector3();
+  private offset = new THREE.Vector3();
   private initialized = false;
 
   constructor(camera: THREE.PerspectiveCamera) {
@@ -33,6 +42,7 @@ export class ChaseCamera {
     orbitPitch: number,
     zoom: number,
     terrainHeight: (x: number, z: number) => number,
+    clearance?: ClearanceProbe,
   ): void {
     if (!this.initialized) {
       this.snap(position, forward, terrainHeight(position.x, position.z));
@@ -52,6 +62,20 @@ export class ChaseCamera {
 
     const posAlpha = 1 - Math.exp(-dt * 7.5);
     this.current.lerp(this.desired, posAlpha);
+
+    // Pull the camera in front of whatever it would otherwise sit inside.
+    if (clearance) {
+      this.pivot.set(position.x, position.y + 1.15, position.z);
+      this.offset.copy(this.current).sub(this.pivot);
+      const wanted = this.offset.length();
+      if (wanted > 0.4) {
+        const free = clearance(this.pivot, this.current);
+        const allowed = Math.max(1.9, wanted * free);
+        if (allowed < wanted) {
+          this.current.copy(this.pivot).addScaledVector(this.offset, allowed / wanted);
+        }
+      }
+    }
 
     const lookAhead = 6 + Math.min(12, speed * 0.16);
     this.lookTarget.copy(position).addScaledVector(forward, lookAhead);

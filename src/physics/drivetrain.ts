@@ -20,20 +20,20 @@ export interface DrivetrainConfig {
 export const SPORT_DRIVETRAIN: DrivetrainConfig = {
   idleRpm: 900,
   redlineRpm: 7300,
-  upshiftRpm: 6700,
+  upshiftRpm: 6800,
   downshiftRpm: 2150,
   ratios: [3.62, 2.19, 1.6, 1.25, 1.03, 0.84],
   reverseRatio: 3.4,
   finalDrive: 3.55,
   efficiency: 0.9,
   peakTorque: 420,
-  peakTorqueRpm: 4300,
+  peakTorqueRpm: 3900,
 };
 
 /** Naturally aspirated style torque curve: broad mid-range, soft at redline. */
 export function torqueAtRpm(rpm: number, config: DrivetrainConfig = SPORT_DRIVETRAIN): number {
-  const x = (rpm - config.peakTorqueRpm) / 2900;
-  const curve = 1 - 0.48 * x * x;
+  const x = (rpm - config.peakTorqueRpm) / 3200;
+  const curve = 1 - 0.38 * x * x;
   return Math.max(config.peakTorque * 0.26, Math.min(config.peakTorque, config.peakTorque * curve));
 }
 
@@ -110,10 +110,13 @@ export class Drivetrain {
     const wheelRpm = (Math.abs(rearOmega) * 60) / (2 * Math.PI);
     let rpm = wheelRpm * Math.abs(gearRatio) * cfg.finalDrive;
 
-    // Slipping clutch: at a standstill the driver revs the engine while the
-    // clutch bites progressively. Without this a launch only has idle torque.
-    const clutchBite = Math.min(1, Math.abs(speedMs) / 2.6);
-    const launchRpm = cfg.idleRpm + throttle * 1650 * (1 - clutchBite);
+    // Slipping clutch: from a standstill the driver keeps the engine near its
+    // torque peak while the clutch slips, and the bite closes progressively as
+    // road speed builds. Without this the engine falls back to idle after a few
+    // metres and the launch has no torque.
+    const pedal = this.gear === -1 ? brake : throttle;
+    const slip = Math.max(0, 1 - Math.abs(speedMs) / 9);
+    const launchRpm = cfg.idleRpm + pedal * 2900 * slip;
     rpm = Math.max(rpm, launchRpm);
     rpm = Math.min(cfg.redlineRpm + 120, rpm);
 

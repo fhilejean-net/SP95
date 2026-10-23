@@ -8,7 +8,7 @@ import { buildCity, syncProps } from './world/city.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
 import { createSky } from './render/sky.ts';
 import { createCar, updateCarVisual } from './render/car.ts';
-import { createPost } from './render/post.ts';
+import { QualityGovernor } from './render/quality.ts';
 import { ChaseCamera } from './core/camera.ts';
 import { InputManager } from './core/input.ts';
 import { Hud, type GameMode } from './game/hud.ts';
@@ -41,14 +41,17 @@ function makeRenderer(lowFx: boolean): THREE.WebGLRenderer {
     stencil: false,
   });
   const mobile = matchMedia('(pointer: coarse)').matches;
-  renderer.setPixelRatio(lowFx ? 0.7 : Math.min(window.devicePixelRatio, mobile ? 1.35 : 1.6));
+  // Past ~1.25 device pixels there is nothing left to see, but a lot of pixels
+  // left to shade: it is the first thing that makes weak GPUs drop the frame.
+  const cap = mobile ? 1 : 1.25;
+  renderer.setPixelRatio(lowFx ? 0.7 : Math.min(window.devicePixelRatio, cap));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = !lowFx;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.02;
+  renderer.toneMappingExposure = 0.92;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  // Debug telemetry should count every pass of the composer.
+  // Debug telemetry should count every pass of the frame.
   renderer.info.autoReset = false;
   return renderer;
 }
@@ -87,7 +90,7 @@ async function boot(): Promise<void> {
   await RAPIER.init();
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.15, 3200);
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.2, 2600);
   const renderer = makeRenderer(lowFx);
   const chase = new ChaseCamera(camera);
 
@@ -111,7 +114,9 @@ async function boot(): Promise<void> {
   buildRaceGates(scene, materials, checkpoints);
 
   await setLoading(0.84, 'Montage de la voiture…');
-  const spawnY = terrain.sample(SPAWN.x, SPAWN.z) + 1.0;
+  // Drop the car in at its ride height: spawning higher makes it land on the
+  // bump stops and bounce before the player can drive.
+  const spawnY = terrain.sample(SPAWN.x, SPAWN.z) + 0.62;
   const vehicle = new Vehicle(world, {
     x: SPAWN.x,
     y: spawnY,
@@ -126,8 +131,7 @@ async function boot(): Promise<void> {
   const hud = new Hud();
   const audio = new CarAudio();
   const drift = new DriftScore();
-  const post = lowFx ? null : createPost(renderer, scene, camera);
-  post?.composer.setPixelRatio(renderer.getPixelRatio());
+  const governor = new QualityGovernor(renderer, renderer.getPixelRatio());
 
   let mode: GameMode = 'menu';
   let paused = false;
@@ -145,13 +149,37 @@ async function boot(): Promise<void> {
   const carForward = forwardFromHeading(SPAWN.heading);
   const cameraGround = (x: number, z: number) => terrain.sample(x, z);
 
+  /** How much of the car -> camera segment is free of walls and ground. */
+  const cameraClearance = (from: THREE.Vector3, to: THREE.Vector3): number => {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dz = to.z - from.z;
+    const length = Math.hypot(dx, dy, dz);
+    if (length < 1e-4) return 1;
+    const ray = new RAPIER.Ray(
+      { x: from.x, y: from.y, z: from.z },
+      { x: dx / length, y: dy / length, z: dz / length },
+    );
+    const hit = world.castRay(
+      ray,
+      length,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      vehicle.body,
+    );
+    if (!hit) return 1;
+    return Math.min(1, Math.max(0, (hit.timeOfImpact - 0.2) / length));
+  };
+
   const updateMenuBest = () => refreshMenuBest();
 
   function setCarPose(x: number, z: number, heading: number): void {
     const ground = terrain.sample(x, z);
-    vehicle.respawn(x, ground + 0.9, z, heading);
+    vehicle.respawn(x, ground + 0.62, z, heading);
     // Let the springs settle so the car sits on its wheels immediately.
-    for (let i = 0; i < 45; i++) {
+    for (let i = 0; i < 60; i++) {
       vehicle.step(FIXED, { throttle: 0, brake: 1, steer: 0, handbrake: true }, world);
       world.step();
     }
@@ -244,7 +272,17 @@ async function boot(): Promise<void> {
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
-    post?.composer.setSize(width, height);
+  });
+
+  // If the GPU process resets, three can rebuild its resources as long as the
+  // default behaviour is cancelled, and the canvas stops flashing black.
+  canvas.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault();
+    if (mode !== 'menu') togglePause();
+    hud.flash('Pilote graphique réinitialisé', { duration: 2200 });
+  });
+  canvas.addEventListener('webglcontextrestored', () => {
+    renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
   refreshMenuBest();
@@ -380,6 +418,7 @@ async function boot(): Promise<void> {
         input.orbitPitch,
         input.zoom,
         cameraGround,
+        cameraClearance,
       );
     }
 
@@ -399,8 +438,7 @@ async function boot(): Promise<void> {
 
   function render(): void {
     renderer.info.reset();
-    if (post) post.composer.render();
-    else renderer.render(scene, camera);
+    renderer.render(scene, camera);
   }
 
   function frame(now: number): void {
@@ -417,6 +455,7 @@ async function boot(): Promise<void> {
       fpsTime = 0;
     }
 
+    governor.update(dt);
     const controls = input.update(dt);
 
     if (input.consume('pause')) togglePause();
