@@ -7,3 +7,4 @@ dev-server.log
 .DS_Store
 .preview.pid
 preview.log
+artifacts/

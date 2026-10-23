@@ -28,7 +28,7 @@ Sur une machine modeste, ajouter `?fx=low` à l'URL : ombres et post-traitement 
 | Pause | `Échap` | — | — |
 | Couper le son | `M` | — | — |
 
-La boîte est automatique 6 rapports + marche arrière : maintenir le frein à l'arrêt enclenche la marche arrière, et l'accélérateur repasse en première dès que la voiture a fini de reculer.
+La boîte est automatique 6 rapports + marche arrière : maintenir le frein à l'arrêt enclenche la marche arrière, et l'accélérateur repasse en première dès que la voiture a fini de reculer. Les rapports se décident sur la vitesse des roues motrices, pas sur celle du châssis : en drift, l'essieu arrière tourne bien plus vite que la caisse, et la boîte monte quand même. Le rupteur coupe l'injection par cycles de 140 ms au lieu de brider le couple.
 
 ## Atelier
 
@@ -48,12 +48,14 @@ Le panneau affiche en direct la puissance, le poids et le rapport ch/t.
 ## Contenu
 
 - **Carte ouverte** d'environ 2 km × 2 km : ville quadrillée avec immeubles, ceinture routière de campagne avec dénivelé, zone industrielle avec un grand pad de drift, quais, arbres et collines.
-- **Route du Col** : un massif au sud-ouest, gravi par une route en spirale de 1,1 km (pentes jusqu'à 14,5 %) qui débouche sur un plateau sommital aménagé en aire de drift. Accessible depuis le menu ou en suivant la route depuis la ceinture.
+- **Route du Col** : un massif au sud-ouest, gravi par une route à **lacets** de 1,18 km — quatre épingles, pentes jusqu'à 14,5 % — qui débouche sur un plateau sommital aménagé en aire de drift. Départ au pied du col, ou directement au sommet, depuis le menu.
+- **Boucle Rallye** : une spéciale en terre de 790 m dans les collines du sud-est, reliée à la ceinture par une piste en gravier. Départ « Rallye » dans le menu.
+- **Surfaces** : l'asphalte, la terre et l'herbe ne donnent pas la même adhérence. Sur la terre, le grip tombe à 62 % de celui du bitume, la résistance au roulement triple et l'angle de glissement de pic s'élargit : la voiture glisse plus tôt mais pardonne davantage. L'herbe est encore plus glissante (47 %).
 - **Conduite libre** : départ au centre-ville, circulation libre, réapparition en cas de tonneau.
 - **Drift** : score basé sur l'angle de dérive réel et la vitesse, multiplicateur qui monte tant que le dérapage continue, points perdus en cas de choc.
 - **Course** : 2 tours sur la ceinture, 12 portiques de contrôle, compte à rebours, chrono au tour, meilleur tour sauvegardé en local.
 - **HUD** : vitesse, rapport, régime, mini-carte, chrono, score de drift, messages.
-- **Son** : moteur procédural lié au régime, crissement de pneus, vent, impacts.
+- **Son** : moteur procédural lié au régime et à la charge, admission, échappement (plus bruyant avec la ligne d'atelier), turbo qui monte en pression, **flutter** et dump valve au lever de pied, **fart de boîte DSG** à chaque montée de rapport, **pops and bangs** à la décélération et au rupteur, crissement de pneus sur le bitume, grondement de gravier et cailloux sur la terre, vent, impacts.
 
 ## Technique
 
@@ -62,10 +64,10 @@ Le panneau affiche en direct la puissance, le poids et le rapport ch/t.
 - **Modèle de pneus** : formule magique de Pacejka simplifiée, angle de dérive et taux de glissement combinés dans une ellipse de friction, sensibilité à la charge. Les forces sont appliquées au point de contact.
 - **Châssis** : masse et suspensions tirées du réglage d'atelier, centre de gravité bas, 4 roues rayon-castées, ressorts/amortisseurs (débattement de 11 à 24 cm selon les suspensions), butées de compression progressives, barres anti-roulis avant/arrière, appui et traînée aérodynamiques, résistance au roulement.
 - **Pneus** : chaque gamme a son coefficient d'adhérence *et* son angle de glissement de pic — les semi-slicks mordent tôt, les pneus drift encaissent des angles bien plus grands avant de décrocher.
-- **Terrain du col** : la route est posée sur un plateau taillé dans la pente (11 m de plateforme, remblai fondu sur 42 m) ; son profil est ajusté par un lissage sous contrainte de pente maximale, donc elle reste roulable et raccordée à la ceinture.
+- **Terrain du col** : la route est posée sur une plateforme taillée dans la pente (7,6 m à plat, remblai fondu sur 32 m) ; son profil est ajusté par un lissage sous contrainte de pente maximale, donc elle reste roulable et raccordée à la ceinture. Le terrain est aplati sous chaque route et sa hauteur est interpolée **le long du segment**, pas prise au point d'échantillonnage le plus proche : c'était la source des triangles d'herbe qui remontaient à travers l'asphalte dans les virages.
 - **Direction** : la limite de braquage et la vitesse de la crémaillère baissent avec la vitesse pour éviter le tête-à-queue au moindre coup de volant sur autoroute, **sauf en contre-braquage** : dès que le volant tourne contre la glisse, toute la lock est disponible et la crémaillère accélère. C'est ce qui permet de rattraper un drift : avec 41° de braquage on tient jusqu'à ~35° d'angle, avec le kit grand angle (66°) jusqu'à ~55°.
 - **Marche arrière** : sélectionnée à l'arrêt, limitée à ~27 km/h, l'accélérateur freine puis repasse en première ; le frein moteur s'oppose au sens de rotation réel des roues (il poussait auparavant la voiture en arrière).
-- **Transmission** : courbe de couple, embrayage progressif au démarrage, boîte auto, frein moteur, autobloquant simulé par répartition égale, ABS arrière, frein à main qui verrouille l'essieu arrière (le drift vient de la perte d'adhérence latérale, pas d'une animation).
+- **Transmission** : courbe de couple, embrayage progressif au démarrage, boîte auto pilotée par la vitesse des roues motrices (un burnout sur place reste en première), rupteur à coupure cyclique, frein moteur, ABS arrière, frein à main qui verrouille l'essieu arrière (le drift vient de la perte d'adhérence latérale, pas d'une animation).
 - **Rendu** : ciel de Preetham + carte d'environnement PMREM, matériaux PBR (peinture vernie), ombres dynamiques qui suivent la voiture, brouillard de distance, MSAA du canvas, tone mapping ACES. Rendu direct à la canvas (pas de chaîne de post-traitement) : c'était la source de surcoût GPU et de frames noires. Le pixel ratio est plafonné à 1,25 et une régulation automatique baisse la résolution puis les ombres si la machine tient moins de 48 fps.
 - **Assets** : tous les modèles (carrosserie, roues, bâtiments, arbres, cônes), textures et sons sont générés par code au chargement. Les seules dépendances sont les bibliothèques ci-dessus.
 - **Déterminisme** : la carte est générée avec une graine fixe ; elle est identique à chaque partie.
@@ -91,7 +93,7 @@ npm ci
 npm run dev        # serveur de dev
 npm run build      # typecheck + build de production dans dist/
 npm run preview    # sert le build
-npm test           # 21 tests Node : pneus, boîte, véhicule complet, suspension, drift, marche arrière, réglages, pente
+npm test           # 29 tests Node : pneus, boîte, rupteur, véhicule, suspension, drift, marche arrière, réglages, surfaces, tracé du col
 ```
 
 Test navigateur (optionnel) :
@@ -102,7 +104,7 @@ npm run dev &
 node scripts/smoke.mjs
 ```
 
-Le test de fumée vérifie le démarrage, le menu, l'atelier (catégories, application d'une pièce), la conduite au clavier, le HUD, le compte à rebours de la course et le départ sur la route du col. Dans un environnement sans GPU, Chromium utilise SwiftShader : le rendu tourne alors à 1–2 fps et les contrôles temporels du test sont volontairement larges.
+Le test de fumée vérifie le démarrage, le menu, l'atelier (catégories, application d'une pièce), la conduite au clavier, le HUD, le compte à rebours de la course, les départs sur le col, sur la spéciale en terre (surface « terre » confirmée) et au sommet, ainsi que le déclenchement des effets sonores. Dans un environnement sans GPU, Chromium utilise SwiftShader : le rendu tourne alors à 1–2 fps et les contrôles temporels du test sont volontairement larges.
 
 ## Déploiement (GitHub Pages)
 
@@ -119,8 +121,10 @@ Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite su
 
 - **Pas de photoréalisme** : la voiture est un coupé procédural, les immeubles sont des volumes texturés. Un rendu photoréaliste demanderait des modèles 3D sur mesure, hors de portée de ce dépôt.
 - Pas de dégâts, pas de choix de voiture, pas d'adversaires IA pour l'instant.
-- Le pad de drift, la ceinture et la route du col sont des surfaces visuelles posées sur le terrain ; la physique roule sur le terrain (3 cm d'écart sur la plaine, 9 cm sur le col).
-- Le col n'a pas de glissières : sortir de la route en épingle envoie la voiture dans la pente (la touche `R` la remet sur la route).
+- Le pad de drift, la ceinture, la route du col et la spéciale en terre sont des surfaces visuelles posées sur le terrain ; la physique roule sur le terrain aplati au niveau de la route (3 cm d'écart sur la plaine, 9 cm sur le col et le gravier).
+- Les textures de sol sont peintes par code : herbe, terre et asphalte se répètent, il n'y a pas de mélange de matériaux aux transitions.
+- La spéciale rallye est une boucle : pas de chrono ni de copilote pour l'instant.
+- Ni le col ni la spéciale n'ont de glissières : sortir de la route en épingle envoie la voiture dans la pente ou dans l'herbe (la touche `R` la remet sur la route).
 - Le plateau sommital est volontairement nu : c'est une aire de drift, pas un village.
 - Les performances dépendent du GPU : au-delà de 12 immeubles visibles simultanément, une carte intégrée peut descendre sous 60 fps (la régulation baisse alors la qualité toute seule).
 - Testé automatiquement (physique + fumée navigateur) ; l'appréciation visuelle et le ressenti au volant restent à valider sur une vraie machine.

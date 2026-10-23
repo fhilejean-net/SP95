@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
+  DIRT_TRACKS,
   DRIFT_PAD,
   MOUNTAIN_ROADS,
   RACE_START,
@@ -13,6 +14,11 @@ import {
 } from './layout.ts';
 import type { EnvironmentMaterials } from '../render/materials.ts';
 
+/**
+ * The terrain is flattened to just under each road's own level, so this lift is
+ * the whole gap between the physics surface and the visible asphalt. Keep it
+ * small: the wheels sit on the terrain, not on the ribbon.
+ */
 const ROAD_LIFT = 0.03;
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -197,12 +203,13 @@ export function buildRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void
     surface.name = `road-${road.def.id}`;
     scene.add(surface);
 
-    // Concrete shoulder / sidewalk, slightly lower and wider.
+    // Concrete shoulder / sidewalk, slightly lower and wider. It has to stay
+    // above the flattened terrain, otherwise the two surfaces fight for pixels.
     if (road.def.kind !== 'rural') {
       const shoulder = new THREE.Mesh(
         ribbonGeometry(road.points, {
           width: width + 5,
-          lift: ROAD_LIFT - 0.035,
+          lift: ROAD_LIFT - 0.018,
           closed,
           uvLength: 6,
         }),
@@ -218,7 +225,7 @@ export function buildRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void
         ribbonGeometry(road.points, {
           width: 0.16,
           offset: side * (width * 0.5 - 0.5),
-          lift: ROAD_LIFT + 0.008,
+          lift: ROAD_LIFT + 0.006,
           closed,
         }),
         mats.lines,
@@ -246,8 +253,8 @@ export function buildRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void
         const p0 = new THREE.Vector3().lerpVectors(a, b, t0);
         const p1 = new THREE.Vector3().lerpVectors(a, b, t1);
         const base = dashPositions.length / 3;
-        const y0 = p0.y + ROAD_LIFT + 0.009;
-        const y1 = p1.y + ROAD_LIFT + 0.009;
+        const y0 = p0.y + ROAD_LIFT + 0.007;
+        const y1 = p1.y + ROAD_LIFT + 0.007;
         const hw = 0.09;
         dashPositions.push(
           p0.x - right.x * hw, y0, p0.z - right.z * hw,
@@ -289,6 +296,11 @@ export function buildRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void
   padRingInner.position.set(DRIFT_PAD.cx, DRIFT_PAD.y + 0.04, DRIFT_PAD.cz);
   scene.add(padRingInner);
 
+  const driftArrows = new THREE.Mesh(new THREE.RingGeometry(44, 44.5, 96, 1, 0.4, 2.2), mats.lines);
+  driftArrows.rotation.x = -Math.PI / 2;
+  driftArrows.position.set(DRIFT_PAD.cx, DRIFT_PAD.y + 0.04, DRIFT_PAD.cz);
+  scene.add(driftArrows);
+
   // Start / finish line on the ring.
   const startLine = new THREE.Mesh(new THREE.PlaneGeometry(RING.def.width - 0.6, 2.6), mats.checker);
   startLine.rotation.x = -Math.PI / 2;
@@ -298,19 +310,54 @@ export function buildRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void
 }
 
 /**
- * The col: the mountain road sits on graded terrain, so the asphalt ribbon is
- * laid 9 cm above the shelf and the summit is a paved arena.
+ * Every engineered road (the col, the gravel stages) sits on a graded shelf, so
+ * the ribbon is laid a few centimetres above it. Dirt roads get a gravel
+ * surface and a pair of wheel ruts instead of paint.
  */
-export function buildMountainRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void {
-  const lift = 0.09;
-  for (const road of MOUNTAIN_ROADS) {
+export function buildGradedRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void {
+  for (const road of [...MOUNTAIN_ROADS, ...DIRT_TRACKS]) {
+    const dirt = road.def.surface === 'dirt';
+    const lift = dirt ? 0.06 : 0.09;
     const surface = new THREE.Mesh(
-      ribbonGeometry(road.points, { width: road.def.width, lift, closed: false }),
-      mats.asphalt,
+      ribbonGeometry(road.points, { width: road.def.width, lift, closed: road.def.closed, uvLength: dirt ? 6 : 10 }),
+      dirt ? mats.gravel : mats.asphalt,
     );
     surface.receiveShadow = true;
     surface.name = `road-${road.def.id}`;
     scene.add(surface);
+
+    if (dirt) {
+      for (const side of [-1, 1]) {
+        const rut = new THREE.Mesh(
+          ribbonGeometry(road.points, {
+            width: 0.75,
+            offset: side * 1.15,
+            lift: lift + 0.004,
+            closed: road.def.closed,
+            uvLength: 2.5,
+          }),
+          mats.gravelRut,
+        );
+        rut.receiveShadow = true;
+        scene.add(rut);
+      }
+      // Soft gravel berms on both edges, so the track reads as a cut path.
+      for (const side of [-1, 1]) {
+        const berm = new THREE.Mesh(
+          ribbonGeometry(road.points, {
+            width: 1.1,
+            offset: side * (road.def.width * 0.5 + 0.1),
+            lift: lift - 0.005,
+            closed: road.def.closed,
+            uvLength: 3,
+          }),
+          mats.gravelEdge,
+        );
+        berm.receiveShadow = true;
+        scene.add(berm);
+      }
+      continue;
+    }
 
     for (const side of [-1, 1]) {
       const line = new THREE.Mesh(

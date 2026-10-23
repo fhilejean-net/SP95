@@ -35,6 +35,26 @@ export interface VehicleInput {
 
 export const NEUTRAL_INPUT: VehicleInput = { throttle: 0, brake: 0, steer: 0, handbrake: false };
 
+/**
+ * What the wheels are rolling on. The physics only needs multipliers, so the
+ * world can describe asphalt, gravel, grass or rock without the tire model
+ * knowing anything about the map.
+ */
+export interface SurfaceGrip {
+  kind: string;
+  /** Multiplier on the tire friction coefficient. */
+  grip: number;
+  /** Multiplier on the peak slip angle: loose ground slides earlier, but over a
+   *  wider window, so it is forgiving instead of snappy. */
+  peak: number;
+  /** Multiplier on rolling resistance. */
+  rolling: number;
+  /** 0..1, how much the ground rumbles (audio, camera). */
+  roughness: number;
+}
+
+const ASPHALT: SurfaceGrip = { kind: 'asphalte', grip: 1, peak: 1, rolling: 1, roughness: 0 };
+
 interface Wheel {
   name: 'FL' | 'FR' | 'RL' | 'RR';
   mount: Vec3;
@@ -76,6 +96,10 @@ export interface VehicleTelemetry {
   rpm: number;
   gear: number;
   shifting: boolean;
+  /** Rev limiter is cutting fuel this tick. */
+  limiter: boolean;
+  /** Ground under the car. */
+  surface: SurfaceGrip;
   throttle: number;
   brake: number;
   handbrake: boolean;
@@ -181,6 +205,9 @@ export class Vehicle {
   private wheels: Wheel[];
   private steerAngle = 0;
   private telemetry: VehicleTelemetry;
+  private readonly surfaceAt: (x: number, z: number) => SurfaceGrip;
+  /** Ground under the car, for telemetry and audio. */
+  surface: SurfaceGrip = ASPHALT;
   private flippedTimer = 0;
   private prevSpeed = 0;
   /** Signed longitudinal acceleration estimate, m/s². */
@@ -189,10 +216,19 @@ export class Vehicle {
 
   constructor(
     world: RAPIER.World,
-    opts: { x: number; y: number; z: number; heading: number; color?: number },
+    opts: {
+      x: number;
+      y: number;
+      z: number;
+      heading: number;
+      color?: number;
+      /** Ground lookup, in world X/Z. Defaults to dry asphalt everywhere. */
+      surfaceAt?: (x: number, z: number) => SurfaceGrip;
+    },
     spec: VehicleSpec = STOCK_SPEC,
   ) {
     this.spec = spec;
+    this.surfaceAt = opts.surfaceAt ?? (() => ASPHALT);
     this.drivetrain = new Drivetrain({
       ...SPORT_DRIVETRAIN,
       peakTorque: spec.peakTorque,
@@ -200,6 +236,7 @@ export class Vehicle {
       redlineRpm: spec.redlineRpm,
       upshiftRpm: spec.upshiftRpm,
       finalDrive: spec.finalDrive,
+      wheelRadius: spec.wheelRadius,
     });
     this.restLength = spec.rideHeight + (spec.mass * 9.81) / (4 * spec.springK);
     this.maxLength = this.restLength + spec.wheelTravel;
@@ -357,7 +394,15 @@ export class Vehicle {
 
     // --- Drivetrain ---------------------------------------------------------
     const rearOmega = (this.wheels[2].omega + this.wheels[3].omega) * 0.5;
-    const drive = this.drivetrain.update(dt, rearOmega, input.throttle, input.brake, vLong);
+    const groundSpeed = Math.hypot(vLong, vLat);
+    const drive = this.drivetrain.update(
+      dt,
+      rearOmega,
+      input.throttle,
+      input.brake,
+      vLong,
+      groundSpeed,
+    );
     const driveTorquePerWheel = drive.axleTorque * 0.5;
     // In reverse the brake pedal is the reverse throttle, so the throttle pedal
     // is what slows the car down on its way back to first gear.
@@ -437,8 +482,9 @@ export class Vehicle {
       const cvLat = dot(contactVel, wheelRight);
 
       const alpha = slipAngleFromVelocity(cvLong, cvLat);
-      const mu = wheel.front ? this.spec.muFront : this.spec.muRear;
-      const peakAngle = this.spec.peakSlipAngle;
+      const ground = this.surfaceAt(contactPoint.x, contactPoint.z);
+      const mu = (wheel.front ? this.spec.muFront : this.spec.muRear) * ground.grip;
+      const peakAngle = this.spec.peakSlipAngle * ground.peak;
       wheel.slipAngle = alpha;
       wheel.load = springForce;
       totalLoad += springForce;
@@ -509,7 +555,8 @@ export class Vehicle {
 
     // --- Aerodynamics and rolling resistance --------------------------------
     if (speed > 0.5) {
-      const rolling = 0.0135 * totalLoad * Math.sign(vLong);
+      // Loose ground drags at the wheels far more than tarmac does.
+      const rolling = 0.0135 * totalLoad * this.surface.rolling * Math.sign(vLong);
       this.body.applyImpulse(
         { x: -forward.x * rolling * dt, y: 0, z: -forward.z * rolling * dt },
         true,
@@ -533,9 +580,12 @@ export class Vehicle {
     this.prevSpeed = vLong;
 
     this.telemetry = this.buildTelemetry(velocity, bodySlip);
+    this.surface = this.surfaceAt(pos.x, pos.z);
+    this.telemetry.surface = this.surface;
     this.telemetry.rpm = drive.rpm;
     this.telemetry.gear = drive.gear;
     this.telemetry.shifting = drive.shifting;
+    this.telemetry.limiter = drive.limiter;
     this.telemetry.throttle = input.throttle;
     this.telemetry.brake = input.brake;
     this.telemetry.handbrake = input.handbrake;
@@ -633,6 +683,8 @@ export class Vehicle {
       rpm: this.drivetrain.rpm,
       gear: this.drivetrain.gear,
       shifting: false,
+      limiter: false,
+      surface: ASPHALT,
       throttle: 0,
       brake: 0,
       handbrake: false,

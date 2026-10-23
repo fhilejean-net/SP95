@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { magicFormula, slipRatioFromWheelSpeed, tireForces } from '../src/physics/tire.ts';
+import { DIRT_TRACKS, MOUNTAIN_ROADS, RALLY_START, SPAWN, heightAt, surfaceAt } from '../src/world/layout.ts';
 import { Drivetrain, torqueAtRpm } from '../src/physics/drivetrain.ts';
 import { Vehicle, NEUTRAL_INPUT, STOCK_SPEC, type VehicleInput } from '../src/physics/vehicle.ts';
 import { DEFAULT_SETUP, resolveSpec, type Setup } from '../src/game/tuning.ts';
@@ -359,4 +360,133 @@ test('the car climbs a 15% gradient from a standstill', async () => {
   assert.ok(car.telemetryState.speedKmh > 40, `only reached ${car.telemetryState.speedKmh.toFixed(0)} km/h on the climb`);
   assert.ok(car.position.y > start.y + 2, `car climbed ${(car.position.y - start.y).toFixed(2)}m`);
   assert.ok(car.position.z < start.z - 15, 'car did not make progress up the hill');
+});
+
+test('a spinning rear axle keeps the gearbox in its gear, even sideways', () => {
+  const box = new Drivetrain();
+  // 25 m/s at the tire, chassis crawling at 2 m/s through a deep slide: the old
+  // logic saw "slower than 2.2 m/s" and dropped to first, pinning the limiter.
+  for (let i = 0; i < 120; i++) box.update(TICK, 25 / 0.34, 1, 0, 2);
+  assert.equal(box.gear, 2, 'the gearbox fell back to first mid-slide');
+  assert.ok(box.rpm < box.config.redlineRpm, 'engine pinned on the limiter in the wrong gear');
+});
+
+test('the gearbox upshifts off the wheels, not off the chassis speed', () => {
+  const box = new Drivetrain();
+  // Wheels turning as if the car were doing 90 km/h while it is actually doing
+  // 15: still a legitimate upshift, and exactly what low-speed drifting needs.
+  for (let i = 0; i < 240; i++) box.update(TICK, 25 / 0.34, 1, 0, 4.2);
+  assert.ok(box.gear > 1, `still in first at ${box.rpm.toFixed(0)} rpm`);
+});
+
+test('the rev limiter bounces instead of cutting torque to a crawl', () => {
+  const box = new Drivetrain();
+  const omega = ((box.config.redlineRpm / 60) * 2 * Math.PI) / (3.62 * 3.55) / 0.34;
+  let cuts = 0;
+  let full = 0;
+  let torqueSum = 0;
+  for (let i = 0; i < 240; i++) {
+    const out = box.update(TICK, omega, 1, 0, 40);
+    if (out.limiter) cuts++;
+    else if (out.axleTorque > 0) full++;
+    torqueSum += out.axleTorque;
+  }
+  assert.ok(cuts > 20, `only ${cuts} fuel cuts in two seconds`);
+  assert.ok(full > 20, 'the limiter never gave the engine back');
+  assert.ok(torqueSum > 0, 'no drive at all on the limiter');
+});
+
+test('loose ground really is slower and slipperier than asphalt', async () => {
+  const world = await makeWorld();
+  const asphalt = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 }, STOCK_SPEC);
+  const dirt = new Vehicle(
+    world,
+    {
+      x: 0,
+      y: 0.9,
+      z: 0,
+      heading: 0,
+      surfaceAt: () => ({ kind: 'terre', grip: 0.62, peak: 1.3, rolling: 2.6, roughness: 0.7 }),
+    },
+    STOCK_SPEC,
+  );
+  for (const car of [asphalt, dirt]) {
+    simulate(world, car, 1, NEUTRAL_INPUT);
+    simulate(world, car, 4, { throttle: 1, brake: 0, steer: 0, handbrake: false });
+  }
+  assert.ok(
+    asphalt.telemetryState.speedKmh > dirt.telemetryState.speedKmh + 8,
+    `asphalt ${asphalt.telemetryState.speedKmh.toFixed(0)} vs dirt ${dirt.telemetryState.speedKmh.toFixed(0)} km/h`,
+  );
+  assert.equal(dirt.telemetryState.surface.kind, 'terre');
+
+  // Braking from speed: less grip, longer stop.
+  const before = { asphalt: asphalt.telemetryState.speedKmh, dirt: dirt.telemetryState.speedKmh };
+  simulate(world, asphalt, 2, { throttle: 0, brake: 1, steer: 0, handbrake: false });
+  simulate(world, dirt, 2, { throttle: 0, brake: 1, steer: 0, handbrake: false });
+  const asphaltDrop = before.asphalt - asphalt.telemetryState.speedKmh;
+  const dirtDrop = before.dirt - dirt.telemetryState.speedKmh;
+  assert.ok(asphaltDrop > dirtDrop, `asphalt shed ${asphaltDrop.toFixed(0)}, dirt ${dirtDrop.toFixed(0)} km/h`);
+});
+
+test('the col is a switchback climb, not a spiral', () => {
+  const road = MOUNTAIN_ROADS[0];
+  const p = road.points;
+  let length = 0;
+  let climb = 0;
+  let maxGrade = 0;
+  for (let i = 1; i < p.length; i++) {
+    const d = Math.hypot(p[i].x - p[i - 1].x, p[i].z - p[i - 1].z);
+    if (d < 0.01) continue;
+    length += d;
+    climb += p[i].y - p[i - 1].y;
+    maxGrade = Math.max(maxGrade, Math.abs(p[i].y - p[i - 1].y) / d);
+  }
+  assert.ok(length > 900, `only ${length.toFixed(0)} m of road`);
+  assert.ok(climb > 50, `climbs ${climb.toFixed(1)} m`);
+  assert.ok(maxGrade < 0.165, `grade reaches ${(maxGrade * 100).toFixed(1)}%`);
+
+  let hairpins = 0;
+  for (let i = 1; i < p.length - 1; i++) {
+    const a = p[i - 1];
+    const b = p[i];
+    const c = p[i + 1];
+    const ab = Math.hypot(b.x - a.x, b.z - a.z);
+    const bc = Math.hypot(c.x - b.x, c.z - b.z);
+    const ca = Math.hypot(a.x - c.x, a.z - c.z);
+    const cross = Math.abs((b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x));
+    if (cross < 1e-6) continue;
+    const radius = (ab * bc * ca) / (2 * cross);
+    if (radius < 26) hairpins++;
+  }
+  assert.ok(hairpins > 24, `only ${hairpins} tight points: that is a spiral, not a col`);
+});
+
+test('the rally stage and the roads report the right surface', () => {
+  assert.equal(surfaceAt(RALLY_START.x, RALLY_START.z).kind, 'terre');
+  assert.equal(surfaceAt(DIRT_TRACKS[0].points[10].x, DIRT_TRACKS[0].points[10].z).kind, 'terre');
+  assert.equal(surfaceAt(SPAWN.x, SPAWN.z).kind, 'asphalte');
+  assert.equal(surfaceAt(-480, -420).kind, 'asphalte', 'the summit pad should be paved');
+  assert.equal(surfaceAt(700, 700).kind, 'herbe');
+  assert.ok(surfaceAt(700, 700).grip < surfaceAt(SPAWN.x, SPAWN.z).grip);
+});
+
+test('the terrain sits just under the asphalt everywhere on the col', () => {
+  const samples = MOUNTAIN_ROADS[0].samples;
+  for (let i = 0; i < samples.length; i += 3) {
+    const s = samples[i];
+    const ground = heightAt(s.x, s.z);
+    assert.ok(
+      ground < s.y + 0.02 && ground > s.y - 0.3,
+      `terrain ${ground.toFixed(2)} vs road ${s.y.toFixed(2)} at ${s.x.toFixed(0)},${s.z.toFixed(0)}`,
+    );
+  }
+});
+
+test('a stationary burnout stays in first instead of climbing the box', () => {
+  const box = new Drivetrain();
+  // Wheels spinning hard, car going nowhere: the axle is fast but the chassis is
+  // not, so there is nothing to upshift for.
+  for (let i = 0; i < 240; i++) box.update(TICK, 30 / 0.34, 1, 0, 0.1, 0.1);
+  assert.equal(box.gear, 1, `gearbox climbed to ${box.gear} on the spot`);
 });

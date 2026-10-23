@@ -86,6 +86,36 @@ export function createConcreteTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+/** Loose gravel: brown base, hundreds of stones, darker wheel-polished patches. */
+export function createGravelTexture(): THREE.CanvasTexture {
+  const { canvas, ctx } = makeCanvas(256, 256);
+  const rand = seededRandom(53);
+  ctx.fillStyle = '#6d5a44';
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 5200; i++) {
+    const g = 84 + rand() * 70;
+    ctx.fillStyle = `rgba(${g + 12},${g},${g - 16},${0.25 + rand() * 0.5})`;
+    const x = rand() * 256;
+    const y = rand() * 256;
+    const w = 0.8 + rand() * 2.6;
+    ctx.beginPath();
+    ctx.ellipse(x, y, w, w * (0.6 + rand() * 0.5), rand() * 3.14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Dust and damp patches.
+  for (let i = 0; i < 90; i++) {
+    ctx.fillStyle = `rgba(${70 + rand() * 30},${58 + rand() * 24},${44 + rand() * 18},0.08)`;
+    ctx.beginPath();
+    ctx.arc(rand() * 256, rand() * 256, 3 + rand() * 9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
 export interface FacadeTexture {
   map: THREE.CanvasTexture;
   repeatX: number;
@@ -138,6 +168,9 @@ export function createFacadeTexture(wall: string, floors: number, cols: number):
 export interface EnvironmentMaterials {
   asphalt: THREE.MeshStandardMaterial;
   asphaltPad: THREE.MeshStandardMaterial;
+  gravel: THREE.MeshStandardMaterial;
+  gravelRut: THREE.MeshStandardMaterial;
+  gravelEdge: THREE.MeshStandardMaterial;
   concrete: THREE.MeshStandardMaterial;
   lines: THREE.MeshStandardMaterial;
   terrain: THREE.MeshStandardMaterial;
@@ -158,7 +191,11 @@ export function createEnvironmentMaterials(): EnvironmentMaterials {
   const asphalt = createAsphaltTexture();
   asphalt.repeat.set(1, 1);
   const grass = createGrassTexture();
-  grass.repeat.set(140, 140);
+  // ~5 m per tile: much finer than the old 14 m, which smeared into a wash
+  // right under the car.
+  grass.repeat.set(380, 380);
+  const gravelTex = createGravelTexture();
+  gravelTex.repeat.set(1, 1);
   const concreteTex = createConcreteTexture();
   concreteTex.repeat.set(2, 2);
 
@@ -194,6 +231,31 @@ export function createEnvironmentMaterials(): EnvironmentMaterials {
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2,
+    }),
+    gravel: new THREE.MeshStandardMaterial({
+      map: gravelTex,
+      color: 0xb8a68c,
+      roughness: 1,
+      metalness: 0,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    }),
+    gravelRut: new THREE.MeshStandardMaterial({
+      map: gravelTex,
+      color: 0x8a7458,
+      roughness: 1,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    }),
+    gravelEdge: new THREE.MeshStandardMaterial({
+      map: gravelTex,
+      color: 0x7d6b52,
+      roughness: 1,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     }),
     concrete: new THREE.MeshStandardMaterial({
       map: concreteTex,

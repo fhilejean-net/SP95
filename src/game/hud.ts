@@ -1,4 +1,5 @@
 import {
+  DIRT_TRACKS,
   DRIFT_PAD,
   MOUNTAIN_ROADS,
   RACE_START,
@@ -85,6 +86,23 @@ export class Hud {
       ctx.strokeStyle = 'rgba(242,163,60,0.75)';
       ctx.lineWidth = 2.2;
       ctx.stroke();
+    }
+
+    for (const road of DIRT_TRACKS) {
+      ctx.beginPath();
+      for (let i = 0; i < road.points.length; i++) {
+        const p = road.points[i];
+        const x = cx + p.x * s;
+        const y = cy + p.z * s;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      if (road.def.closed) ctx.closePath();
+      ctx.strokeStyle = 'rgba(176,131,80,0.85)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     const summitRadius = Math.max(3, SUMMIT.radius * s);

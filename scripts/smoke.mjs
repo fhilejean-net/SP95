@@ -134,6 +134,57 @@ try {
   const climbed = await waitFor(() => window.__sp95.speedKmh > 20, 45_000);
   await page.keyboard.up('KeyW');
   check('the car drives away on the col', Boolean(climbed));
+
+  // Rally stage: spawn on the gravel loop, on dirt.
+  await page.keyboard.press('Escape');
+  await waitFor(() => window.__sp95.paused === true, 8000);
+  await page.click('#btn-pause-rally');
+  await page.waitForTimeout(1200);
+  const rally = await page.evaluate(() => ({
+    mode: window.__sp95.mode,
+    surface: window.__sp95.surface,
+    position: window.__sp95.position,
+  }));
+  check(
+    'the rally stage spawns on dirt',
+    rally.mode === 'free' && rally.surface === 'terre',
+    `${rally.surface} at ${rally.position.x.toFixed(0)}, ${rally.position.z.toFixed(0)}`,
+  );
+  await page.keyboard.down('KeyW');
+  const rallyMoved = await waitFor(() => window.__sp95.speedKmh > 20, 45_000);
+  await page.keyboard.up('KeyW');
+  check('the car drives on gravel', Boolean(rallyMoved));
+
+  // Summit drift arena.
+  await page.keyboard.press('Escape');
+  await waitFor(() => window.__sp95.paused === true, 8000);
+  await page.click('#btn-pause-sommet');
+  await page.waitForTimeout(1200);
+  const summit = await page.evaluate(() => ({
+    mode: window.__sp95.mode,
+    surface: window.__sp95.surface,
+    position: window.__sp95.position,
+  }));
+  check(
+    'the summit arena is paved and high up',
+    summit.mode === 'free' && summit.surface === 'asphalte' && summit.position.y > 50,
+    `${summit.surface}, y=${summit.position.y.toFixed(0)}`,
+  );
+
+  // Engine sound effects: a full-throttle launch then a lift should have fired
+  // an upshift fart and/or overrun pops.
+  await page.keyboard.press('Escape');
+  await waitFor(() => window.__sp95.paused === true, 8000);
+  await page.click('#btn-pause-free');
+  await page.waitForTimeout(800);
+  await page.keyboard.down('KeyW');
+  await waitFor(() => window.__sp95.speedKmh > 45, 60_000);
+  await page.keyboard.up('KeyW');
+  await page.waitForTimeout(600);
+  const effects = await page.evaluate(() => window.__sp95.audioEvents);
+  check('shift and overrun effects fire', effects > 0, `${effects} events`);
+
+  check('no console errors at the end', errors.length === 0, errors.slice(0, 3).join(' | '));
 } catch (error) {
   failed = true;
   console.error('SMOKE ERROR', error);

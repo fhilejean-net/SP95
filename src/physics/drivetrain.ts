@@ -15,6 +15,8 @@ export interface DrivetrainConfig {
   efficiency: number;
   peakTorque: number;
   peakTorqueRpm: number;
+  /** Driven wheel radius, m: turns the wheel speed into a road speed. */
+  wheelRadius: number;
 }
 
 export const SPORT_DRIVETRAIN: DrivetrainConfig = {
@@ -28,7 +30,14 @@ export const SPORT_DRIVETRAIN: DrivetrainConfig = {
   efficiency: 0.9,
   peakTorque: 420,
   peakTorqueRpm: 3900,
+  wheelRadius: 0.34,
 };
+
+/** Rev limiter: fuel cut windows. A 140 ms cycle is the classic bounce. */
+const LIMITER_CYCLE = 0.14;
+const LIMITER_CUT = 0.055;
+/** Minimum time in a gear before the next shift: stops hunting. */
+const MIN_GEAR_TIME = 0.45;
 
 /** Naturally aspirated style torque curve: broad mid-range, soft at redline. */
 export function torqueAtRpm(rpm: number, config: DrivetrainConfig = SPORT_DRIVETRAIN): number {
@@ -43,6 +52,8 @@ export interface DrivetrainOutput {
   rpm: number;
   gear: number;
   shifting: boolean;
+  /** True on the fuel-cut half of a rev limiter cycle, for the exhaust bang. */
+  limiter: boolean;
 }
 
 export class Drivetrain {
@@ -50,6 +61,8 @@ export class Drivetrain {
   rpm = SPORT_DRIVETRAIN.idleRpm;
   shiftTimer = 0;
   private reverseHold = 0;
+  private gearTimer = 0;
+  private limiterPhase = 0;
 
   readonly config: DrivetrainConfig;
 
@@ -67,6 +80,8 @@ export class Drivetrain {
     this.rpm = this.config.idleRpm;
     this.shiftTimer = 0;
     this.reverseHold = 0;
+    this.gearTimer = 0;
+    this.limiterPhase = 0;
   }
 
   /**
@@ -74,6 +89,9 @@ export class Drivetrain {
    * @param throttle forward pedal 0..1
    * @param brake reverse / brake pedal 0..1
    * @param speedMs signed longitudinal speed (positive forward)
+   * @param groundSpeed unsigned speed over the ground, defaults to speedMs.
+   *        A stationary burnout spins the rear axle flat out while the car goes
+   *        nowhere; without this the gearbox would climb to sixth on the spot.
    */
   update(
     dt: number,
@@ -81,9 +99,16 @@ export class Drivetrain {
     throttle: number,
     brake: number,
     speedMs: number,
+    groundSpeed = Math.abs(speedMs),
   ): DrivetrainOutput {
     const cfg = this.config;
     this.shiftTimer = Math.max(0, this.shiftTimer - dt);
+    this.gearTimer += dt;
+    // What the gearbox actually sees: the road speed implied by the driven
+    // wheels. In a drift the rear axle runs far faster than the body, and a
+    // gearbox has no idea the car is sideways -- deciding shifts on the chassis
+    // speed left the car pinned on the limiter in first while it slid.
+    const wheelSpeed = Math.abs(rearOmega) * cfg.wheelRadius;
 
     // Reverse is a gear you engage at a standstill, like holding the pedal on an
     // automatic: it never engages while the car is still rolling.
@@ -110,9 +135,10 @@ export class Drivetrain {
       }
     }
 
-    if (this.gear > 1 && Math.abs(speedMs) < 2.2) {
+    if (this.gear > 1 && wheelSpeed < 1.2 && Math.abs(speedMs) < 1.2) {
       // Rolling to a stop: fall back to first, no shift delay needed.
       this.gear = 1;
+      this.gearTimer = 0;
     }
 
     const gearRatio = this.ratio;
@@ -129,24 +155,34 @@ export class Drivetrain {
     rpm = Math.max(rpm, launchRpm);
     rpm = Math.min(cfg.redlineRpm + 120, rpm);
 
-    if (this.shiftTimer <= 0 && this.gear > 0) {
-      const canShift = Math.abs(speedMs) > 5;
-      if (canShift && rpm > cfg.upshiftRpm && this.gear < cfg.ratios.length) {
+    if (this.shiftTimer <= 0 && this.gear > 0 && this.gearTimer > MIN_GEAR_TIME) {
+      // The driven axle is turning, so the car is moving even if the chassis is
+      // sliding and its longitudinal speed reads close to zero.
+      const rolling = wheelSpeed > 2.5 && groundSpeed > 1.5;
+      if (rolling && rpm > cfg.upshiftRpm && this.gear < cfg.ratios.length) {
         this.gear += 1;
         this.shiftTimer = 0.16;
+        this.gearTimer = 0;
       } else if (
-        canShift &&
+        rolling &&
         this.gear > 1 &&
         (rpm < cfg.downshiftRpm || (throttle > 0.75 && rpm < 2400))
       ) {
         this.gear -= 1;
         this.shiftTimer = 0.14;
+        this.gearTimer = 0;
       }
     }
 
     const effectiveThrottle = this.gear === -1 ? brake : throttle;
     const shifting = this.shiftTimer > 0;
-    const limiter = rpm > cfg.redlineRpm - 60 ? 0.15 : 1;
+    // The limiter bounces: fuel is cut for ~40% of a 140 ms cycle, so the car
+    // still pulls instead of sitting on a flat 15% torque cut forever.
+    const overRev = rpm >= cfg.redlineRpm - 40;
+    if (overRev) this.limiterPhase = (this.limiterPhase + dt) % LIMITER_CYCLE;
+    else this.limiterPhase = 0;
+    const limiterCut = overRev && this.limiterPhase < LIMITER_CUT;
+    const limiter = limiterCut ? 0 : 1;
     // Reverse is for manoeuvring: past a walking-pace-plus crawl the drive is
     // cut, otherwise the car reverses at motorway speed.
     const reverseCut = this.gear === -1 && speedMs < -7.5;
@@ -169,6 +205,7 @@ export class Drivetrain {
       rpm,
       gear: this.gear,
       shifting,
+      limiter: limiterCut,
     };
   }
 }

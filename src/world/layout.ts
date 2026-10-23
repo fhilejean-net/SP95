@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 
 export const WORLD_SIZE = 2000;
-export const TERRAIN_SEGMENTS = 220;
+export const TERRAIN_SEGMENTS = 300;
+
+export type SurfaceKind = 'asphalte' | 'terre' | 'herbe';
 
 export interface RoadDef {
   id: string;
@@ -10,7 +12,9 @@ export interface RoadDef {
   points: [number, number][];
   closed: boolean;
   width: number;
-  kind: 'city' | 'rural' | 'avenue';
+  kind: 'city' | 'rural' | 'avenue' | 'dirt';
+  /** Defaults to asphalt. Dirt roads get gravel, no markings and a soft edge. */
+  surface?: 'asphalt' | 'dirt';
 }
 
 export const ROADS: RoadDef[] = [
@@ -88,8 +92,8 @@ export const ROADS: RoadDef[] = [
 ];
 
 /**
- * The col: a massif in the south-west corner, climbed by a spiral road that
- * ends on a flat summit where the drift sessions happen.
+ * The col: a massif in the south-west corner, climbed by a switchback road
+ * that ends on a flat summit where the drift sessions happen.
  */
 export const MASSIF = { cx: -480, cz: -420, radius: 240, height: 70 };
 
@@ -144,29 +148,94 @@ function rollingHills(x: number, z: number): number {
   );
 }
 
-// Spiral up the massif: the radius drops as the road turns, so every metre
-// forward buys a few centimetres of altitude.
+// --- Mountain road ---------------------------------------------------------
+//
+// A switchback, not a spiral: the road traverses the south-east face, then a
+// hairpin turns it back on itself one shelf higher, over and over. The hairpin
+// keeps the same polar angle as the end of the traverse, so consecutive legs
+// stack like the lacets of a real col.
+
+interface Leg {
+  /** Radius at the start of the traverse. */
+  r0: number;
+  /** Radius at its far end (the road drifts inward as it climbs). */
+  r1: number;
+  /** Angle reached by the hairpin at the far end. */
+  r2: number;
+}
+
+const COL_LEGS: Leg[] = [
+  { r0: 238, r1: 224, r2: 196 },
+  { r0: 196, r1: 182, r2: 154 },
+  { r0: 154, r1: 140, r2: 112 },
+  { r0: 112, r1: 99, r2: 76 },
+  { r0: 76, r1: 66, r2: 60 },
+];
+
+const COL_SWEEP = 1.3;
+
 const COL_POINTS: [number, number][] = (() => {
-  const points: [number, number][] = [
-    [-238, -302],
-    [-252, -310],
-    [-266, -316],
+  const points: [number, number][] = [];
+  const push = (x: number, z: number) => points.push([x, z]);
+  const a0 = 0.45;
+  const at = (angle: number, radius: number): [number, number] => [
+    MASSIF.cx + Math.cos(angle) * radius,
+    MASSIF.cz + Math.sin(angle) * radius,
   ];
-  const turns = 1.35;
-  const startX = -273;
-  const startZ = -319;
-  const startAngle = Math.atan2(startZ - MASSIF.cz, startX - MASSIF.cx);
-  const startRadius = Math.hypot(startX - MASSIF.cx, startZ - MASSIF.cz);
-  const endRadius = 26;
-  const steps = Math.round(turns * 24);
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
-    const angle = startAngle - t * turns * Math.PI * 2;
-    const radius = startRadius + (endRadius - startRadius) * t;
-    points.push([
-      MASSIF.cx + Math.cos(angle) * radius,
-      MASSIF.cz + Math.sin(angle) * radius,
-    ]);
+
+  // Approach: leave the ring road and run up to the foot of the first leg.
+  // The leg is entered a little way along its sweep so the two directions line
+  // up: a tighter join than that kinks the road into a 3 m radius hairpin.
+  const firstAngle = a0 - 0.22;
+  const first = at(firstAngle, COL_LEGS[0].r0);
+  push(-238, -302);
+  push((-238 + first[0]) / 2, (-302 + first[1]) / 2);
+
+  let angle = firstAngle;
+  let dir = -1;
+  for (let i = 0; i < COL_LEGS.length; i++) {
+    const leg = COL_LEGS[i];
+    // The first leg already gave up its opening 0.22 rad to the approach.
+    const sweep = dir * (COL_SWEEP - (i === 0 ? 0.22 : 0));
+    const steps = Math.max(10, Math.round((leg.r0 * COL_SWEEP) / 9));
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const a = angle + sweep * t;
+      const r = leg.r0 + (leg.r1 - leg.r0) * t;
+      push(...at(a, r));
+    }
+
+    const centreAngle = angle + sweep;
+    const last = i === COL_LEGS.length - 1;
+    if (last) {
+      // Final approach: a gentle arc onto the summit pad.
+      const finalSteps = 14;
+      for (let s = 1; s <= finalSteps; s++) {
+        const t = s / finalSteps;
+        const a = centreAngle + dir * 0.55 * t;
+        const r = leg.r1 - 8 * t;
+        push(...at(a, r));
+      }
+      break;
+    }
+
+    // Hairpin: a semicircle that turns the car 180° and lifts the road by one
+    // shelf. `h` is half the radius step.
+    const h = (leg.r1 - leg.r2) / 2;
+    const hairSteps = Math.max(6, Math.round((Math.PI * h) / 6));
+    for (let s = 1; s <= hairSteps; s++) {
+      const phi = (s / hairSteps) * Math.PI;
+      const rc = leg.r1 - h;
+      const radial: [number, number] = [Math.cos(centreAngle), Math.sin(centreAngle)];
+      const tangent: [number, number] = [-Math.sin(centreAngle), Math.cos(centreAngle)];
+      const px = MASSIF.cx + radial[0] * rc + radial[0] * Math.cos(phi) * h;
+      const pz = MASSIF.cz + radial[1] * rc + radial[1] * Math.cos(phi) * h;
+      const side = dir * h * Math.sin(phi);
+      push(px + tangent[0] * side, pz + tangent[1] * side);
+    }
+
+    angle = centreAngle;
+    dir = -dir;
   }
   return points;
 })();
@@ -176,9 +245,61 @@ export const COL_ROAD: RoadDef = {
   name: 'Route du Col',
   points: COL_POINTS,
   closed: false,
-  width: 11,
+  width: 10.5,
   kind: 'rural',
 };
+
+// --- Dirt ------------------------------------------------------------------
+
+/** A rally stage in the south-east hills: closed, narrow, no markings. */
+export const RALLY_LOOP: RoadDef = {
+  id: 'rally',
+  name: 'Boucle Rallye',
+  points: [
+    [356, -196],
+    [404, -172],
+    [452, -178],
+    [480, -206],
+    [468, -234],
+    [428, -242],
+    [398, -264],
+    [412, -294],
+    [458, -302],
+    [492, -332],
+    [468, -366],
+    [418, -384],
+    [364, -384],
+    [316, -364],
+    [292, -332],
+    [302, -298],
+    [332, -280],
+    [356, -258],
+    [348, -226],
+  ],
+  closed: true,
+  width: 8,
+  kind: 'dirt',
+  surface: 'dirt',
+};
+
+/** Gravel link from the ring road to the rally loop. */
+export const RALLY_LINK: RoadDef = {
+  id: 'rally-link',
+  name: 'Piste du Bois',
+  points: [
+    [274, -252],
+    [306, -238],
+    [336, -222],
+    [356, -210],
+    [356, -196],
+  ],
+  closed: false,
+  width: 7,
+  kind: 'dirt',
+  surface: 'dirt',
+};
+
+export const DIRT_ROADS: RoadDef[] = [RALLY_LOOP, RALLY_LINK];
 
 function edgeRidge(x: number, z: number): number {
   const r = Math.max(Math.abs(x), Math.abs(z));
@@ -236,20 +357,30 @@ export const SAMPLED_ROADS: SampledRoad[] = ROADS.map((r) => sampleRoad(r));
 // --- Nearest-road acceleration structure -----------------------------------
 
 const CELL = 24;
-const roadGrid = new Map<string, RoadSample[]>();
+interface IndexedSample extends RoadSample {
+  index: number;
+  road: SampledRoad;
+}
+const roadGrid = new Map<string, IndexedSample[]>();
 
 for (const road of SAMPLED_ROADS) {
-  for (const s of road.samples) {
+  road.samples.forEach((s, index) => {
+    const entry: IndexedSample = { ...s, index, road };
     const key = `${Math.floor(s.x / CELL)},${Math.floor(s.z / CELL)}`;
     const bucket = roadGrid.get(key);
-    if (bucket) bucket.push(s);
-    else roadGrid.set(key, [s]);
-  }
+    if (bucket) bucket.push(entry);
+    else roadGrid.set(key, [entry]);
+  });
 }
 
 const DEFAULT_NEAREST = { dist: 9999, width: 10, x: 0, z: 0, y: 0 };
 
-/** Distance to the nearest road centre line, searching a 3x3 cell window. */
+/**
+ * Distance to the nearest road centre line, searching a 3x3 cell window.
+ * The height is interpolated along the segment, not taken from the nearest
+ * sample: on a climb a 4 m step along the road is a 40 cm height step, and
+ * using it as a plateau pushed the hillside up through the asphalt at bends.
+ */
 export function nearestRoad(x: number, z: number): { dist: number; width: number; x: number; z: number; y: number } {
   const cx = Math.floor(x / CELL);
   const cz = Math.floor(z / CELL);
@@ -261,12 +392,23 @@ export function nearestRoad(x: number, z: number): { dist: number; width: number
       if (!bucket) continue;
       for (let i = 0; i < bucket.length; i++) {
         const s = bucket[i];
-        const dx = x - s.x;
-        const dz = z - s.z;
-        const d2 = dx * dx + dz * dz;
+        const samples = s.road.samples;
+        const last = s.index === samples.length - 1;
+        const open = !s.road.def.closed;
+        const from = last && open ? samples[s.index - 1] : s;
+        const next = last && open ? samples[s.index] : samples[(s.index + 1) % samples.length];
+        const hit = segmentHit(x, z, from.x, from.z, next.x, next.z);
+        const d2 = hit.dist * hit.dist;
         if (d2 < bestD2) {
           bestD2 = d2;
-          best = { dist: Math.sqrt(d2), width: s.width, x: s.x, z: s.z, y: s.y };
+          const y = from.y + (next.y - from.y) * hit.t;
+          best = {
+            dist: hit.dist,
+            width: s.width,
+            x: from.x + (next.x - from.x) * hit.t,
+            z: from.z + (next.z - from.z) * hit.t,
+            y,
+          };
         }
       }
     }
@@ -274,11 +416,24 @@ export function nearestRoad(x: number, z: number): { dist: number; width: number
   return best;
 }
 
-// --- Mountain road ---------------------------------------------------------
-
-export const MOUNTAIN_SHELF_FLAT = 11;
-export const MOUNTAIN_SHELF_BLEND = 42;
-const MOUNTAIN_DROP = 0.06;
+/** Point-to-segment distance and the projection parameter. */
+function segmentHit(
+  x: number,
+  z: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+): { dist: number; t: number } {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const len2 = dx * dx + dz * dz;
+  let t = len2 > 1e-9 ? ((x - ax) * dx + (z - az) * dz) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const px = ax + dx * t;
+  const pz = az + dz * t;
+  return { dist: Math.hypot(x - px, z - pz), t };
+}
 
 /** Terrain as the mountain road finds it, before the road is cut into it. */
 export function naturalHeightAt(x: number, z: number): number {
@@ -295,11 +450,32 @@ export function naturalHeightAt(x: number, z: number): number {
   return base + hills + ridge + massifHeight(x, z);
 }
 
-/**
- * Fits a drivable profile to the hillside: smooth, inside a maximum grade, and
- * still ending on the summit. Both ends are pinned to the terrain so the road
- * joins the lowlands and the top without a step.
- */
+// --- Graded roads (the col and the dirt tracks) -----------------------------
+//
+// Both need an engineered profile: a smooth longitudinal curve, inside a grade
+// limit, cut into the terrain as a flat shelf. One builder serves both.
+
+export interface GradedOptions {
+  maxGrade: number;
+  /** Fully flat half-width of the shelf, m. */
+  flat: number;
+  /** Distance at which the embankment has faded into the hillside, m. */
+  blend: number;
+  /** How far the shelf sits below the road surface, m. */
+  drop: number;
+  /** Pins the first samples to the terrain so the road meets the junction. */
+  junction?: number;
+}
+
+interface GradedRoad extends SampledRoad {
+  options: GradedOptions;
+  dirt: boolean;
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
 function fitRoadProfile(points: THREE.Vector3[], target: number[], maxGrade: number): number[] {
   const n = target.length;
   const y = target.slice();
@@ -328,11 +504,9 @@ function fitRoadProfile(points: THREE.Vector3[], target: number[], maxGrade: num
   return y;
 }
 
-const MOUNTAIN_CELL = 24;
-const mountainGrid = new Map<string, RoadSample[]>();
-const MOUNTAIN_NONE = { dist: 9999, y: 0, width: 10, x: 0, z: 0 };
+const graded: GradedRoad[] = [];
 
-function buildMountainRoad(def: RoadDef): SampledRoad {
+function buildGraded(def: RoadDef, options: GradedOptions): GradedRoad {
   const curve = curveFor(def);
   const length = curve.getLength();
   const count = Math.max(8, Math.ceil(length / 4));
@@ -341,12 +515,17 @@ function buildMountainRoad(def: RoadDef): SampledRoad {
     const p = curve.getPointAt(Math.min(1, i / count));
     points.push(new THREE.Vector3(p.x, 0, p.z));
   }
+  // Closed splines repeat their first point at t = 1: drop it, the seam is
+  // implicit and a zero-length segment breaks the grade fitter.
+  if (def.closed && points.length > 2 && points[0].distanceTo(points[points.length - 1]) < 0.5) {
+    points.pop();
+  }
 
   const target = points.map((p) => naturalHeightAt(p.x, p.z));
-  const heights = fitRoadProfile(points, target, 0.16);
+  const heights = fitRoadProfile(points, target, options.maxGrade);
   // The junction has to meet the ring road at its own surface level, or the
   // graded shelf pokes up through the ring asphalt.
-  const junction = 16;
+  const junction = options.junction ?? 0;
   for (let i = 0; i < junction && i < heights.length; i++) {
     const t = smoothstep(0, junction, i);
     heights[i] = (baseHeight(points[i].x, points[i].z) - 0.03) * (1 - t) + heights[i] * t;
@@ -359,35 +538,118 @@ function buildMountainRoad(def: RoadDef): SampledRoad {
     y: p.y,
     width: def.width,
     roadId: def.id,
-    s: i * 4,
+    s: (i / Math.max(1, points.length - 1)) * length,
   }));
-  for (const s of samples) {
-    const key = `${Math.floor(s.x / MOUNTAIN_CELL)},${Math.floor(s.z / MOUNTAIN_CELL)}`;
-    const bucket = mountainGrid.get(key);
-    if (bucket) bucket.push(s);
-    else mountainGrid.set(key, [s]);
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minZ = Math.min(minZ, p.z);
+    maxZ = Math.max(maxZ, p.z);
   }
-  return { def, points, samples, length };
+
+  const road: GradedRoad = {
+    def,
+    points,
+    samples,
+    length,
+    options,
+    dirt: def.surface === 'dirt',
+    minX,
+    maxX,
+    minZ,
+    maxZ,
+  };
+  graded.push(road);
+  return road;
 }
 
-export const MOUNTAIN_ROADS: SampledRoad[] = [buildMountainRoad(COL_ROAD)];
+export const MOUNTAIN_ROADS: SampledRoad[] = [
+  buildGraded(COL_ROAD, { maxGrade: 0.145, flat: 7.6, blend: 32, drop: 0.03, junction: 16 }),
+];
 
-export function nearestMountain(x: number, z: number): { dist: number; y: number; width: number; x: number; z: number } {
-  const cx = Math.floor(x / MOUNTAIN_CELL);
-  const cz = Math.floor(z / MOUNTAIN_CELL);
-  let best = MOUNTAIN_NONE;
+export const DIRT_TRACKS: SampledRoad[] = DIRT_ROADS.map((def) =>
+  buildGraded(def, {
+    maxGrade: 0.2,
+    // The terrain grid is 6.7 m; a narrower flat band lets a triangle from
+    // inside the lane to the hillside poke through the gravel, so the shelf has
+    // to be a good cell wider than the driving surface.
+    flat: def.width * 0.5 + 2.2,
+    blend: def.width * 0.5 + 20,
+    drop: 0.02,
+    junction: def.closed ? 0 : 8,
+  }),
+);
+
+const GRADED_CELL = 24;
+interface GradedEntry {
+  road: GradedRoad;
+  index: number;
+}
+const gradedGrid = new Map<string, GradedEntry[]>();
+
+for (const road of graded) {
+  road.samples.forEach((s, index) => {
+    const key = `${Math.floor(s.x / GRADED_CELL)},${Math.floor(s.z / GRADED_CELL)}`;
+    const bucket = gradedGrid.get(key);
+    if (bucket) bucket.push({ road, index });
+    else gradedGrid.set(key, [{ road, index }]);
+  });
+}
+
+export interface GradedHit {
+  dist: number;
+  y: number;
+  width: number;
+  x: number;
+  z: number;
+  road: GradedRoad;
+}
+
+/**
+ * Nearest sample of any engineered road. The sample grid is coarse, so this
+ * walks a 5x5 cell window; the bbox test in front keeps the terrain build fast.
+ */
+export function nearestGraded(x: number, z: number): GradedHit | null {
+  const cx = Math.floor(x / GRADED_CELL);
+  const cz = Math.floor(z / GRADED_CELL);
+  let best: GradedHit | null = null;
   let bestD2 = Infinity;
   for (let ix = -2; ix <= 2; ix++) {
     for (let iz = -2; iz <= 2; iz++) {
-      const bucket = mountainGrid.get(`${cx + ix},${cz + iz}`);
+      const bucket = gradedGrid.get(`${cx + ix},${cz + iz}`);
       if (!bucket) continue;
-      for (const s of bucket) {
-        const dx = x - s.x;
-        const dz = z - s.z;
-        const d2 = dx * dx + dz * dz;
+      for (const entry of bucket) {
+        const road = entry.road;
+        if (
+          x < road.minX - 60 ||
+          x > road.maxX + 60 ||
+          z < road.minZ - 60 ||
+          z > road.maxZ + 60
+        ) {
+          continue;
+        }
+        const samples = road.samples;
+        const last = entry.index === samples.length - 1;
+        const open = !road.def.closed;
+        const from = last && open ? samples[entry.index - 1] : samples[entry.index];
+        const to = last && open ? samples[entry.index] : samples[(entry.index + 1) % samples.length];
+        const hit = segmentHit(x, z, from.x, from.z, to.x, to.z);
+        const d2 = hit.dist * hit.dist;
         if (d2 < bestD2) {
           bestD2 = d2;
-          best = { dist: Math.sqrt(d2), y: s.y, width: s.width, x: s.x, z: s.z };
+          best = {
+            dist: hit.dist,
+            y: from.y + (to.y - from.y) * hit.t,
+            width: from.width,
+            x: from.x + (to.x - from.x) * hit.t,
+            z: from.z + (to.z - from.z) * hit.t,
+            road,
+          };
         }
       }
     }
@@ -395,16 +657,22 @@ export function nearestMountain(x: number, z: number): { dist: number; y: number
   return best;
 }
 
+export function nearestMountain(x: number, z: number): { dist: number; y: number; width: number; x: number; z: number } {
+  const hit = nearestGraded(x, z);
+  if (!hit) return { dist: 9999, y: 0, width: 10, x: 0, z: 0 };
+  return { dist: hit.dist, y: hit.y, width: hit.width, x: hit.x, z: hit.z };
+}
+
 /** Distance to the closest road of any kind, for scenery placement. */
 export function roadClearance(x: number, z: number): number {
-  return Math.min(nearestRoad(x, z).dist, nearestMountain(x, z).dist);
+  return Math.min(nearestRoad(x, z).dist, nearestGraded(x, z)?.dist ?? 9999);
 }
 
 /** Flat summit where the road ends: the drift arena at the top of the col. */
 export const SUMMIT = (() => {
   const road = MOUNTAIN_ROADS[0];
   const last = road.samples[road.samples.length - 1];
-  return { cx: MASSIF.cx, cz: MASSIF.cz, y: last.y, radius: 52, blend: 86 };
+  return { cx: MASSIF.cx, cz: MASSIF.cz, y: last.y, radius: 54, blend: 66 };
 })();
 
 export function padEdgeDistance(x: number, z: number): number {
@@ -413,18 +681,47 @@ export function padEdgeDistance(x: number, z: number): number {
   return Math.max(dx, dz);
 }
 
+// --- Surface ---------------------------------------------------------------
+
+export interface SurfaceInfo {
+  kind: SurfaceKind;
+  /** Multiplier on tire friction. */
+  grip: number;
+  /** Multiplier on the tire's peak slip angle. */
+  peak: number;
+  /** Multiplier on rolling resistance. */
+  rolling: number;
+  /** 0..1 how much the ground rumbles. */
+  roughness: number;
+}
+
+export const SURFACES: Record<SurfaceKind, SurfaceInfo> = {
+  asphalte: { kind: 'asphalte', grip: 1, peak: 1, rolling: 1, roughness: 0 },
+  terre: { kind: 'terre', grip: 0.62, peak: 1.3, rolling: 2.6, roughness: 0.72 },
+  herbe: { kind: 'herbe', grip: 0.47, peak: 1.45, rolling: 3.8, roughness: 1 },
+};
+
+/** Which surface a wheel is rolling on. Sharp edges, no grid blurring. */
+export function surfaceAt(x: number, z: number): SurfaceInfo {
+  const engineered = nearestGraded(x, z);
+  if (engineered && engineered.dist <= engineered.width * 0.5 + 0.4) {
+    return engineered.road.dirt ? SURFACES.terre : SURFACES.asphalte;
+  }
+  const road = nearestRoad(x, z);
+  if (road.dist <= road.width * 0.5 + 0.4) return SURFACES.asphalte;
+  if (padEdgeDistance(x, z) < 0) return SURFACES.asphalte;
+  if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius) return SURFACES.asphalte;
+  return SURFACES.herbe;
+}
+
+// --- Final terrain ---------------------------------------------------------
+
 /** Final terrain height: roads are flat to their own level, pads are level. */
 export function heightAt(x: number, z: number): number {
   let h = naturalHeightAt(x, z);
 
-  // The mountain road is cut into the slope: a flat shelf two lanes wide, then
-  // an embankment that fades back into the hillside.
-  const mountain = nearestMountain(x, z);
-  if (mountain.dist < MOUNTAIN_SHELF_BLEND) {
-    const t = smoothstep(MOUNTAIN_SHELF_FLAT, MOUNTAIN_SHELF_BLEND, mountain.dist);
-    h = (mountain.y - MOUNTAIN_DROP) * (1 - t) + h * t;
-  }
-
+  // The two arenas are levelled first: a road cut must be able to win over the
+  // plateau it runs into, otherwise the summit disc buries the last switchback.
   const summit = Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz);
   if (summit < SUMMIT.blend) {
     const t = smoothstep(SUMMIT.radius, SUMMIT.blend, summit);
@@ -435,6 +732,25 @@ export function heightAt(x: number, z: number): number {
   if (pad < 34) {
     const t = smoothstep(0, 34, pad);
     h = DRIFT_PAD.y * (1 - t) + h * t;
+  }
+
+  // Every engineered road (the col, the dirt stages) is cut in as a flat shelf,
+  // then an embankment fades back into the hillside.
+  const engineered = nearestGraded(x, z);
+  if (engineered && engineered.dist < engineered.road.options.blend) {
+    const { blend, drop } = engineered.road.options;
+    const t = smoothstep(engineered.width * 0.5 + 0.6, blend, engineered.dist);
+    h = (engineered.y - drop) * (1 - t) + h * t;
+  }
+
+  // Ordinary streets: flatten the terrain to the asphalt level as well. Without
+  // it the coarse terrain triangles poke through the road ribbon on any slope,
+  // which is what made the surfaces flicker and overlap.
+  const road = nearestRoad(x, z);
+  const flat = road.width * 0.5 + 2.5;
+  if (road.dist < flat + 8) {
+    const t = smoothstep(flat, flat + 8, road.dist);
+    h = (road.y - 0.012) * (1 - t) + h * t;
   }
   return h;
 }
@@ -452,6 +768,25 @@ export const COL_START = (() => {
   const p = road.points[2];
   const next = road.points[3];
   return { x: p.x, z: p.z, heading: Math.atan2(-(next.x - p.x), -(next.z - p.z)) };
+})();
+
+/** Start line of the rally stage, on the gravel loop. */
+export const RALLY_START = (() => {
+  const loop = DIRT_TRACKS[0];
+  const i = Math.floor(loop.points.length * 0.02);
+  const p = loop.points[i];
+  const next = loop.points[(i + 1) % loop.points.length];
+  return { x: p.x, z: p.z, heading: Math.atan2(-(next.x - p.x), -(next.z - p.z)) };
+})();
+
+export const SUMMIT_START = (() => {
+  const angle = 2.4;
+  const r = SUMMIT.radius * 0.55;
+  return {
+    x: SUMMIT.cx + Math.cos(angle) * r,
+    z: SUMMIT.cz + Math.sin(angle) * r,
+    heading: angle + Math.PI / 2 + Math.PI,
+  };
 })();
 
 export function roadHeadingAt(road: SampledRoad, index: number): number {

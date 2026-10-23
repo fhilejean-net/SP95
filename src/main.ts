@@ -2,8 +2,16 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import './styles.css';
 import { Vehicle, type VehicleInput, type VehicleSpec } from './physics/vehicle.ts';
-import { COL_START, RACE_START, SPAWN, buildRaceCheckpoints } from './world/layout.ts';
-import { buildMountainRoads, buildRaceGates, buildRoads, buildTerrain } from './world/terrain.ts';
+import {
+  COL_START,
+  RACE_START,
+  RALLY_START,
+  SPAWN,
+  SUMMIT_START,
+  buildRaceCheckpoints,
+  surfaceAt,
+} from './world/layout.ts';
+import { buildGradedRoads, buildRaceGates, buildRoads, buildTerrain } from './world/terrain.ts';
 import { buildCity, syncProps } from './world/city.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
 import { createSky } from './render/sky.ts';
@@ -19,6 +27,8 @@ import { Garage } from './game/garage.ts';
 import { loadSetup, resolveSpec, saveSetup, type Setup } from './game/tuning.ts';
 
 const FIXED = 1 / 120;
+
+type FreeSpawn = 'city' | 'col' | 'rally' | 'summit';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const loading = document.getElementById('loading') as HTMLDivElement;
@@ -107,7 +117,7 @@ async function boot(): Promise<void> {
 
   await setLoading(0.52, 'Tracé des routes…');
   buildRoads(scene, materials);
-  buildMountainRoads(scene, materials);
+  buildGradedRoads(scene, materials);
 
   await setLoading(0.68, 'Construction de la ville…');
   const props = buildCity(scene, world, materials);
@@ -125,7 +135,7 @@ async function boot(): Promise<void> {
   const spawnY = terrain.sample(SPAWN.x, SPAWN.z) + rideHeightFor(spec);
   let vehicle = new Vehicle(
     world,
-    { x: SPAWN.x, y: spawnY, z: SPAWN.z, heading: SPAWN.heading },
+    { x: SPAWN.x, y: spawnY, z: SPAWN.z, heading: SPAWN.heading, surfaceAt },
     spec,
   );
   const car = createCar();
@@ -140,13 +150,16 @@ async function boot(): Promise<void> {
   const governor = new QualityGovernor(renderer, renderer.getPixelRatio());
 
   let mode: GameMode = 'menu';
-  let freeSpawn: 'city' | 'col' = 'city';
+  let freeSpawn: FreeSpawn = 'city';
   let paused = false;
   let accumulator = 0;
   let race: Race | null = null;
   let menuTime = 0;
   let lastSpeed = 0;
   let lastCrashTime = -10;
+  let gravelTimer = 0;
+  /** Inspection camera, set from the debug hook: no effect unless used. */
+  let freeCamera: { pos: THREE.Vector3; target: THREE.Vector3 } | null = null;
   let lastFrame = performance.now();
   let fpsFrames = 0;
   let fpsTime = 0;
@@ -204,7 +217,7 @@ async function boot(): Promise<void> {
     lastSpeed = 0;
   }
 
-  function startMode(next: GameMode, spawn: 'city' | 'col' = 'city'): void {
+  function startMode(next: GameMode, spawn: FreeSpawn = 'city'): void {
     mode = next;
     freeSpawn = spawn;
     paused = false;
@@ -214,6 +227,7 @@ async function boot(): Promise<void> {
     hud.setMode(next);
     input.clear();
     audio.init();
+    configureAudio();
     race = null;
     hud.hideMessage();
     hudElement.dataset.count = '';
@@ -229,6 +243,16 @@ async function boot(): Promise<void> {
       drift.reset();
       lastSpeed = 0;
       hud.flash('Route du Col', { duration: 1300 });
+    } else if (spawn === 'rally') {
+      setCarPose(RALLY_START.x, RALLY_START.z, RALLY_START.heading);
+      drift.reset();
+      lastSpeed = 0;
+      hud.flash('Piste rallye', { duration: 1300 });
+    } else if (spawn === 'summit') {
+      setCarPose(SUMMIT_START.x, SUMMIT_START.z, SUMMIT_START.heading);
+      drift.reset();
+      lastSpeed = 0;
+      hud.flash('Sommet', { duration: 1300 });
     } else {
       spawnFree();
       hud.flash('Conduite libre', { duration: 1100 });
@@ -242,7 +266,17 @@ async function boot(): Promise<void> {
     pause.classList.toggle('hidden', !paused);
     if (paused) {
       input.clear();
-      audio.update({ rpm: 900, throttle: 0, speed: 0, slip: 0, gear: 1, grounded: true });
+      audio.update({
+        rpm: 900,
+        throttle: 0,
+        speed: 0,
+        slip: 0,
+        gear: 1,
+        grounded: true,
+        limiter: false,
+        roughness: 0,
+        offRoad: false,
+      });
     }
   }
 
@@ -252,6 +286,8 @@ async function boot(): Promise<void> {
       setCarPose(pose.x, pose.z, pose.heading);
     } else {
       if (freeSpawn === 'col') setCarPose(COL_START.x, COL_START.z, COL_START.heading);
+      else if (freeSpawn === 'rally') setCarPose(RALLY_START.x, RALLY_START.z, RALLY_START.heading);
+      else if (freeSpawn === 'summit') setCarPose(SUMMIT_START.x, SUMMIT_START.z, SUMMIT_START.heading);
       else spawnFree();
     }
     hud.flash('Réapparition', { duration: 700 });
@@ -267,11 +303,21 @@ async function boot(): Promise<void> {
     world.removeRigidBody(vehicle.body);
     vehicle = new Vehicle(
       world,
-      { x: position.x, y: position.y + 0.35, z: position.z, heading },
+      { x: position.x, y: position.y + 0.35, z: position.z, heading, surfaceAt },
       spec,
     );
     car.setWheelRadius(spec.wheelRadius);
+    configureAudio();
     setCarPose(position.x, position.z, heading);
+  }
+
+  function configureAudio(): void {
+    audio.configure({
+      redline: spec.redlineRpm,
+      turbo: setup.engine > 0,
+      exhaustLevel: setup.exhaust,
+      engineLevel: setup.engine,
+    });
   }
 
   const garage = new Garage(setup, applySetup);
@@ -287,6 +333,10 @@ async function boot(): Promise<void> {
   document.getElementById('btn-pause-garage')?.addEventListener('click', openGarage);
   document.getElementById('btn-col')?.addEventListener('click', () => startMode('free', 'col'));
   document.getElementById('btn-pause-col')?.addEventListener('click', () => startMode('free', 'col'));
+  document.getElementById('btn-rally')?.addEventListener('click', () => startMode('free', 'rally'));
+  document.getElementById('btn-pause-rally')?.addEventListener('click', () => startMode('free', 'rally'));
+  document.getElementById('btn-sommet')?.addEventListener('click', () => startMode('free', 'summit'));
+  document.getElementById('btn-pause-sommet')?.addEventListener('click', () => startMode('free', 'summit'));
   document.getElementById('btn-resume')?.addEventListener('click', () => togglePause());
   document.getElementById('btn-pause-free')?.addEventListener('click', () => startMode('free', freeSpawn));
   document.getElementById('btn-pause-race')?.addEventListener('click', () => startMode('race'));
@@ -411,7 +461,17 @@ async function boot(): Promise<void> {
       slip: vehicle.rearSlipIntensity(),
       gear: telemetry.gear,
       grounded: !telemetry.airborne,
+      limiter: telemetry.limiter,
+      roughness: telemetry.surface.roughness,
+      offRoad: telemetry.surface.kind !== 'asphalte',
     });
+
+    // Stones under the sills when a wheel is on loose ground.
+    gravelTimer -= dt;
+    if (gravelTimer <= 0 && telemetry.surface.kind === 'terre' && speed > 4) {
+      gravelTimer = 0.12 + Math.random() * 0.25;
+      audio.gravelTick();
+    }
   }
 
   function updateVisuals(dt: number): void {
@@ -449,6 +509,11 @@ async function boot(): Promise<void> {
       );
       camera.lookAt(SPAWN.x, ground + 0.55, SPAWN.z);
       camera.fov += (52 - camera.fov) * Math.min(1, dt * 2);
+      camera.updateProjectionMatrix();
+    } else if (freeCamera) {
+      camera.position.copy(freeCamera.pos);
+      camera.lookAt(freeCamera.target);
+      camera.fov = 55;
       camera.updateProjectionMatrix();
     } else {
       chase.update(
@@ -562,6 +627,19 @@ async function boot(): Promise<void> {
     get setup() {
       return { ...setup };
     },
+    get surface() {
+      return vehicle.telemetryState.surface.kind;
+    },
+    get gearFloat() {
+      return vehicle.telemetryState.gear;
+    },
+    get audioEvents() {
+      return audio.events;
+    },
+    get drivetrain() {
+      const t = vehicle.telemetryState;
+      return { gear: t.gear, rpm: t.rpm, limiter: t.limiter, shifting: t.shifting };
+    },
     get spec() {
       return { name: spec.name, mass: spec.mass, peakTorque: spec.peakTorque, maxSteer: spec.maxSteer };
     },
@@ -571,7 +649,18 @@ async function boot(): Promise<void> {
     startFree: () => startMode('free'),
     startRace: () => startMode('race'),
     startCol: () => startMode('free', 'col'),
+    startRally: () => startMode('free', 'rally'),
+    startSummit: () => startMode('free', 'summit'),
     teleport: (x: number, z: number, heading: number) => setCarPose(x, z, heading),
+    setCamera: (px: number, py: number, pz: number, tx: number, ty: number, tz: number) => {
+      freeCamera = {
+        pos: new THREE.Vector3(px, py, pz),
+        target: new THREE.Vector3(tx, ty, tz),
+      };
+    },
+    clearCamera: () => {
+      freeCamera = null;
+    },
   };
 }
 
@@ -590,12 +679,20 @@ declare global {
       readonly position: { x: number; y: number; z: number };
       readonly debug: { fps: number; drawCalls: number; triangles: number; driftPending: number };
       readonly setup: Setup;
+      readonly surface: string;
+      readonly gearFloat: number;
+      readonly audioEvents: number;
+      readonly drivetrain: { gear: number; rpm: number; limiter: boolean; shifting: boolean };
       readonly spec: { name: string; mass: number; peakTorque: number; maxSteer: number };
       readonly garageOpen: boolean;
       startFree: () => void;
       startRace: () => void;
       startCol: () => void;
+      startRally: () => void;
+      startSummit: () => void;
       teleport: (x: number, z: number, heading: number) => void;
+      setCamera: (px: number, py: number, pz: number, tx: number, ty: number, tz: number) => void;
+      clearCamera: () => void;
     };
   }
 }
