@@ -4,7 +4,7 @@ Jeu de conduite 3D jouable directement dans le navigateur : **conduite libre**, 
 
 ## Jouer
 
-- En ligne : **https://fhilejean-net.github.io/SP95/** (après activation de GitHub Pages, voir plus bas).
+- En ligne : **https://fhilejean-net.github.io/SP95/** (déployé par GitHub Actions à chaque push sur `main`).
 - En local :
 
 ```bash
@@ -89,12 +89,11 @@ Le test de fumée vérifie le démarrage, le menu, la conduite au clavier, le HU
 Le workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) construit le jeu, lance les tests et publie `dist/` à chaque push sur `main`.
 
 1. Pousser sur `main`.
-2. Dans le dépôt : **Settings → Pages → Source : GitHub Actions**.
-3. Le site est publié sur `https://<compte>.github.io/SP95/`.
+2. Le site est publié sur `https://<compte>.github.io/SP95/`.
 
-Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite sur `/SP95/`. Sans Pages activé, le workflow de déploiement échouera à l'étape `configure-pages` (le build et les tests passent quand même).
+Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite sur `/SP95/`. L'étape `configure-pages` est lancée avec `enablement: true` : elle active Pages en mode « GitHub Actions » au premier déploiement, sans réglage manuel.
 
-> **Dépôt privé :** GitHub Pages n'est pas disponible sur l'offre gratuite pour un dépôt privé. Pour publier sans changer d'offre, rendre le dépôt public (**Settings → General → Danger zone → Change visibility**), puis **Settings → Pages → Source : GitHub Actions** et relancer le workflow.
+> **Dépôt privé :** GitHub Pages n'est pas disponible sur l'offre gratuite pour un dépôt privé. Le dépôt doit rester public pour que le déploiement fonctionne.
 
 ## Limites connues
 
