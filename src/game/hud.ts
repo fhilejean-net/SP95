@@ -1,4 +1,11 @@
-import { DRIFT_PAD, RACE_START, SAMPLED_ROADS } from '../world/layout.ts';
+import {
+  DRIFT_PAD,
+  MOUNTAIN_ROADS,
+  RACE_START,
+  SAMPLED_ROADS,
+  SUMMIT,
+  WORLD_SIZE,
+} from '../world/layout.ts';
 import { Race, type RaceSnapshot } from './race.ts';
 
 export type GameMode = 'menu' | 'free' | 'race';
@@ -37,7 +44,8 @@ export class Hud {
     this.minimapBase.width = this.minimap.width;
     this.minimapBase.height = this.minimap.height;
     this.mapCenter = this.minimap.width / 2;
-    this.mapScale = (this.minimap.width - 18) / 1080;
+    // The col reaches the far corner, so the whole world has to fit.
+    this.mapScale = (this.minimap.width - 10) / (WORLD_SIZE + 120);
     this.drawMinimapBase();
   }
 
@@ -64,6 +72,26 @@ export class Hud {
       ctx.lineCap = 'round';
       ctx.stroke();
     }
+
+    for (const road of MOUNTAIN_ROADS) {
+      ctx.beginPath();
+      for (let i = 0; i < road.points.length; i++) {
+        const p = road.points[i];
+        const x = cx + p.x * s;
+        const y = cy + p.z * s;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = 'rgba(242,163,60,0.75)';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+    }
+
+    const summitRadius = Math.max(3, SUMMIT.radius * s);
+    ctx.beginPath();
+    ctx.arc(cx + SUMMIT.cx * s, cy + SUMMIT.cz * s, summitRadius, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(242,163,60,0.22)';
+    ctx.fill();
 
     const ring = SAMPLED_ROADS.find((r) => r.def.id === 'ring');
     if (ring) {

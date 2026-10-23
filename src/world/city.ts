@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { CITY, DRIFT_PAD, heightAt, nearestRoad, padEdgeDistance } from './layout.ts';
+import { CITY, DRIFT_PAD, SUMMIT, heightAt, nearestRoad, padEdgeDistance, roadClearance } from './layout.ts';
 import type { EnvironmentMaterials } from '../render/materials.ts';
 
 function mulberry32(seed: number): () => number {
@@ -154,9 +154,10 @@ export function buildCity(
     if (x > CITY.minX - 30 && x < CITY.maxX + 30 && z > CITY.minZ - 30 && z < CITY.maxZ + 45) continue;
     if (padEdgeDistance(x, z) < 25) continue;
     const road = nearestRoad(x, z);
-    if (road.dist < road.width * 0.5 + 14) continue;
+    if (roadClearance(x, z) < road.width * 0.5 + 14) continue;
+    if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius + 12) continue;
     const y = heightAt(x, z);
-    if (y > 70) continue;
+    if (y > 104) continue;
     const s = 0.75 + rand() * 0.9;
     const rotation = rand() * Math.PI * 2;
     position.set(x, y - 0.2, z);
@@ -201,10 +202,21 @@ export function buildCity(
     ]);
   }
 
-  for (const [x, z] of conePositions) {
+  // Marking circle on the summit of the col.
+  const summitCones: [number, number][] = [];
+  for (let i = 0; i < 14; i++) {
+    const angle = (i / 14) * Math.PI * 2;
+    summitCones.push([
+      SUMMIT.cx + Math.cos(angle) * 38,
+      SUMMIT.cz + Math.sin(angle) * 38,
+    ]);
+  }
+
+  for (const [x, z] of [...conePositions, ...summitCones]) {
+    const isSummit = Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius + 1;
     const body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(x, DRIFT_PAD.y + 0.1, z)
+        .setTranslation(x, (isSummit ? SUMMIT.y : DRIFT_PAD.y) + 0.1, z)
         .setLinearDamping(0.4)
         .setAngularDamping(0.6),
     );
@@ -218,7 +230,7 @@ export function buildCity(
     const base = new THREE.Mesh(baseGeo, mats.cone);
     base.castShadow = true;
     group.add(cone, base);
-    group.position.set(x, DRIFT_PAD.y, z);
+    group.position.set(x, isSummit ? SUMMIT.y : DRIFT_PAD.y, z);
     scene.add(group);
     props.push({ body, mesh: group });
   }

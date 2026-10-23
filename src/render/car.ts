@@ -78,6 +78,8 @@ export interface CarVisual {
   brakeLights: THREE.Mesh[];
   reverseLight: THREE.Mesh;
   setPaint: (color: number) => void;
+  /** Fits the wheels to the tire fitted in the garage. */
+  setWheelRadius: (radius: number) => void;
 }
 
 const PAINT_COLOR = 0xa51d2d;
@@ -294,6 +296,10 @@ export function createCar(paint = PAINT_COLOR): CarVisual {
     reverseLight,
     setPaint: (color: number) => {
       paintMaterial.color.setHex(color);
+    },
+    setWheelRadius: (radius: number) => {
+      const scale = radius / 0.34;
+      for (const w of wheels) w.scale.setScalar(scale);
     },
   };
 }

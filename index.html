@@ -29,6 +29,8 @@
         <div class="menu-actions">
           <button id="btn-free" class="primary">Conduite libre</button>
           <button id="btn-race">Course · 2 tours</button>
+          <button id="btn-col">Col · route de montagne</button>
+          <button id="btn-garage">Atelier · préparation</button>
         </div>
         <p class="menu-best" id="menu-best"></p>
         <div class="controls-grid">
@@ -99,9 +101,35 @@
           <button id="btn-resume" class="primary">Reprendre</button>
           <button id="btn-pause-free">Conduite libre</button>
           <button id="btn-pause-race">Course · 2 tours</button>
+          <button id="btn-pause-col">Col · route de montagne</button>
+          <button id="btn-pause-garage">Atelier · préparation</button>
           <button id="btn-pause-menu">Menu principal</button>
         </div>
         <p class="menu-footnote">Échap pour reprendre.</p>
+      </div>
+    </div>
+
+    <div id="garage" class="overlay hidden">
+      <div class="garage-card">
+        <div class="garage-head">
+          <div>
+            <p class="eyebrow">Atelier</p>
+            <h2 class="garage-title">Préparation</h2>
+          </div>
+          <div class="garage-stats" id="garage-stats"></div>
+        </div>
+        <div class="garage-body">
+          <nav class="garage-tabs" id="garage-tabs"></nav>
+          <div class="garage-main">
+            <div class="garage-presets" id="garage-presets"></div>
+            <p class="garage-hint" id="garage-hint"></p>
+            <div class="garage-options" id="garage-options"></div>
+          </div>
+        </div>
+        <div class="garage-foot">
+          <p class="menu-footnote">Chaque pièce est appliquée immédiatement et mémorisée.</p>
+          <button id="btn-garage-close" class="primary">Terminer</button>
+        </div>
       </div>
     </div>
 

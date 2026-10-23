@@ -23,7 +23,7 @@ export const SPORT_DRIVETRAIN: DrivetrainConfig = {
   upshiftRpm: 6800,
   downshiftRpm: 2150,
   ratios: [3.62, 2.19, 1.6, 1.25, 1.03, 0.84],
-  reverseRatio: 3.4,
+  reverseRatio: 2.6,
   finalDrive: 3.55,
   efficiency: 0.9,
   peakTorque: 420,
@@ -85,20 +85,29 @@ export class Drivetrain {
     const cfg = this.config;
     this.shiftTimer = Math.max(0, this.shiftTimer - dt);
 
-    // Engage reverse by holding the brake at a standstill.
-    if (this.gear > 0 && speedMs < 1.2 && brake > 0.35 && throttle < 0.15) {
-      this.reverseHold += dt;
-      if (this.reverseHold > 0.4) {
-        this.gear = -1;
+    // Reverse is a gear you engage at a standstill, like holding the pedal on an
+    // automatic: it never engages while the car is still rolling.
+    if (this.gear > 0) {
+      if (Math.abs(speedMs) < 0.9 && brake > 0.35 && throttle < 0.12) {
+        this.reverseHold += dt;
+        if (this.reverseHold > 0.35) {
+          this.gear = -1;
+          this.reverseHold = 0;
+          this.shiftTimer = 0;
+        }
+      } else {
         this.reverseHold = 0;
       }
     } else {
+      // Leaving reverse is immediate once the driver asks for forward: the car
+      // brakes on its way down, then first gear takes over as soon as it has
+      // stopped rolling backwards. Waiting for an exact speed left the car
+      // stuck in reverse while the throttle acted as a brake.
       this.reverseHold = 0;
-    }
-
-    // Leave reverse once stopped and asking to go forward.
-    if (this.gear === -1 && speedMs > -1 && speedMs < 1.2 && throttle > 0.2) {
-      this.gear = 1;
+      if (throttle > 0.12 && speedMs > -1.4) {
+        this.gear = 1;
+        this.shiftTimer = 0.12;
+      }
     }
 
     if (this.gear > 1 && Math.abs(speedMs) < 2.2) {
@@ -138,12 +147,20 @@ export class Drivetrain {
     const effectiveThrottle = this.gear === -1 ? brake : throttle;
     const shifting = this.shiftTimer > 0;
     const limiter = rpm > cfg.redlineRpm - 60 ? 0.15 : 1;
-    const engineTorque = shifting || effectiveThrottle <= 0.01
+    // Reverse is for manoeuvring: past a walking-pace-plus crawl the drive is
+    // cut, otherwise the car reverses at motorway speed.
+    const reverseCut = this.gear === -1 && speedMs < -7.5;
+    const engineTorque = shifting || effectiveThrottle <= 0.01 || reverseCut
       ? 0
       : torqueAtRpm(rpm, cfg) * effectiveThrottle * limiter;
 
-    // Engine braking when off the throttle and in gear.
-    const engineBrake = effectiveThrottle <= 0.02 && Math.abs(speedMs) > 1 ? 14 * Math.sign(gearRatio) : 0;
+    // Engine braking opposes the wheel's rotation, so its sign follows the
+    // direction of travel and the gear, not the gear alone (which would drive
+    // the car backwards in reverse).
+    const engineBrake =
+      effectiveThrottle <= 0.02 && Math.abs(speedMs) > 1
+        ? 14 * Math.sign(speedMs * gearRatio)
+        : 0;
 
     this.rpm = rpm;
 

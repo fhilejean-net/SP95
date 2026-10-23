@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import './styles.css';
-import { Vehicle, type VehicleInput } from './physics/vehicle.ts';
-import { RACE_START, SPAWN, buildRaceCheckpoints } from './world/layout.ts';
-import { buildRaceGates, buildRoads, buildTerrain } from './world/terrain.ts';
+import { Vehicle, type VehicleInput, type VehicleSpec } from './physics/vehicle.ts';
+import { COL_START, RACE_START, SPAWN, buildRaceCheckpoints } from './world/layout.ts';
+import { buildMountainRoads, buildRaceGates, buildRoads, buildTerrain } from './world/terrain.ts';
 import { buildCity, syncProps } from './world/city.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
 import { createSky } from './render/sky.ts';
@@ -15,6 +15,8 @@ import { Hud, type GameMode } from './game/hud.ts';
 import { DriftScore } from './game/drift.ts';
 import { Race } from './game/race.ts';
 import { CarAudio } from './game/audio.ts';
+import { Garage } from './game/garage.ts';
+import { loadSetup, resolveSpec, saveSetup, type Setup } from './game/tuning.ts';
 
 const FIXED = 1 / 120;
 
@@ -105,6 +107,7 @@ async function boot(): Promise<void> {
 
   await setLoading(0.52, 'Tracé des routes…');
   buildRoads(scene, materials);
+  buildMountainRoads(scene, materials);
 
   await setLoading(0.68, 'Construction de la ville…');
   const props = buildCity(scene, world, materials);
@@ -114,16 +117,19 @@ async function boot(): Promise<void> {
   buildRaceGates(scene, materials, checkpoints);
 
   await setLoading(0.84, 'Montage de la voiture…');
+  let setup: Setup = loadSetup();
+  let spec: VehicleSpec = resolveSpec(setup);
   // Drop the car in at its ride height: spawning higher makes it land on the
-  // bump stops and bounce before the player can drive.
-  const spawnY = terrain.sample(SPAWN.x, SPAWN.z) + 0.62;
-  const vehicle = new Vehicle(world, {
-    x: SPAWN.x,
-    y: spawnY,
-    z: SPAWN.z,
-    heading: SPAWN.heading,
-  });
+  // bump stops and bounce before the player can drive. Taller tires lift it.
+  const rideHeightFor = (s: VehicleSpec) => s.rideHeight + s.wheelRadius - 0.12 + 0.04;
+  const spawnY = terrain.sample(SPAWN.x, SPAWN.z) + rideHeightFor(spec);
+  let vehicle = new Vehicle(
+    world,
+    { x: SPAWN.x, y: spawnY, z: SPAWN.z, heading: SPAWN.heading },
+    spec,
+  );
   const car = createCar();
+  car.setWheelRadius(spec.wheelRadius);
   car.group.position.set(SPAWN.x, spawnY, SPAWN.z);
   scene.add(car.group);
 
@@ -134,6 +140,7 @@ async function boot(): Promise<void> {
   const governor = new QualityGovernor(renderer, renderer.getPixelRatio());
 
   let mode: GameMode = 'menu';
+  let freeSpawn: 'city' | 'col' = 'city';
   let paused = false;
   let accumulator = 0;
   let race: Race | null = null;
@@ -177,7 +184,7 @@ async function boot(): Promise<void> {
 
   function setCarPose(x: number, z: number, heading: number): void {
     const ground = terrain.sample(x, z);
-    vehicle.respawn(x, ground + 0.62, z, heading);
+    vehicle.respawn(x, ground + rideHeightFor(spec), z, heading);
     // Let the springs settle so the car sits on its wheels immediately.
     for (let i = 0; i < 60; i++) {
       vehicle.step(FIXED, { throttle: 0, brake: 1, steer: 0, handbrake: true }, world);
@@ -197,8 +204,9 @@ async function boot(): Promise<void> {
     lastSpeed = 0;
   }
 
-  function startMode(next: GameMode): void {
+  function startMode(next: GameMode, spawn: 'city' | 'col' = 'city'): void {
     mode = next;
+    freeSpawn = spawn;
     paused = false;
     menu.classList.add('hidden');
     pause.classList.add('hidden');
@@ -216,6 +224,11 @@ async function boot(): Promise<void> {
       drift.reset();
       lastSpeed = 0;
       hud.flash('Prêt ?', { accent: true, duration: 900 });
+    } else if (spawn === 'col') {
+      setCarPose(COL_START.x, COL_START.z, COL_START.heading);
+      drift.reset();
+      lastSpeed = 0;
+      hud.flash('Route du Col', { duration: 1300 });
     } else {
       spawnFree();
       hud.flash('Conduite libre', { duration: 1100 });
@@ -238,15 +251,44 @@ async function boot(): Promise<void> {
       const pose = race.respawnPose();
       setCarPose(pose.x, pose.z, pose.heading);
     } else {
-      spawnFree();
+      if (freeSpawn === 'col') setCarPose(COL_START.x, COL_START.z, COL_START.heading);
+      else spawnFree();
     }
     hud.flash('Réapparition', { duration: 700 });
   }
 
+  /** Rebuilds the car with the garage setup, keeping where it stands. */
+  function applySetup(next: Setup): void {
+    setup = { ...next };
+    saveSetup(setup);
+    spec = resolveSpec(setup);
+    const position = vehicle.position;
+    const heading = Math.atan2(-carForward.x, -carForward.z);
+    world.removeRigidBody(vehicle.body);
+    vehicle = new Vehicle(
+      world,
+      { x: position.x, y: position.y + 0.35, z: position.z, heading },
+      spec,
+    );
+    car.setWheelRadius(spec.wheelRadius);
+    setCarPose(position.x, position.z, heading);
+  }
+
+  const garage = new Garage(setup, applySetup);
+
+  function openGarage(): void {
+    if (mode !== 'menu' && !paused) togglePause();
+    garage.open(setup);
+  }
+
   document.getElementById('btn-free')?.addEventListener('click', () => startMode('free'));
   document.getElementById('btn-race')?.addEventListener('click', () => startMode('race'));
+  document.getElementById('btn-garage')?.addEventListener('click', openGarage);
+  document.getElementById('btn-pause-garage')?.addEventListener('click', openGarage);
+  document.getElementById('btn-col')?.addEventListener('click', () => startMode('free', 'col'));
+  document.getElementById('btn-pause-col')?.addEventListener('click', () => startMode('free', 'col'));
   document.getElementById('btn-resume')?.addEventListener('click', () => togglePause());
-  document.getElementById('btn-pause-free')?.addEventListener('click', () => startMode('free'));
+  document.getElementById('btn-pause-free')?.addEventListener('click', () => startMode('free', freeSpawn));
   document.getElementById('btn-pause-race')?.addEventListener('click', () => startMode('race'));
   document.getElementById('btn-pause-menu')?.addEventListener('click', () => {
     mode = 'menu';
@@ -458,7 +500,10 @@ async function boot(): Promise<void> {
     governor.update(dt);
     const controls = input.update(dt);
 
-    if (input.consume('pause')) togglePause();
+    if (input.consume('pause')) {
+      if (garage.isOpen) garage.close();
+      else togglePause();
+    }
     if (input.consume('mute')) audio.setMuted(!audio.isMuted);
     if (mode !== 'menu' && !paused && input.consume('reset')) {
       respawn();
@@ -514,8 +559,19 @@ async function boot(): Promise<void> {
         driftPending: drift.pending,
       };
     },
+    get setup() {
+      return { ...setup };
+    },
+    get spec() {
+      return { name: spec.name, mass: spec.mass, peakTorque: spec.peakTorque, maxSteer: spec.maxSteer };
+    },
+    get garageOpen() {
+      return garage.isOpen;
+    },
     startFree: () => startMode('free'),
     startRace: () => startMode('race'),
+    startCol: () => startMode('free', 'col'),
+    teleport: (x: number, z: number, heading: number) => setCarPose(x, z, heading),
   };
 }
 
@@ -533,8 +589,13 @@ declare global {
       readonly raceLap: number;
       readonly position: { x: number; y: number; z: number };
       readonly debug: { fps: number; drawCalls: number; triangles: number; driftPending: number };
+      readonly setup: Setup;
+      readonly spec: { name: string; mass: number; peakTorque: number; maxSteer: number };
+      readonly garageOpen: boolean;
       startFree: () => void;
       startRace: () => void;
+      startCol: () => void;
+      teleport: (x: number, z: number, heading: number) => void;
     };
   }
 }

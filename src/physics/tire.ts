@@ -64,6 +64,12 @@ export interface TireInput {
   fz: number;
   /** Base friction coefficient of the surface/tire pair. */
   mu: number;
+  /**
+   * Slip angle (rad) at which this tire reaches peak grip. Soft, high-profile
+   * tires peak late and slide progressively; a stiff semi-slick bites early and
+   * then lets go. Defaults to the road tire value.
+   */
+  peakAngle?: number;
 }
 
 export interface TireOutput {
@@ -87,7 +93,8 @@ export function tireForces(input: TireInput): TireOutput {
   }
 
   const sx = kappa / KAPPA_PEAK;
-  const sy = Math.tan(Math.max(-1.45, Math.min(1.45, alpha))) / Math.tan(ALPHA_PEAK);
+  const peak = input.peakAngle ?? ALPHA_PEAK;
+  const sy = Math.tan(Math.max(-1.45, Math.min(1.45, alpha))) / Math.tan(peak);
   const rho = Math.hypot(sx, sy);
 
   if (rho < 1e-5) {

@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { magicFormula, slipRatioFromWheelSpeed, tireForces } from '../src/physics/tire.ts';
 import { Drivetrain, torqueAtRpm } from '../src/physics/drivetrain.ts';
-import { Vehicle, NEUTRAL_INPUT, type VehicleInput } from '../src/physics/vehicle.ts';
+import { Vehicle, NEUTRAL_INPUT, STOCK_SPEC, type VehicleInput } from '../src/physics/vehicle.ts';
+import { DEFAULT_SETUP, resolveSpec, type Setup } from '../src/game/tuning.ts';
 
 const TICK = 1 / 120;
 
@@ -213,4 +214,149 @@ test('car rests without jitter or creeping', async () => {
   assert.ok(moved < 0.25, `crept ${moved.toFixed(3)}m while parked`);
   assert.ok(car.telemetryState.speedKmh < 1, `parked speed ${car.telemetryState.speedKmh.toFixed(2)} km/h`);
   assert.ok(settled.y > 0.35 && settled.y < 0.75, `ride height ${settled.y.toFixed(2)}m`);
+});
+
+test('reverse engages at a standstill, drives backwards, then hands back to first', async () => {
+  const world = await makeWorld();
+  const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 });
+  simulate(world, car, 1, NEUTRAL_INPUT);
+
+  // Hold the brake at a standstill: reverse engages and the car actually moves.
+  simulate(world, car, 2.4, { throttle: 0, brake: 1, steer: 0, handbrake: false });
+  assert.equal(car.telemetryState.gear, -1, 'brake at a standstill should select reverse');
+  assert.ok(
+    car.position.z > 1.2,
+    `car only reversed ${car.position.z.toFixed(2)}m — the parking hold may be cancelling it`,
+  );
+  assert.ok(car.telemetryState.speedKmh > 8, `reverse speed ${car.telemetryState.speedKmh.toFixed(1)}`);
+  assert.ok(car.telemetryState.speedKmh < 40, 'reverse should stay a manoeuvring gear');
+
+  // Throttle has to brake the reverse motion first, then pull away forwards.
+  simulate(world, car, 3.2, { throttle: 1, brake: 0, steer: 0, handbrake: false });
+  assert.equal(car.telemetryState.gear, 1, 'throttle should leave reverse');
+  const before = car.position.z;
+  simulate(world, car, 1.5, { throttle: 1, brake: 0, steer: 0, handbrake: false });
+  assert.ok(car.position.z < before - 1, 'car did not drive forwards after reversing');
+});
+
+test('a slide can be caught with counter-steer instead of ending in a spin', async () => {
+  const world = await makeWorld();
+  const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 });
+  simulate(world, car, 1, NEUTRAL_INPUT);
+  simulate(world, car, 6, { throttle: 1, brake: 0, steer: 0, handbrake: false });
+  assert.ok(car.telemetryState.speedKmh > 95, 'entry speed too low');
+
+  let peak = 0;
+  simulate(world, car, 0.9, { throttle: 0.8, brake: 0, steer: 1, handbrake: true }, () => {
+    peak = Math.max(peak, Math.abs(car.telemetryState.driftAngleDeg));
+  });
+  assert.ok(peak > 15, `handbrake only produced ${peak.toFixed(0)}° of slide`);
+
+  // A driver reacting to the slide: wheel turns against it, unwound as it returns.
+  for (let i = 0; i < 120 * 3; i++) {
+    const slip = car.telemetryState.slipAngle;
+    const steer = Math.max(-1, Math.min(1, (slip * 180) / Math.PI * 0.05));
+    car.step(TICK, { throttle: 0.45, brake: 0, steer, handbrake: false }, world);
+    world.step();
+  }
+  assert.ok(
+    Math.abs(car.telemetryState.driftAngleDeg) < 20,
+    `slide still at ${car.telemetryState.driftAngleDeg.toFixed(0)}° after counter-steering`,
+  );
+  assert.ok(
+    car.telemetryState.speedKmh > 25,
+    `recovery scrubbed all the speed (${car.telemetryState.speedKmh.toFixed(0)} km/h)`,
+  );
+});
+
+test('the grand-angle kit recovers angles the stock rack cannot', async () => {
+  const run = async (maxSteer: number) => {
+    const world = await makeWorld();
+    const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 }, { ...STOCK_SPEC, maxSteer });
+    simulate(world, car, 1, NEUTRAL_INPUT);
+    simulate(world, car, 6, { throttle: 1, brake: 0, steer: 0, handbrake: false });
+    // Build a big angle, then hand over to the driver.
+    let built = 0;
+    let guard = 0;
+    while (Math.abs(built) < 55 && guard < 120 * 4) {
+      car.step(TICK, { throttle: 0.8, brake: 0, steer: 1, handbrake: true }, world);
+      world.step();
+      built = car.telemetryState.driftAngleDeg;
+      guard++;
+    }
+    for (let i = 0; i < 120 * 3; i++) {
+      const slip = car.telemetryState.slipAngle;
+      const steer = Math.max(-1, Math.min(1, (slip * 180) / Math.PI * 0.05));
+      car.step(TICK, { throttle: 0.45, brake: 0, steer, handbrake: false }, world);
+      world.step();
+    }
+    return { end: Math.abs(car.telemetryState.driftAngleDeg), speed: car.telemetryState.speedKmh };
+  };
+
+  const stock = await run(STOCK_SPEC.maxSteer);
+  const kit = await run(1.15);
+  // The stock rack runs out of lock at big angles and the car scrubs to a stop;
+  // the kit still steers into the slide and drives out of it.
+  assert.ok(
+    kit.speed > stock.speed + 12,
+    `kit kept ${kit.speed.toFixed(0)} km/h vs ${stock.speed.toFixed(0)}`,
+  );
+  assert.ok(
+    kit.end <= stock.end + 2,
+    `kit ended at ${kit.end.toFixed(0)}° vs stock ${stock.end.toFixed(0)}°`,
+  );
+  assert.ok(kit.end < 15, `kit still sliding at ${kit.end.toFixed(0)}°`);
+});
+
+test('setup parts change the car the way the garage claims', async () => {
+  const accel = async (setup: Setup) => {
+    const world = await makeWorld();
+    const spec = resolveSpec(setup);
+    const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 }, spec);
+    simulate(world, car, 1, NEUTRAL_INPUT);
+    let timeTo100 = Infinity;
+    for (let i = 0; i < 120 * 20; i++) {
+      car.step(TICK, { throttle: 1, brake: 0, steer: 0, handbrake: false }, world);
+      world.step();
+      if (car.telemetryState.speedKmh >= 100 && timeTo100 === Infinity) timeTo100 = i * TICK;
+    }
+    return timeTo100;
+  };
+
+  const stock = await accel({ ...DEFAULT_SETUP });
+  const tuned = await accel({ ...DEFAULT_SETUP, engine: 3, exhaust: 2, weight: 2, tires: 1, suspension: 2 });
+  assert.ok(tuned < stock - 0.8, `tuned car did 0-100 in ${tuned.toFixed(2)}s vs ${stock.toFixed(2)}s`);
+
+  const stockSpec = resolveSpec(DEFAULT_SETUP);
+  const gripSpec = resolveSpec({ ...DEFAULT_SETUP, tires: 1 });
+  const driftSpec = resolveSpec({ ...DEFAULT_SETUP, tires: 2 });
+  assert.ok(gripSpec.muRear > stockSpec.muRear, 'semi-slicks should grip harder');
+  assert.ok(driftSpec.muRear < stockSpec.muRear, 'drift tires should slide more');
+  assert.ok(driftSpec.peakSlipAngle > stockSpec.peakSlipAngle, 'drift tires should peak later');
+  assert.ok(resolveSpec({ ...DEFAULT_SETUP, suspension: 3 }).wheelTravel > stockSpec.wheelTravel, 'rally suspension needs more travel');
+  assert.ok(resolveSpec({ ...DEFAULT_SETUP, steering: 1 }).maxSteer > stockSpec.maxSteer, 'the kit should steer further');
+});
+
+test('the car climbs a 15% gradient from a standstill', async () => {
+  await RAPIER.init();
+  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  world.timestep = TICK;
+  const angle = Math.atan(0.15);
+  const ramp = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setRotation({
+      x: Math.sin(angle / 2),
+      y: 0,
+      z: 0,
+      w: Math.cos(angle / 2),
+    }),
+  );
+  world.createCollider(RAPIER.ColliderDesc.cuboid(500, 0.5, 120).setFriction(1), ramp);
+
+  const car = new Vehicle(world, { x: 0, y: 4, z: 40, heading: 0 });
+  simulate(world, car, 1.5, NEUTRAL_INPUT);
+  const start = car.position;
+  simulate(world, car, 6, { throttle: 1, brake: 0, steer: 0, handbrake: false });
+  assert.ok(car.telemetryState.speedKmh > 40, `only reached ${car.telemetryState.speedKmh.toFixed(0)} km/h on the climb`);
+  assert.ok(car.position.y > start.y + 2, `car climbed ${(car.position.y - start.y).toFixed(2)}m`);
+  assert.ok(car.position.z < start.z - 15, 'car did not make progress up the hill');
 });

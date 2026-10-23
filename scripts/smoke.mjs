@@ -56,6 +56,27 @@ try {
     `${initial.debug.drawCalls} draw calls, ${initial.debug.triangles} triangles`,
   );
 
+  // Garage: pick a part, make sure the car is rebuilt with it.
+  await page.click('#btn-garage');
+  await page.waitForTimeout(400);
+  const garage = await page.evaluate(() => ({
+    open: window.__sp95.garageOpen,
+    tabs: document.querySelectorAll('#garage-tabs button').length,
+    parts: document.querySelectorAll('#garage-options button').length,
+  }));
+  check('garage lists every setup category', garage.open && garage.tabs === 6, `${garage.tabs} tabs`);
+  await page.click('#garage-options button[data-option="1"]');
+  const tuned = await page.evaluate(() => window.__sp95.spec);
+  check('a part changes the car', tuned.peakTorque > 420, `${tuned.peakTorque} Nm`);
+  await page.click('#garage-options button[data-option="0"]');
+  await page.click('#garage-presets button[data-preset="1"]');
+  const drift = await page.evaluate(() => window.__sp95.spec);
+  check('the drift preset fits the angle kit', drift.maxSteer > 1, `${drift.maxSteer.toFixed(2)} rad`);
+  await page.click('#garage-presets button[data-preset="0"]');
+  await page.click('#btn-garage-close');
+  const stockAgain = await page.evaluate(() => window.__sp95.spec);
+  check('the stock setup is restored', stockAgain.peakTorque === 420, `${stockAgain.peakTorque} Nm`);
+
   await page.click('#btn-free');
   await page.waitForFunction(() => window.__sp95.mode === 'free');
   await page.waitForTimeout(700);
@@ -97,6 +118,22 @@ try {
 
   const debug = await page.evaluate(() => window.__sp95.debug);
   console.log(`INFO  render: ${debug.drawCalls} draw calls, ${Math.round(debug.triangles / 1000)}k triangles, ~${debug.fps} fps (SwiftShader)`);
+
+  // Mountain road: the col spawns far from the city, on the climb.
+  await page.keyboard.press('Escape');
+  await waitFor(() => window.__sp95.paused === true, 8000);
+  await page.click('#btn-pause-col');
+  await page.waitForTimeout(1200);
+  const col = await page.evaluate(() => ({ mode: window.__sp95.mode, position: window.__sp95.position }));
+  check(
+    'the col spawns on the mountain road',
+    col.mode === 'free' && col.position.x < -200 && col.position.z < -280,
+    `${col.position.x.toFixed(0)}, ${col.position.z.toFixed(0)}`,
+  );
+  await page.keyboard.down('KeyW');
+  const climbed = await waitFor(() => window.__sp95.speedKmh > 20, 45_000);
+  await page.keyboard.up('KeyW');
+  check('the car drives away on the col', Boolean(climbed));
 } catch (error) {
   failed = true;
   console.error('SMOKE ERROR', error);

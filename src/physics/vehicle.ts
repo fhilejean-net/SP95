@@ -92,31 +92,91 @@ export interface VehicleState {
   velocity: Vec3;
 }
 
-const WHEEL_RADIUS = 0.34;
-// 46 cm of free length leaves roughly 10 cm of static compression (7 cm of
-// droop, 24 cm of bump travel) and puts the chassis 18 cm off the road.
-const REST_LENGTH = 0.46;
-const MAX_LENGTH = 0.6;
-const MIN_LENGTH = 0.1;
-const BUMP_STOP = 0.245;
-const SPRING_K = 34000;
-const SPRING_C = 3800;
+/**
+ * Everything the setup (engine, exhaust, weight, suspension, tires, steering)
+ * changes about the car. The physics reads only this object, so a part swap is a
+ * rebuild of the vehicle with another spec rather than a pile of multipliers
+ * scattered through the step function.
+ */
+export interface VehicleSpec {
+  name: string;
+  /** Kerb weight, kg. */
+  mass: number;
+  peakTorque: number;
+  peakTorqueRpm: number;
+  redlineRpm: number;
+  upshiftRpm: number;
+  finalDrive: number;
+  /** Cd x A, m². */
+  dragArea: number;
+  /** Cl x A, m² (downforce). */
+  downforceArea: number;
+  muFront: number;
+  muRear: number;
+  /** Slip angle (rad) at which the tires peak: wide for drift tires. */
+  peakSlipAngle: number;
+  springK: number;
+  springC: number;
+  arbFront: number;
+  arbRear: number;
+  /** Static distance between the wheel mount and the hub, m. */
+  rideHeight: number;
+  wheelRadius: number;
+  wheelTravel: number;
+  /** Service brake torque at full pedal, Nm. */
+  brakeTorque: number;
+  /** Physical steering lock, radians. */
+  maxSteer: number;
+  /** Rack speed at walking pace, rad/s. */
+  steerRate: number;
+}
+
+export const STOCK_SPEC: VehicleSpec = {
+  name: 'Série',
+  mass: 1350,
+  peakTorque: 420,
+  peakTorqueRpm: 3900,
+  redlineRpm: 7300,
+  upshiftRpm: 6800,
+  finalDrive: 3.55,
+  dragArea: 0.71,
+  downforceArea: 0.935,
+  muFront: 1.24,
+  muRear: 1.2,
+  peakSlipAngle: 0.135,
+  springK: 34000,
+  springC: 3800,
+  arbFront: 14000,
+  arbRear: 9000,
+  rideHeight: 0.363,
+  wheelRadius: 0.34,
+  wheelTravel: 0.14,
+  brakeTorque: 1250,
+  maxSteer: 0.72,
+  steerRate: 3.0,
+};
+
+const MIN_LENGTH = 0.06;
 /** First-stage bump stop: firm, but it lets the body settle instead of jamming. */
 const BUMP_K = 90000;
 /** Second stage, only reached in a real impact. */
 const BUMP_K_HARD = 1_600_000;
-const MAX_SPRING_FORCE = 45000;
-const ARB_FRONT = 14000;
-const ARB_REAR = 9000;
-const WHEEL_INERTIA = 1.6;
 /** Reflected engine inertia, multiplied by the squared total gear ratio. */
 const ENGINE_INERTIA = 0.22;
-const MASS = 1350;
 
 export class Vehicle {
   readonly body: RAPIER.RigidBody;
   readonly collider: RAPIER.Collider;
-  readonly drivetrain = new Drivetrain(SPORT_DRIVETRAIN);
+  readonly spec: VehicleSpec;
+  readonly drivetrain: Drivetrain;
+
+  /** Spring free length: static compression is folded in so ride height holds. */
+  readonly restLength: number;
+  readonly maxLength: number;
+  readonly bumpStop: number;
+
+  private readonly wheelInertia: number;
+  private readonly maxSpringForce: number;
 
   private wheels: Wheel[];
   private steerAngle = 0;
@@ -130,7 +190,23 @@ export class Vehicle {
   constructor(
     world: RAPIER.World,
     opts: { x: number; y: number; z: number; heading: number; color?: number },
+    spec: VehicleSpec = STOCK_SPEC,
   ) {
+    this.spec = spec;
+    this.drivetrain = new Drivetrain({
+      ...SPORT_DRIVETRAIN,
+      peakTorque: spec.peakTorque,
+      peakTorqueRpm: spec.peakTorqueRpm,
+      redlineRpm: spec.redlineRpm,
+      upshiftRpm: spec.upshiftRpm,
+      finalDrive: spec.finalDrive,
+    });
+    this.restLength = spec.rideHeight + (spec.mass * 9.81) / (4 * spec.springK);
+    this.maxLength = this.restLength + spec.wheelTravel;
+    this.bumpStop = this.restLength - 0.22;
+    this.wheelInertia = 1.6 * Math.pow(spec.wheelRadius / 0.34, 2);
+    this.maxSpringForce = Math.max(30000, spec.mass * 33);
+
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(opts.x, opts.y, opts.z)
@@ -152,9 +228,13 @@ export class Vehicle {
       RAPIER.ColliderDesc.cuboid(0.88, 0.42, 2.05)
         .setTranslation(0, 0.02, 0)
         .setMassProperties(
-          MASS,
+          spec.mass,
           { x: 0, y: -0.12, z: 0 },
-          { x: 2280, y: 2420, z: 560 },
+          {
+            x: 2280 * (spec.mass / 1350),
+            y: 2420 * (spec.mass / 1350),
+            z: 560 * (spec.mass / 1350),
+          },
           { x: 0, y: 0, z: 0, w: 1 },
         )
         .setFriction(0.45)
@@ -173,14 +253,14 @@ export class Vehicle {
       name: m.name,
       mount: vec3(m.x, 0.12, m.z),
       front: m.front,
-      radius: WHEEL_RADIUS,
+      radius: spec.wheelRadius,
       steer: 0,
       omega: 0,
       spinAngle: 0,
       contact: false,
       contactPoint: vec3(0, opts.y - 0.5, 0),
       contactNormal: vec3(0, 1, 0),
-      suspensionLength: REST_LENGTH,
+      suspensionLength: this.restLength,
       compression: 0,
       load: 0,
       forceLong: 0,
@@ -235,7 +315,7 @@ export class Vehicle {
     this.drivetrain.reset();
     for (const w of this.wheels) {
       w.omega = 0;
-      w.suspensionLength = REST_LENGTH;
+      w.suspensionLength = this.restLength;
     }
     this.steerAngle = 0;
     this.flippedTimer = 0;
@@ -257,25 +337,35 @@ export class Vehicle {
     const speed = length(velocity);
 
     // --- Steering -----------------------------------------------------------
-    const speedFactor = 1 / (1 + Math.abs(vLong) * 0.1);
-    const maxSteer = 0.6 * speedFactor;
-    const target = clamp(input.steer, -1, 1) * maxSteer;
-    // A rack takes time to travel, and it is slower the faster you go. Without
-    // this, a flick of the stick applies full lock in three frames and pitches
-    // the car straight into a spin.
-    const steerRate = 2.8 / (1 + Math.abs(vLong) * 0.055);
-    const rate = Math.abs(target) > Math.abs(this.steerAngle) ? steerRate : 7.5;
+    // The lock is physical: a driver can grab a fistful of opposite lock at any
+    // speed, and that is exactly how a slide is caught. Only normal, into-the-
+    // corner input is trimmed with speed, so the car is not twitchy on a straight.
+    const absSpeed = Math.abs(vLong);
+    const bodySlip = Math.atan2(vLat, Math.max(absSpeed, 1.2));
+    const countering = Math.abs(bodySlip) > 0.05 && input.steer * bodySlip > 0.05;
+    const lock = countering
+      ? this.spec.maxSteer
+      : Math.max(0.16, this.spec.maxSteer / (1 + absSpeed * 0.052));
+    const target = clamp(input.steer, -1, 1) * lock;
+    // A rack takes time to travel, and it is slower the faster you go. Counter-
+    // steering is the exception: hands fly across the wheel to catch a slide.
+    const steerRate = countering
+      ? this.spec.steerRate * 2.6
+      : this.spec.steerRate / (1 + absSpeed * 0.05);
+    const rate = Math.abs(target) > Math.abs(this.steerAngle) ? steerRate : 8.5;
     this.steerAngle += clamp(target - this.steerAngle, -rate * dt, rate * dt);
 
     // --- Drivetrain ---------------------------------------------------------
     const rearOmega = (this.wheels[2].omega + this.wheels[3].omega) * 0.5;
     const drive = this.drivetrain.update(dt, rearOmega, input.throttle, input.brake, vLong);
     const driveTorquePerWheel = drive.axleTorque * 0.5;
+    // In reverse the brake pedal is the reverse throttle, so the throttle pedal
+    // is what slows the car down on its way back to first gear.
     const serviceBrake = this.drivetrain.gear === -1 ? input.throttle : input.brake;
     const totalRatio = Math.abs(this.drivetrain.ratio) * this.drivetrain.config.finalDrive;
     const rearInertia = drive.shifting
-      ? WHEEL_INERTIA
-      : WHEEL_INERTIA + ENGINE_INERTIA * totalRatio * totalRatio;
+      ? this.wheelInertia
+      : this.wheelInertia + ENGINE_INERTIA * totalRatio * totalRatio;
 
     // --- Wheels -------------------------------------------------------------
     const impulses: { impulse: Vec3; point: Vec3 }[] = [];
@@ -286,7 +376,7 @@ export class Vehicle {
       const wheel = this.wheels[i];
       const mountWorld = add(pos, rotate(q, wheel.mount));
       const ray = new RAPIER.Ray(mountWorld, { x: -up.x, y: -up.y, z: -up.z });
-      const maxRay = MAX_LENGTH + wheel.radius;
+      const maxRay = this.maxLength + wheel.radius;
       const hit = world.castRayAndGetNormal(
         ray,
         maxRay,
@@ -305,7 +395,7 @@ export class Vehicle {
         wheel.compression = 0;
         wheel.slipAngle = 0;
         wheel.slipRatio = 0;
-        wheel.suspensionLength += (MAX_LENGTH - wheel.suspensionLength) * Math.min(1, dt * 8);
+        wheel.suspensionLength += (this.maxLength - wheel.suspensionLength) * Math.min(1, dt * 8);
         wheel.contactPoint = sub(mountWorld, { x: up.x * wheel.suspensionLength, y: up.y * wheel.suspensionLength, z: up.z * wheel.suspensionLength });
         wheel.spinAngle = (wheel.spinAngle + wheel.omega * dt) % (Math.PI * 2);
         airborneCount++;
@@ -322,21 +412,21 @@ export class Vehicle {
       wheel.contactPoint = contactPoint;
       wheel.contactNormal = normal;
 
-      const suspensionLength = clamp(hit.timeOfImpact - wheel.radius, MIN_LENGTH, MAX_LENGTH);
+      const suspensionLength = clamp(hit.timeOfImpact - wheel.radius, MIN_LENGTH, this.maxLength);
       wheel.suspensionLength = suspensionLength;
-      const compression = REST_LENGTH - suspensionLength;
+      const compression = this.restLength - suspensionLength;
       wheel.compression = compression;
 
       const arm = sub(mountWorld, pos);
       const pointVel = add(velocity, cross(angular, arm));
       const vAlongUp = dot(pointVel, up);
 
-      let springForce = SPRING_K * compression + SPRING_C * -vAlongUp;
-      if (compression > BUMP_STOP) {
-        const over = compression - BUMP_STOP;
+      let springForce = this.spec.springK * compression + this.spec.springC * -vAlongUp;
+      if (compression > this.bumpStop) {
+        const over = compression - this.bumpStop;
         springForce += BUMP_K * over + BUMP_K_HARD * over * over;
       }
-      springForce = clamp(springForce, 0, MAX_SPRING_FORCE);
+      springForce = clamp(springForce, 0, this.maxSpringForce);
 
       // Wheel frame, steered around the body's up axis.
       const wheelForward = rotateAxis(forward, up, wheel.steer);
@@ -347,7 +437,8 @@ export class Vehicle {
       const cvLat = dot(contactVel, wheelRight);
 
       const alpha = slipAngleFromVelocity(cvLong, cvLat);
-      const mu = (wheel.front ? 1.24 : 1.2) * 0.98;
+      const mu = wheel.front ? this.spec.muFront : this.spec.muRear;
+      const peakAngle = this.spec.peakSlipAngle;
       wheel.slipAngle = alpha;
       wheel.load = springForce;
       totalLoad += springForce;
@@ -358,18 +449,25 @@ export class Vehicle {
         // stiff wheel-spin limit cycle at speed. Braking is a slip target so the
         // combined-slip ellipse still takes lateral grip away under braking.
         wheel.omega = cvLong / wheel.radius;
-        const kappa = Math.abs(cvLong) < 0.3 ? 0 : -serviceBrake * 0.085;
+        // The slip target has to follow the direction of travel: a fixed negative
+        // value pushed the car backwards while it was reversing, which is what
+        // made the car impossible to stop and never let it roll forward again.
+        const kappa =
+          Math.abs(cvLong) < 0.3
+            ? 0
+            : -serviceBrake * 0.085 * Math.sign(cvLong);
         wheel.slipRatio = kappa;
-        forces = tireForces({ kappa, alpha, fz: springForce, mu });
+        forces = tireForces({ kappa, alpha, fz: springForce, mu, peakAngle });
       } else {
         const kappa = slipRatioFromWheelSpeed(wheel.omega, wheel.radius, cvLong);
         wheel.slipRatio = kappa;
-        forces = tireForces({ kappa, alpha, fz: springForce, mu });
+        forces = tireForces({ kappa, alpha, fz: springForce, mu, peakAngle });
         // ABS: back off the rear brakes when the wheel starts locking, the way
         // a road-going sports car does. The handbrake bypasses it on purpose.
         const absFactor =
           serviceBrake > 0.15 && Math.abs(kappa) > 0.14 && Math.abs(cvLong) > 2 ? 0.3 : 1;
-        const brakeTorque = serviceBrake * 1250 * absFactor + (input.handbrake ? 2200 : 0);
+        const brakeTorque =
+          serviceBrake * this.spec.brakeTorque * absFactor + (input.handbrake ? 2200 : 0);
         this.integrateWheelSpin(
           wheel,
           dt,
@@ -379,6 +477,7 @@ export class Vehicle {
           alpha,
           springForce,
           mu,
+          peakAngle,
           rearInertia,
         );
       }
@@ -401,8 +500,8 @@ export class Vehicle {
     }
 
     // --- Anti-roll bars -----------------------------------------------------
-    this.applyAntiRollBar(0, 1, ARB_FRONT, dt, impulses);
-    this.applyAntiRollBar(2, 3, ARB_REAR, dt, impulses);
+    this.applyAntiRollBar(0, 1, this.spec.arbFront, dt, impulses);
+    this.applyAntiRollBar(2, 3, this.spec.arbRear, dt, impulses);
 
     for (const { impulse, point } of impulses) {
       this.body.applyImpulseAtPoint(impulse, point, true);
@@ -417,7 +516,7 @@ export class Vehicle {
       );
     }
     if (speed > 0.5) {
-      const drag = 0.5 * 1.225 * 0.33 * 2.15 * speed;
+      const drag = 0.5 * 1.225 * this.spec.dragArea * speed;
       const dragImpulse = {
         x: -velocity.x * drag * dt,
         y: -velocity.y * drag * dt,
@@ -425,11 +524,10 @@ export class Vehicle {
       };
       this.body.applyImpulse(dragImpulse, true);
     }
-    const downforce = 0.5 * 1.225 * 0.55 * 1.7 * speed * speed;
+    const downforce = 0.5 * 1.225 * this.spec.downforceArea * speed * speed;
     this.body.applyImpulse({ x: 0, y: -downforce * dt, z: 0 }, true);
 
     // --- Telemetry ----------------------------------------------------------
-    const bodySlip = Math.atan2(vLat, Math.max(Math.abs(vLong), 1.2));
     this.accelLong = (vLong - this.prevSpeed) / Math.max(dt, 1e-4);
     this.accelLat = vLat;
     this.prevSpeed = vLong;
@@ -450,7 +548,9 @@ export class Vehicle {
     // while parked. Only the horizontal velocity is cancelled: the vertical
     // one carries the suspension, so it must be read *after* the impulses were
     // applied (using the stale value here would pin the body on its bump stops).
-    if (input.throttle < 0.03 && speed < 0.45 && airborneCount < 4) {
+    // It must not run while a pedal is down, or it cancels every attempt to pull
+    // away from a standstill, reverse included.
+    if (input.throttle < 0.03 && input.brake < 0.03 && speed < 0.45 && airborneCount < 4) {
       const current = this.body.linvel();
       this.body.setLinvel({ x: 0, y: current.y, z: 0 }, true);
     }
@@ -475,6 +575,7 @@ export class Vehicle {
     alpha: number,
     fz: number,
     mu: number,
+    peakAngle: number,
     inertia: number,
   ): void {
     const substeps = 3;
@@ -483,7 +584,7 @@ export class Vehicle {
     const vRef = Math.max(Math.abs(vLong), 2.5);
     for (let s = 0; s < substeps; s++) {
       const kappa = slipRatioFromWheelSpeed(wheel.omega, wheel.radius, vLong);
-      const fx = tireForces({ kappa, alpha, fz, mu }).fx;
+      const fx = tireForces({ kappa, alpha, fz, mu, peakAngle }).fx;
       const implicit = (stiffness * wheel.radius * wheel.radius * h) / (vRef * inertia);
       const free = wheel.omega + ((driveTorque - fx * wheel.radius) / inertia) * h;
       // Damp the increment only: the implicit term must not drag the wheel

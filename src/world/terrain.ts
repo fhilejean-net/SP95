@@ -2,9 +2,11 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
   DRIFT_PAD,
+  MOUNTAIN_ROADS,
   RACE_START,
   RING,
   SAMPLED_ROADS,
+  SUMMIT,
   TERRAIN_SEGMENTS,
   WORLD_SIZE,
   heightAt,
@@ -293,6 +295,51 @@ export function buildRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void
   startLine.rotation.z = RACE_START.heading;
   startLine.position.set(RACE_START.x, heightAt(RACE_START.x, RACE_START.z) + ROAD_LIFT + 0.012, RACE_START.z);
   scene.add(startLine);
+}
+
+/**
+ * The col: the mountain road sits on graded terrain, so the asphalt ribbon is
+ * laid 9 cm above the shelf and the summit is a paved arena.
+ */
+export function buildMountainRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void {
+  const lift = 0.09;
+  for (const road of MOUNTAIN_ROADS) {
+    const surface = new THREE.Mesh(
+      ribbonGeometry(road.points, { width: road.def.width, lift, closed: false }),
+      mats.asphalt,
+    );
+    surface.receiveShadow = true;
+    surface.name = `road-${road.def.id}`;
+    scene.add(surface);
+
+    for (const side of [-1, 1]) {
+      const line = new THREE.Mesh(
+        ribbonGeometry(road.points, {
+          width: 0.16,
+          offset: side * (road.def.width * 0.5 - 0.45),
+          lift: lift + 0.01,
+          closed: false,
+        }),
+        mats.lines,
+      );
+      line.name = `edge-${road.def.id}`;
+      scene.add(line);
+    }
+  }
+
+  const pad = new THREE.Mesh(new THREE.CircleGeometry(SUMMIT.radius, 72), mats.asphaltPad);
+  pad.rotation.x = -Math.PI / 2;
+  pad.position.set(SUMMIT.cx, SUMMIT.y + 0.04, SUMMIT.cz);
+  pad.receiveShadow = true;
+  pad.name = 'summit-pad';
+  scene.add(pad);
+
+  for (const radius of [SUMMIT.radius - 2.5, 26]) {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(radius, radius + 0.55, 96), mats.lines);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(SUMMIT.cx, SUMMIT.y + 0.05, SUMMIT.cz);
+    scene.add(ring);
+  }
 }
 
 export interface RaceGate {
