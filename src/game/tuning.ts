@@ -30,10 +30,10 @@ export const CATEGORIES: SetupCategory[] = [
     label: 'Moteur',
     hint: 'Cartographie et pression de suralimentation.',
     options: [
-      { label: 'Série', detail: '420 Nm · rupteur 7 300 tr/min' },
-      { label: 'Reprogrammation Stage 1', detail: '470 Nm · rupteur 7 450' },
-      { label: 'Stage 2 · admission + échangeur', detail: '520 Nm · rupteur 7 700' },
-      { label: 'Stage 3 · turbo hybride', detail: '590 Nm · rupteur 8 000' },
+      { label: 'Série', detail: "Réglage d'usine" },
+      { label: 'Reprogrammation Stage 1', detail: '+12 % de couple · rupteur +150' },
+      { label: 'Stage 2 · admission + échangeur', detail: '+24 % · rupteur +400' },
+      { label: 'Stage 3 · turbo hybride', detail: '+40 % · rupteur +700' },
     ],
   },
   {
@@ -42,8 +42,8 @@ export const CATEGORIES: SetupCategory[] = [
     hint: 'Une ligne qui respire libère de la puissance et du poids.',
     options: [
       { label: "Ligne d'origine", detail: 'Silencieuse, bridée' },
-      { label: 'Cat-back inox', detail: '+12 Nm · −8 kg · monte plus haut dans les tours' },
-      { label: 'Ligne complète + collecteur', detail: '+26 Nm · −16 kg' },
+      { label: 'Cat-back inox', detail: '+3 % de couple · −8 kg · monte plus haut' },
+      { label: 'Ligne complète + collecteur', detail: '+7 % · −16 kg' },
     ],
   },
   {
@@ -51,9 +51,9 @@ export const CATEGORIES: SetupCategory[] = [
     label: 'Poids',
     hint: "Moins de masse, c'est plus d'agilité et un meilleur freinage.",
     options: [
-      { label: 'Série', detail: '1 350 kg · sièges et insonorisation' },
-      { label: 'Allègement', detail: '1 295 kg · baquets, capot carbone' },
-      { label: 'Dépouillement', detail: '1 230 kg · arceau, panneaux, vitrage polycarbonate' },
+      { label: 'Série', detail: 'Sièges et insonorisation' },
+      { label: 'Allègement', detail: '−55 kg · baquets, capot carbone' },
+      { label: 'Dépouillement', detail: '−120 kg · arceau, panneaux, polycarbonate' },
     ],
   },
   {
@@ -151,40 +151,47 @@ function pick<T>(list: T[], index: number): T {
   return list[Math.max(0, Math.min(list.length - 1, index | 0))] ?? list[0];
 }
 
-export function resolveSpec(setup: Setup): VehicleSpec {
+export function resolveSpec(setup: Setup, base: VehicleSpec = STOCK_SPEC): VehicleSpec {
   const engine = pick(ENGINE, setup.engine);
   const exhaust = pick(EXHAUST, setup.exhaust);
   const suspension = pick(SUSPENSION, setup.suspension);
   const tires = pick(TIRES, setup.tires);
   const steering = pick(STEERING, setup.steering);
-  const mass = STOCK_SPEC.mass - pick(MASS, setup.weight);
+  const mass = base.mass - pick(MASS, setup.weight);
+
+  // Every part is a proportion of the car it is bolted to, so the same Stage 3
+  // on a V12 and on a four-cylinder raises each engine by the same 40 %. The
+  // catalogs above are therefore written as offsets from the stock car.
+  const stock = SUSPENSION[0];
+  const grip = TIRES[0];
+  const lock = STEERING[0];
+  const torqueScale = base.peakTorque / STOCK_SPEC.peakTorque;
 
   return {
-    ...STOCK_SPEC,
-    name: `${ENGINE_OPTIONS[setup.engine]?.label ?? 'Série'} · ${SUSPENSION_OPTIONS[setup.suspension]?.label ?? 'Série'}`,
+    ...base,
+    name: `${base.name} · ${ENGINE_OPTIONS[setup.engine]?.label ?? 'Série'}`,
     mass,
-    peakTorque: engine.torque + exhaust.torque,
-    peakTorqueRpm: engine.peakRpm,
-    redlineRpm: engine.redline,
-    upshiftRpm: engine.upshift + exhaust.upshift,
-    springK: suspension.springK,
-    springC: suspension.springC,
-    arbFront: suspension.arbFront,
-    arbRear: suspension.arbRear,
-    rideHeight: suspension.rideHeight,
-    wheelTravel: suspension.travel,
-    wheelRadius: tires.radius,
-    muFront: tires.muFront,
-    muRear: tires.muRear,
-    peakSlipAngle: tires.peakSlipAngle,
-    maxSteer: steering.maxSteer,
-    steerRate: steering.steerRate,
-    brakeTorque: 1250 * (mass / 1350),
+    peakTorque: base.peakTorque * (engine.torque / STOCK_SPEC.peakTorque) + exhaust.torque * torqueScale,
+    peakTorqueRpm: base.peakTorqueRpm + (engine.peakRpm - STOCK_SPEC.peakTorqueRpm),
+    redlineRpm: base.redlineRpm + (engine.redline - STOCK_SPEC.redlineRpm),
+    upshiftRpm: base.upshiftRpm + (engine.upshift - STOCK_SPEC.upshiftRpm) + exhaust.upshift,
+    springK: base.springK * (suspension.springK / stock.springK),
+    springC: base.springC * (suspension.springC / stock.springC),
+    arbFront: base.arbFront * (suspension.arbFront / stock.arbFront),
+    arbRear: base.arbRear * (suspension.arbRear / stock.arbRear),
+    rideHeight: base.rideHeight + (suspension.rideHeight - stock.rideHeight),
+    wheelTravel: base.wheelTravel * (suspension.travel / stock.travel),
+    wheelRadius: base.wheelRadius * (tires.radius / grip.radius),
+    muFront: base.muFront * (tires.muFront / grip.muFront),
+    muRear: base.muRear * (tires.muRear / grip.muRear),
+    peakSlipAngle: base.peakSlipAngle * (tires.peakSlipAngle / grip.peakSlipAngle),
+    maxSteer: base.maxSteer * (steering.maxSteer / lock.maxSteer),
+    steerRate: base.steerRate * (steering.steerRate / lock.steerRate),
+    brakeTorque: base.brakeTorque * (mass / base.mass),
   };
 }
 
 const ENGINE_OPTIONS = CATEGORIES[0].options;
-const SUSPENSION_OPTIONS = CATEGORIES[3].options;
 
 /** Peak crank power in ch (metric horsepower), from the torque curve. */
 export function estimatePowerHp(spec: VehicleSpec): number {
@@ -210,8 +217,8 @@ export interface SetupSummary {
   steering: string;
 }
 
-export function describeSetup(setup: Setup): SetupSummary {
-  const spec = resolveSpec(setup);
+export function describeSetup(setup: Setup, base: VehicleSpec = STOCK_SPEC): SetupSummary {
+  const spec = resolveSpec(setup, base);
   const powerHp = estimatePowerHp(spec);
   return {
     label: spec.name,

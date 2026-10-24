@@ -153,6 +153,12 @@ export interface VehicleSpec {
   maxSteer: number;
   /** Rack speed at walking pace, rad/s. */
   steerRate: number;
+  /** Distance between the axles, m. */
+  wheelbase: number;
+  /** Distance between the left and right wheel centres, m. */
+  track: number;
+  /** Collider half extents: across, up, along. */
+  bodyHalf: { x: number; y: number; z: number };
 }
 
 export const STOCK_SPEC: VehicleSpec = {
@@ -178,6 +184,9 @@ export const STOCK_SPEC: VehicleSpec = {
   brakeTorque: 1250,
   maxSteer: 0.72,
   steerRate: 3.0,
+  wheelbase: 2.62,
+  track: 1.712,
+  bodyHalf: { x: 0.88, y: 0.42, z: 2.05 },
 };
 
 const MIN_LENGTH = 0.06;
@@ -262,7 +271,7 @@ export class Vehicle {
     );
 
     this.collider = world.createCollider(
-      RAPIER.ColliderDesc.cuboid(0.88, 0.42, 2.05)
+      RAPIER.ColliderDesc.cuboid(spec.bodyHalf.x, spec.bodyHalf.y, spec.bodyHalf.z)
         .setTranslation(0, 0.02, 0)
         .setMassProperties(
           spec.mass,
@@ -279,11 +288,13 @@ export class Vehicle {
       this.body,
     );
 
+    const halfTrack = spec.track / 2;
+    const halfBase = spec.wheelbase / 2;
     const mount: { name: Wheel['name']; x: number; z: number; front: boolean }[] = [
-      { name: 'FL', x: -0.85, z: -1.32, front: true },
-      { name: 'FR', x: 0.85, z: -1.32, front: true },
-      { name: 'RL', x: -0.86, z: 1.3, front: false },
-      { name: 'RR', x: 0.86, z: 1.3, front: false },
+      { name: 'FL', x: -halfTrack, z: -halfBase, front: true },
+      { name: 'FR', x: halfTrack, z: -halfBase, front: true },
+      { name: 'RL', x: -halfTrack, z: halfBase, front: false },
+      { name: 'RR', x: halfTrack, z: halfBase, front: false },
     ];
 
     this.wheels = mount.map((m) => ({

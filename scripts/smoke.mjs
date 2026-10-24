@@ -63,6 +63,28 @@ try {
     `${kit.models} models, ${kit.instances} pieces, ${kit.colliders} colliders`,
   );
 
+  // The modelled car: the GLB replaces the lofted shell, wheels on the mounts.
+  const carState = await page.evaluate(() => ({
+    id: window.__sp95.car,
+    model: window.__sp95.carModel,
+    mounts: window.__sp95.wheelMounts,
+    cars: window.__sp95.cars,
+    spec: window.__sp95.spec,
+    redline: window.__sp95.redline,
+  }));
+  check(
+    'the modelled car loads from its GLB',
+    carState.model && carState.cars.length === 3,
+    `${carState.id}, fallback ${carState.model ? 'no' : 'yes'}`,
+  );
+  const halfTrack = Math.max(...carState.mounts.map((mount) => Math.abs(mount.x)));
+  const wheelbase = Math.abs(carState.mounts[0].z - carState.mounts[2].z);
+  check(
+    'its wheels sit on the physics mounts',
+    Math.abs(halfTrack - 0.8545) < 0.02 && Math.abs(wheelbase - 2.749) < 0.02,
+    `${(halfTrack * 2).toFixed(3)} m track, ${wheelbase.toFixed(3)} m wheelbase`,
+  );
+
   // Sound panel: one fader per family, applied live and remembered.
   await page.click('#btn-sound');
   await page.waitForTimeout(400);
@@ -110,15 +132,51 @@ try {
   check('garage lists every setup category', garage.open && garage.tabs === 6, `${garage.tabs} tabs`);
   await page.click('#garage-options button[data-option="1"]');
   const tuned = await page.evaluate(() => window.__sp95.spec);
-  check('a part changes the car', tuned.peakTorque > 420, `${tuned.peakTorque} Nm`);
+  check('a part changes the car', tuned.peakTorque > carState.spec.peakTorque, `${tuned.peakTorque} Nm`);
   await page.click('#garage-options button[data-option="0"]');
   await page.click('#garage-presets button[data-preset="1"]');
   const drift = await page.evaluate(() => window.__sp95.spec);
-  check('the drift preset fits the angle kit', drift.maxSteer > 1, `${drift.maxSteer.toFixed(2)} rad`);
+  check(
+    'the drift preset fits the angle kit',
+    drift.maxSteer > carState.spec.maxSteer + 0.05,
+    `${drift.maxSteer.toFixed(2)} rad`,
+  );
   await page.click('#garage-presets button[data-preset="0"]');
   await page.click('#btn-garage-close');
   const stockAgain = await page.evaluate(() => window.__sp95.spec);
-  check('the stock setup is restored', stockAgain.peakTorque === 420, `${stockAgain.peakTorque} Nm`);
+  check(
+    'the stock setup is restored',
+    stockAgain.peakTorque === carState.spec.peakTorque,
+    `${stockAgain.peakTorque} Nm`,
+  );
+
+  // Car picker: the rally car has its own footprint, engine and redline.
+  await page.click('#btn-garage');
+  await page.waitForTimeout(400);
+  await page.click('#garage-cars .car-choice[data-car="i20n"]');
+  const swapped = await waitFor(
+    () => window.__sp95.car === 'i20n' && !document.querySelector('#garage-cars .car-choice.loading'),
+    60_000,
+  );
+  const pickup = await page.evaluate(() => ({
+    spec: window.__sp95.spec,
+    redline: window.__sp95.redline,
+    mounts: window.__sp95.wheelMounts,
+  }));
+  const rallyBase = Math.abs(pickup.mounts[0].z - pickup.mounts[2].z);
+  check(
+    'the garage swaps in another car model',
+    Boolean(swapped) && pickup.spec.mass === 1230 && pickup.redline === 7200,
+    `${pickup.spec.name}, ${pickup.redline} tr/min`,
+  );
+  check(
+    'the new model brings its own wheelbase',
+    Math.abs(rallyBase - 2.59) < 0.02,
+    `${rallyBase.toFixed(3)} m`,
+  );
+  await page.click('#garage-cars .car-choice[data-car="aventador"]');
+  await waitFor(() => window.__sp95.car === 'aventador', 60_000);
+  await page.click('#btn-garage-close');
 
   await page.click('#btn-free');
   await page.waitForFunction(() => window.__sp95.mode === 'free');
@@ -135,7 +193,16 @@ try {
 
   await page.keyboard.down('KeyW');
   const accelerated = await waitFor(() => window.__sp95.speedKmh > 35);
+  const spinA = await page.evaluate(() => window.__sp95.wheelSpin);
+  // SwiftShader runs at about one frame per second: give it a few frames.
+  await page.waitForTimeout(3000);
+  const spinB = await page.evaluate(() => window.__sp95.wheelSpin);
   await page.keyboard.up('KeyW');
+  check(
+    'the wheels roll with the car',
+    spinA.some((value, index) => Math.abs(value - spinB[index]) > 0.01),
+    spinB.map((value) => value.toFixed(2)).join(', '),
+  );
   const driving = await page.evaluate(() => ({
     speed: window.__sp95.speedKmh,
     gear: window.__sp95.gear,
@@ -151,7 +218,7 @@ try {
   }));
   check(
     'the tachometer shows live revs and the redline',
-    tach.value > 1000 && tach.max.endsWith(String(tach.redline)) && tach.redline === 7300,
+    tach.value > 1000 && tach.max.endsWith(String(tach.redline)) && tach.redline === carState.redline,
     `${tach.value} tr/min ${tach.max}`,
   );
 

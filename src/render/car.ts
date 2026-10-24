@@ -75,11 +75,14 @@ function loft(sections: Section[], radial = 18): THREE.BufferGeometry {
 export interface CarVisual {
   group: THREE.Group;
   wheels: THREE.Group[];
+  /** Wheel positions in car space, in FL, FR, RL, RR order. */
+  mounts: { x: number; z: number }[];
   brakeLights: THREE.Mesh[];
   reverseLight: THREE.Mesh;
   setPaint: (color: number) => void;
   /** Fits the wheels to the tire fitted in the garage. */
   setWheelRadius: (radius: number) => void;
+  dispose?: () => void;
 }
 
 const PAINT_COLOR = 0xa51d2d;
@@ -292,6 +295,7 @@ export function createCar(paint = PAINT_COLOR): CarVisual {
   return {
     group,
     wheels,
+    mounts: mounts.map((mount) => ({ x: mount.x, z: mount.z })),
     brakeLights,
     reverseLight,
     setPaint: (color: number) => {
@@ -319,11 +323,12 @@ export function updateCarVisual(
   for (let i = 0; i < visual.wheels.length; i++) {
     const wheel = visual.wheels[i];
     const state = wheelStates[i];
-    if (!state) continue;
-    const mountZ = i < 2 ? -1.32 : 1.3;
-    const mountX = i < 2 ? (i === 0 ? -0.85 : 0.85) : i === 2 ? -0.86 : 0.86;
-    wheel.position.set(mountX, 0.12 - state.suspensionLength, mountZ);
-    wheel.rotation.set(state.spinAngle, state.steer, 0);
+    const mount = visual.mounts[i];
+    if (!state || !mount) continue;
+    wheel.position.set(mount.x, 0.12 - state.suspensionLength, mount.z);
+    // Positive spin turns the top of the wheel toward +Z, the car's tail: the
+    // axle has to turn the other way to roll forward.
+    wheel.rotation.set(-state.spinAngle, state.steer, 0);
   }
 
   for (const lamp of visual.brakeLights) {

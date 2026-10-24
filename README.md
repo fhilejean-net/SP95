@@ -1,6 +1,6 @@
 # SP95
 
-Jeu de conduite 3D jouable directement dans le navigateur : **conduite libre**, **drift** et **course** sur une carte routière ouverte. La physique est faite maison (modèle de pneus + châssis rigide Rapier), le rendu et les sons sont générés à l'exécution — aucun asset externe à télécharger.
+Jeu de conduite 3D jouable directement dans le navigateur : **conduite libre**, **drift** et **course** sur une carte routière ouverte. La physique est faite maison (modèle de pneus + châssis rigide Rapier), le terrain, les bâtiments et les sons sont générés à l'exécution ; la voiture et le mobilier urbain sont des modèles GLB chargés au démarrage.
 
 ## Jouer
 
@@ -32,18 +32,24 @@ La boîte est automatique 6 rapports + marche arrière : maintenir le frein à l
 
 ## Atelier
 
-Le menu et la pause ouvrent un **atelier** où la voiture se prépare pièce par pièce ; chaque choix est appliqué immédiatement et mémorisé dans le navigateur.
+Le menu et la pause ouvrent un **atelier** où l'on choisit d'abord la voiture, puis on la prépare pièce par pièce ; chaque choix est appliqué immédiatement et mémorisé dans le navigateur.
+
+| Voiture | Moteur | Poids | Empattement | Voie |
+| --- | --- | --- | --- | --- |
+| Aventador LP700-4 | V12, 690 Nm, 8 250 tr/min | 1 575 kg | 2,75 m | 1,71 m |
+| RX-7 FD3S | birotor turbo, 300 Nm, 8 000 tr/min | 1 310 kg | 2,45 m | 1,73 m |
+| i20 N Rally2 | 1,6 L turbo, 420 Nm, 7 200 tr/min | 1 230 kg | 2,59 m | 1,74 m |
 
 | Catégorie | Choix |
 | --- | --- |
-| Moteur | série, reprogrammation Stage 1, Stage 2 (admission + échangeur), Stage 3 (turbo hybride) |
+| Moteur | série, reprogrammation Stage 1 (+12 %), Stage 2 (admission + échangeur, +24 %), Stage 3 (turbo hybride, +40 %) |
 | Échappement | ligne d'origine, cat-back inox, ligne complète + collecteur — du couple, moins de poids, plus de tours |
-| Poids | série 1 350 kg, allègement 1 295 kg, dépouillement 1 230 kg |
+| Poids | série, allègement (−55 kg), dépouillement (−120 kg) |
 | Suspensions | série, sport, piste, rallye (grand débattement), drift |
 | Pneus | route sport, semi-slick, drift (glisse progressive), tout-terrain |
-| Direction | série (41°), kit grand angle (66° et crémaillère rapide) |
+| Direction | série, kit grand angle (crémaillère rapide) |
 
-Le panneau affiche en direct la puissance, le poids et le rapport ch/t.
+Chaque pièce est un **ratio du véhicule d'origine** : un Stage 3 ajoute 40 % de couple au V12 comme au 1,6 L, et la hauteur de caisse suit les suspensions de la voiture choisie. Le panneau affiche en direct la puissance, le poids et le rapport ch/t.
 
 ## Son
 
@@ -59,6 +65,7 @@ Le moteur est synthétisé : une pile d'harmoniques verrouillées sur la fréque
 - **Surfaces** : l'asphalte, la terre et l'herbe ne donnent pas la même adhérence. Sur la terre, le grip tombe à 62 % de celui du bitume, la résistance au roulement triple et l'angle de glissement de pic s'élargit : la voiture glisse plus tôt mais pardonne davantage. L'herbe est encore plus glissante (47 %).
 - **Mobilier urbain** : lampadaires, feux tricolores, panneaux stop et de rue, passages piétons, chantiers (cônes, barrières, clôtures, balises) et bennes viennent du **City Kit Roads de Kenney** ; **436 pièces** placées le long des routes et aux carrefours, avec un collider pour celles que la voiture peut percuter.
 - **Lignes électriques** : poteaux tous les 41 m sur l'accotement de la ceinture et de la route du Col, reliés par les câbles du kit étirés sur la portée.
+- **Trois voitures** : Lamborghini Aventador, Mazda RX-7 FD et Hyundai i20 N Rally2, choisies dans l'atelier. Chaque modèle GLB est normalisé au chargement : le corps est centré sur l'empattement, les roues sont extraites et recentrées sur leurs moyeux pour tourner et braquer, et l'échelle découle de la voie et de l'empattement réels du modèle. Le châssis et les colliders suivent ces mêmes cotes.
 - **Conduite libre** : départ au centre-ville, circulation libre, réapparition en cas de tonneau.
 - **Drift** : score basé sur l'angle de dérive réel et la vitesse, multiplicateur qui monte tant que le dérapage continue, points perdus en cas de choc.
 - **Course** : 2 tours sur la ceinture, 12 portiques de contrôle, compte à rebours, chrono au tour, meilleur tour sauvegardé en local.
@@ -77,7 +84,9 @@ Le moteur est synthétisé : une pile d'harmoniques verrouillées sur la fréque
 - **Marche arrière** : sélectionnée à l'arrêt, limitée à ~27 km/h, l'accélérateur freine puis repasse en première ; le frein moteur s'oppose au sens de rotation réel des roues (il poussait auparavant la voiture en arrière).
 - **Transmission** : courbe de couple, embrayage progressif au démarrage, boîte auto pilotée par la vitesse des roues motrices (un burnout sur place reste en première), rupteur à coupure cyclique, frein moteur, ABS arrière, frein à main qui verrouille l'essieu arrière (le drift vient de la perte d'adhérence latérale, pas d'une animation).
 - **Rendu** : ciel de Preetham + carte d'environnement PMREM, matériaux PBR (peinture vernie), ombres dynamiques qui suivent la voiture, brouillard de distance, MSAA du canvas, tone mapping ACES. Rendu direct à la canvas (pas de chaîne de post-traitement) : c'était la source de surcoût GPU et de frames noires. Le pixel ratio est plafonné à 1,25 et une régulation automatique baisse la résolution puis les ombres si la machine tient moins de 48 fps.
-- **Assets** : la voiture, les bâtiments, les arbres, le terrain et les sons sont générés par code au chargement. Le mobilier de rue est chargé depuis `public/models/kenney-city-roads/` (15 modèles GLB, une seule texture palette) et dessiné en `InstancedMesh` : environ douze draw calls pour toute la ville. Si un modèle manque, il est ignoré et la partie démarre quand même.
+- **Assets** : le terrain, les bâtiments, les arbres et les sons sont générés par code au chargement. La voiture sélectionnée est chargée depuis `public/models/cars/` ; le mobilier de rue depuis `public/models/kenney-city-roads/` (15 modèles GLB, une seule texture palette), dessiné en `InstancedMesh` : environ douze draw calls pour toute la ville. Si un modèle manque, la voiture de secours procédurale prend le relais et la partie démarre quand même.
+- **Modèles de voiture** : le chargeur (`render/carModel.ts`) cuit les transformations du GLB dans les géométries, applique le lacet qui amène le nez sur −Z, met les roues à l'échelle de l'empattement du châssis puis les recentre sur leurs moyeux ; la caisse est posée pour que les pneus touchent le même plan que les points de contact de la physique. Changer de voiture recharge un modèle à la demande et libère l'ancien.
+- **i20 N** : le fichier d'origine est un diorama de démonstration (deux voitures, socle, matériaux spec/gloss que three.js ne lit plus). `scripts/convert-i20.py` en extrait une seule voiture, sépare les quatre roues de la caisse (les étriers restent fixes), convertit les matériaux en métal/rugosité, supprime les tangentes inutiles et recompresse les textures : 21 Mo de glTF deviennent un GLB de 4,4 Mo.
 - **Déterminisme** : la carte est générée avec une graine fixe ; elle est identique à chaque partie.
 
 ### Structure
@@ -87,9 +96,9 @@ src/
   main.ts              boucle de jeu, modes, caméra, audio, HUD
   physics/             pneus, transmission, véhicule Rapier
   world/               tracé des routes, terrain, ville, mobilier Kenney
-  render/              voiture, matériaux, ciel, régulation de qualité
+  render/              voiture procédurale, chargeur de modèles GLB, matériaux, ciel, qualité
   core/                entrées clavier/manette/tactile, caméra
-  game/                drift, course, HUD, audio (+ DSP, mixage, panneau), atelier (tuning + UI)
+  game/                drift, course, HUD, audio (+ DSP, mixage, panneau), atelier (tuning + UI), catalogue des voitures
 tests/                 physique et logique de jeu (Node)
 scripts/smoke.mjs      test de fumée navigateur (Playwright)
 ```
@@ -112,7 +121,7 @@ npm run dev &
 node scripts/smoke.mjs
 ```
 
-Le test de fumée vérifie le démarrage, le menu, le mobilier Kenney, le panneau de mixage (un fader par famille, mémorisation, réinitialisation), l'atelier (catégories, application d'une pièce), la conduite au clavier, le HUD (dont le compte-tours), le compte à rebours de la course, les départs sur le col, sur la spéciale en terre (surface « terre » confirmée) et au sommet, ainsi que le déclenchement des effets sonores. Dans un environnement sans GPU, Chromium utilise SwiftShader : le rendu tourne alors à 1–2 fps et les contrôles temporels du test sont volontairement larges.
+Le test de fumée vérifie le démarrage, le menu, le chargement du modèle de voiture et ses cotes, le changement de voiture dans l'atelier, le mobilier Kenney, le panneau de mixage (un fader par famille, mémorisation, réinitialisation), l'atelier (catégories, application d'une pièce), la conduite au clavier avec des roues qui tournent, le HUD (dont le compte-tours), le compte à rebours de la course, les départs sur le col, sur la spéciale en terre (surface « terre » confirmée) et au sommet, ainsi que le déclenchement des effets sonores. Dans un environnement sans GPU, Chromium utilise SwiftShader : le rendu tourne alors à 1–2 fps et les contrôles temporels du test sont volontairement larges.
 
 ## Déploiement (GitHub Pages)
 
@@ -128,11 +137,17 @@ Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite su
 ## Crédits
 
 - **City Kit Roads 2.2** de [Kenney](https://www.kenney.nl) — licence [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). Les modèles et leur licence sont dans `public/models/kenney-city-roads/`.
+- **Hyundai i20** (« Hyundai I20 ») par [ANDREO12](https://sketchfab.com/ANDREO12) — licence [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), source [Sketchfab](https://sketchfab.com/models/c1f8bb74d4ef4ec9aa56a6ad159476c3) ; modifié (une seule voiture conservée, roues séparées, matériaux convertis, textures recompressées). L'attribution est conservée dans les métadonnées du GLB.
+- **Lamborghini Aventador** — modèle « CAR Model » d'Ignition Labs, fourni par le propriétaire du dépôt. Licence à confirmer.
+- **Mazda RX-7 FD** — modèle d'IvOfficial, fourni par le propriétaire du dépôt. Licence à confirmer.
+- Les fichiers sources sont conservés dans `assets/cars/` ; les modèles servis sont dans `public/models/cars/`.
 
 ## Limites connues
 
-- **Pas de photoréalisme** : la voiture est un coupé procédural, les immeubles sont des volumes texturés. Un rendu photoréaliste demanderait des modèles 3D sur mesure, hors de portée de ce dépôt.
-- Pas de dégâts, pas de choix de voiture, pas d'adversaires IA pour l'instant.
+- **Modèles fournis par l'utilisateur** : l'Aventador et la RX-7 n'ont pas de licence explicite dans leurs fichiers ; l'i20 N est un modèle Sketchfab en CC BY 4.0 (voir les crédits). Vérifier les droits avant toute redistribution commerciale.
+- **Propulsion partout** : le modèle de pneus ne conduit que l'essieu arrière. La i20 N Rally2, quatre-roues motrices dans la réalité, se comporte donc comme une propulsion.
+- La peinture d'atelier ne recolore pas les modèles texturés : la teinte vient de leurs textures.
+- Pas de dégâts, pas d'adversaires IA pour l'instant.
 - Le pad de drift, la ceinture, la route du col et la spéciale en terre sont des surfaces visuelles posées sur le terrain ; la physique roule sur le terrain aplati au niveau de la route (3 cm d'écart sur la plaine, 9 cm sur le col et le gravier).
 - Les textures de sol sont peintes par code : herbe, terre et asphalte se répètent, il n'y a pas de mélange de matériaux aux transitions.
 - La spéciale rallye est une boucle : pas de chrono ni de copilote pour l'instant.

@@ -397,10 +397,13 @@ test('the rev limiter bounces instead of cutting torque to a crawl', () => {
 });
 
 test('loose ground really is slower and slipperier than asphalt', async () => {
-  const world = await makeWorld();
-  const asphalt = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 }, STOCK_SPEC);
+  // One world each: two cars spawned on the same spot push each other, which
+  // measures the collision solver rather than the surface.
+  const asphaltWorld = await makeWorld();
+  const dirtWorld = await makeWorld();
+  const asphalt = new Vehicle(asphaltWorld, { x: 0, y: 0.9, z: 0, heading: 0 }, STOCK_SPEC);
   const dirt = new Vehicle(
-    world,
+    dirtWorld,
     {
       x: 0,
       y: 0.9,
@@ -410,7 +413,10 @@ test('loose ground really is slower and slipperier than asphalt', async () => {
     },
     STOCK_SPEC,
   );
-  for (const car of [asphalt, dirt]) {
+  for (const [world, car] of [
+    [asphaltWorld, asphalt],
+    [dirtWorld, dirt],
+  ] as const) {
     simulate(world, car, 1, NEUTRAL_INPUT);
     simulate(world, car, 4, { throttle: 1, brake: 0, steer: 0, handbrake: false });
   }
@@ -422,8 +428,8 @@ test('loose ground really is slower and slipperier than asphalt', async () => {
 
   // Braking from speed: less grip, longer stop.
   const before = { asphalt: asphalt.telemetryState.speedKmh, dirt: dirt.telemetryState.speedKmh };
-  simulate(world, asphalt, 2, { throttle: 0, brake: 1, steer: 0, handbrake: false });
-  simulate(world, dirt, 2, { throttle: 0, brake: 1, steer: 0, handbrake: false });
+  simulate(asphaltWorld, asphalt, 2, { throttle: 0, brake: 1, steer: 0, handbrake: false });
+  simulate(dirtWorld, dirt, 2, { throttle: 0, brake: 1, steer: 0, handbrake: false });
   const asphaltDrop = before.asphalt - asphalt.telemetryState.speedKmh;
   const dirtDrop = before.dirt - dirt.telemetryState.speedKmh;
   assert.ok(asphaltDrop > dirtDrop, `asphalt shed ${asphaltDrop.toFixed(0)}, dirt ${dirtDrop.toFixed(0)} km/h`);

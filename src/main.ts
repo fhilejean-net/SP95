@@ -16,7 +16,9 @@ import { buildCity, syncProps } from './world/city.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
 import { createSky } from './render/sky.ts';
-import { createCar, updateCarVisual } from './render/car.ts';
+import { createCar, updateCarVisual, type CarVisual } from './render/car.ts';
+import { loadCarVisual } from './render/carModel.ts';
+import { CARS, findCar, loadCarId, saveCarId, type CarDef, type CarId } from './game/cars.ts';
 import { QualityGovernor } from './render/quality.ts';
 import { ChaseCamera } from './core/camera.ts';
 import { InputManager } from './core/input.ts';
@@ -134,7 +136,8 @@ async function boot(): Promise<void> {
 
   await setLoading(0.84, 'Montage de la voiture…');
   let setup: Setup = loadSetup();
-  let spec: VehicleSpec = resolveSpec(setup);
+  let carDef: CarDef = findCar(loadCarId());
+  let spec: VehicleSpec = resolveSpec(setup, carDef.spec);
   // Drop the car in at its ride height: spawning higher makes it land on the
   // bump stops and bounce before the player can drive. Taller tires lift it.
   const rideHeightFor = (s: VehicleSpec) => s.rideHeight + s.wheelRadius - 0.12 + 0.04;
@@ -144,7 +147,16 @@ async function boot(): Promise<void> {
     { x: SPAWN.x, y: spawnY, z: SPAWN.z, heading: SPAWN.heading, surfaceAt },
     spec,
   );
-  const car = createCar();
+  // The model is the real thing when it loads; the lofted shell stays as a
+  // fallback so a missing or corrupt GLB never blocks the game.
+  let car: CarVisual = createCar();
+  let carIsModel = false;
+  try {
+    car = await loadCarVisual(carDef, spec);
+    carIsModel = true;
+  } catch (error) {
+    console.warn('Modèle de voiture indisponible, voiture de secours.', error);
+  }
   car.setWheelRadius(spec.wheelRadius);
   car.group.position.set(SPAWN.x, spawnY, SPAWN.z);
   scene.add(car.group);
@@ -310,11 +322,9 @@ async function boot(): Promise<void> {
     hud.flash('Réapparition', { duration: 700 });
   }
 
-  /** Rebuilds the car with the garage setup, keeping where it stands. */
-  function applySetup(next: Setup): void {
-    setup = { ...next };
-    saveSetup(setup);
-    spec = resolveSpec(setup);
+  /** Rebuilds the physics body with the current car and setup, in place. */
+  function rebuildVehicle(): void {
+    spec = resolveSpec(setup, carDef.spec);
     const position = vehicle.position;
     const heading = Math.atan2(-carForward.x, -carForward.z);
     world.removeRigidBody(vehicle.body);
@@ -329,16 +339,54 @@ async function boot(): Promise<void> {
     setCarPose(position.x, position.z, heading);
   }
 
+  /** Rebuilds the car with the garage setup, keeping where it stands. */
+  function applySetup(next: Setup): void {
+    setup = { ...next };
+    saveSetup(setup);
+    rebuildVehicle();
+  }
+
   function configureAudio(): void {
     audio.configure({
       redline: spec.redlineRpm,
-      turbo: setup.engine > 0,
+      // The Aventador is the only naturally aspirated car in the garage.
+      turbo: carDef.id !== 'aventador' || setup.engine > 0,
       exhaustLevel: setup.exhaust,
       engineLevel: setup.engine,
     });
   }
 
-  const garage = new Garage(setup, applySetup);
+  const garage = new Garage(setup, carDef, applySetup, (id) => {
+    void selectCar(id);
+  });
+
+  /** Swaps the model, then the physics footprint that goes with it. */
+  async function selectCar(id: CarId): Promise<void> {
+    const def = CARS.find((entry) => entry.id === id);
+    if (!def || def.id === carDef.id) {
+      garage.clearPending();
+      return;
+    }
+    let next: CarVisual;
+    try {
+      next = await loadCarVisual(def, resolveSpec(setup, def.spec));
+    } catch (error) {
+      console.error(error);
+      garage.clearPending();
+      hud.flash('Modèle indisponible', { duration: 1600 });
+      return;
+    }
+    scene.remove(car.group);
+    car.dispose?.();
+    car = next;
+    carIsModel = true;
+    carDef = def;
+    saveCarId(def.id);
+    scene.add(car.group);
+    rebuildVehicle();
+    garage.setCar(def);
+    hud.flash(def.label, { duration: 1200 });
+  }
 
   function openGarage(): void {
     if (mode !== 'menu' && !paused) togglePause();
@@ -696,6 +744,22 @@ async function boot(): Promise<void> {
     get redline() {
       return spec.redlineRpm;
     },
+    get carModel() {
+      return carIsModel;
+    },
+    get wheelMounts() {
+      return car.wheels.map((wheel) => ({ x: wheel.position.x, z: wheel.position.z }));
+    },
+    get wheelSpin() {
+      return car.wheels.map((wheel) => wheel.rotation.x);
+    },
+    get car() {
+      return carDef.id;
+    },
+    get cars() {
+      return CARS.map((entry) => entry.id);
+    },
+    setCar: (id: string) => selectCar(id as CarId),
     startFree: () => startMode('free'),
     startRace: () => startMode('race'),
     startCol: () => startMode('free', 'col'),
@@ -739,6 +803,12 @@ declare global {
       readonly soundMix: Record<string, number>;
       readonly streetKit: StreetKitSummary;
       readonly redline: number;
+      readonly car: string;
+      readonly cars: string[];
+      readonly carModel: boolean;
+      readonly wheelMounts: { x: number; z: number }[];
+      readonly wheelSpin: number[];
+      setCar: (id: string) => Promise<void>;
       startFree: () => void;
       startRace: () => void;
       startCol: () => void;
