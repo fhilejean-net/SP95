@@ -37,7 +37,7 @@ Le menu et la pause ouvrent un **atelier** où l'on choisit d'abord la voiture, 
 | Voiture | Moteur | Poids | Empattement | Voie |
 | --- | --- | --- | --- | --- |
 | Aventador LP700-4 | V12, 690 Nm, 8 250 tr/min | 1 575 kg | 2,75 m | 1,71 m |
-| RX-7 FD3S | birotor turbo, 300 Nm, 8 000 tr/min | 1 310 kg | 2,45 m | 1,73 m |
+| RX-7 FD3S | birotor turbo, 300 Nm, 8 000 tr/min | 1 310 kg | 2,45 m | 1,50 m |
 | i20 N Rally2 | 1,6 L turbo, 420 Nm, 7 200 tr/min | 1 230 kg | 2,59 m | 1,74 m |
 
 | Catégorie | Choix |

@@ -99,7 +99,9 @@ export const CARS: CarDef[] = [
       maxSteer: 0.72,
       steerRate: 3,
       wheelbase: 2.449,
-      track: 1.725,
+      // Measured between the tyre centres in the model, not between the
+      // node pivots: the RX-7's wheels are authored with an outboard pivot.
+      track: 1.495,
       bodyHalf: { x: 0.9, y: 0.42, z: 2.05 },
     },
   },
