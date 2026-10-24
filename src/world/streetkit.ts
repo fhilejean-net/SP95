@@ -32,6 +32,8 @@ const KIT_MODELS = [
   'construction-fence',
   'construction-light',
   'dumpster',
+  'electricity-pole',
+  'electricity-wires',
 ] as const;
 
 type KitModel = (typeof KIT_MODELS)[number];
@@ -49,6 +51,9 @@ const COLLIDERS: Partial<Record<KitModel, [number, number, number]>> = {
   'construction-fence': [0.04, 0.09, 0.19],
   'construction-light': [0.04, 0.12, 0.04],
   dumpster: [0.14, 0.1, 0.19],
+  // The pole's own arm is far wider than the post: a thin box is what the car
+  // actually hits.
+  'electricity-pole': [0.03, 0.26, 0.03],
 };
 
 interface Item {
@@ -299,6 +304,63 @@ function buildItems(): Item[] {
       });
       index++;
     });
+  }
+
+  // --- Power lines along the rural roads ----------------------------------
+  // One pole every 41 m on the same shoulder, bridged by a single wire span
+  // stretched along its own axis to close the gap. The kit's poles are as wide
+  // as they are tall, so the post is squashed horizontally to read as a real
+  // distribution pole instead of a gantry.
+  const POLE_HEIGHT = 14;
+  const POLE_WIDTH = 6;
+  const CABLE = 4.5;
+  // The wire model starts at y = 0.438 at scale 1; lift it back to the arm.
+  const CABLE_LIFT = 0.438 * (POLE_HEIGHT - CABLE);
+  for (const road of SAMPLED_ROADS) {
+    if (road.def.kind !== 'rural') continue;
+    const width = roadWidth(road.def);
+    const poles: { x: number; y: number; z: number }[] = [];
+    walkRoad(road, 41, 23, (pose) => {
+      const px = pose.x - pose.tz * (width / 2 + 2.4);
+      const pz = pose.z + pose.tx * (width / 2 + 2.4);
+      const y = heightAt(px, pz);
+      // The arm runs across the road, the way the cables leave it.
+      const yaw = Math.atan2(-pose.tx, -pose.tz);
+      poles.push({ x: px, y, z: pz });
+      items.push({
+        model: 'electricity-pole',
+        x: px,
+        y,
+        z: pz,
+        yaw,
+        sx: POLE_WIDTH,
+        sy: POLE_HEIGHT,
+        sz: POLE_WIDTH,
+      });
+    });
+
+    const spans = road.def.closed ? poles.length : poles.length - 1;
+    for (let i = 0; i < spans; i++) {
+      const a = poles[i];
+      const b = poles[(i + 1) % poles.length];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const gap = Math.hypot(dx, dz);
+      if (gap < 8 || gap > 60) continue;
+      // The wire model spans -0.285..0.221 in X, not centred: stretch it to the
+      // gap and slide it so both ends land on a pole.
+      const stretch = gap / 0.506;
+      items.push({
+        model: 'electricity-wires',
+        x: (a.x + b.x) / 2 + (dx / gap) * 0.063 * gap,
+        y: (a.y + b.y) / 2 + CABLE_LIFT,
+        z: (a.z + b.z) / 2 + (dz / gap) * 0.063 * gap,
+        yaw: Math.atan2(-dz, dx),
+        sx: stretch,
+        sy: CABLE,
+        sz: CABLE,
+      });
+    }
   }
 
   // --- Roadworks on the shoulder of Rue des Tilleuls ----------------------
