@@ -13,6 +13,7 @@ import {
 } from './world/layout.ts';
 import { buildGradedRoads, buildRaceGates, buildRoads, buildTerrain } from './world/terrain.ts';
 import { buildCity, syncProps } from './world/city.ts';
+import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
 import { createSky } from './render/sky.ts';
 import { createCar, updateCarVisual } from './render/car.ts';
@@ -23,6 +24,8 @@ import { Hud, type GameMode } from './game/hud.ts';
 import { DriftScore } from './game/drift.ts';
 import { Race } from './game/race.ts';
 import { CarAudio } from './game/audio.ts';
+import { AudioPanel } from './game/audioPanel.ts';
+import { saveMix } from './game/audioMix.ts';
 import { Garage } from './game/garage.ts';
 import { loadSetup, resolveSpec, saveSetup, type Setup } from './game/tuning.ts';
 
@@ -122,7 +125,10 @@ async function boot(): Promise<void> {
   await setLoading(0.68, 'Construction de la ville…');
   const props = buildCity(scene, world, materials);
 
-  await setLoading(0.76, 'Installation du circuit…');
+  await setLoading(0.74, 'Mobilier urbain…');
+  const streetKit = await buildStreetKit(scene, world);
+
+  await setLoading(0.8, 'Installation du circuit…');
   const checkpoints = buildRaceCheckpoints(12);
   buildRaceGates(scene, materials, checkpoints);
 
@@ -145,7 +151,18 @@ async function boot(): Promise<void> {
 
   const input = new InputManager(canvas);
   const hud = new Hud();
+  hud.setRedline(spec.redlineRpm);
   const audio = new CarAudio();
+  /** Overlay hidden while the sound panel is up, restored when it closes. */
+  let soundReturn: HTMLElement | null = null;
+  const audioPanel = new AudioPanel(
+    audio.soundMix,
+    (channel, value) => {
+      audio.setChannel(channel, value);
+      saveMix(audio.soundMix);
+    },
+    () => closeSound(),
+  );
   const drift = new DriftScore();
   const governor = new QualityGovernor(renderer, renderer.getPixelRatio());
 
@@ -308,6 +325,7 @@ async function boot(): Promise<void> {
     );
     car.setWheelRadius(spec.wheelRadius);
     configureAudio();
+    hud.setRedline(spec.redlineRpm);
     setCarPose(position.x, position.z, heading);
   }
 
@@ -327,10 +345,29 @@ async function boot(): Promise<void> {
     garage.open(setup);
   }
 
+  function openSound(): void {
+    if (mode !== 'menu' && !paused) togglePause();
+    // One panel at a time: the menu behind the mix would otherwise show
+    // through the card and blur its own buttons.
+    soundReturn = null;
+    if (mode === 'menu' && !menu.classList.contains('hidden')) soundReturn = menu;
+    else if (paused && !pause.classList.contains('hidden')) soundReturn = pause;
+    soundReturn?.classList.add('hidden');
+    audioPanel.open(audio.soundMix);
+  }
+
+  function closeSound(): void {
+    audioPanel.close();
+    soundReturn?.classList.remove('hidden');
+    soundReturn = null;
+  }
+
   document.getElementById('btn-free')?.addEventListener('click', () => startMode('free'));
   document.getElementById('btn-race')?.addEventListener('click', () => startMode('race'));
   document.getElementById('btn-garage')?.addEventListener('click', openGarage);
   document.getElementById('btn-pause-garage')?.addEventListener('click', openGarage);
+  document.getElementById('btn-sound')?.addEventListener('click', openSound);
+  document.getElementById('btn-pause-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-col')?.addEventListener('click', () => startMode('free', 'col'));
   document.getElementById('btn-pause-col')?.addEventListener('click', () => startMode('free', 'col'));
   document.getElementById('btn-rally')?.addEventListener('click', () => startMode('free', 'rally'));
@@ -529,7 +566,7 @@ async function boot(): Promise<void> {
       );
     }
 
-    hud.updateSpeed(telemetry.speedKmh, telemetry.gear, telemetry.rpm / 7300);
+    hud.updateSpeed(telemetry.speedKmh, telemetry.gear, telemetry.rpm, spec.redlineRpm);
     hud.updateDrift(drift.pending, drift.total, drift.multiplier, drift.active);
 
     if (mode === 'race' && race) {
@@ -566,7 +603,8 @@ async function boot(): Promise<void> {
     const controls = input.update(dt);
 
     if (input.consume('pause')) {
-      if (garage.isOpen) garage.close();
+      if (audioPanel.isOpen) closeSound();
+      else if (garage.isOpen) garage.close();
       else togglePause();
     }
     if (input.consume('mute')) audio.setMuted(!audio.isMuted);
@@ -646,6 +684,18 @@ async function boot(): Promise<void> {
     get garageOpen() {
       return garage.isOpen;
     },
+    get soundPanelOpen() {
+      return audioPanel.isOpen;
+    },
+    get soundMix() {
+      return audio.soundMix;
+    },
+    get streetKit(): StreetKitSummary {
+      return streetKit;
+    },
+    get redline() {
+      return spec.redlineRpm;
+    },
     startFree: () => startMode('free'),
     startRace: () => startMode('race'),
     startCol: () => startMode('free', 'col'),
@@ -685,6 +735,10 @@ declare global {
       readonly drivetrain: { gear: number; rpm: number; limiter: boolean; shifting: boolean };
       readonly spec: { name: string; mass: number; peakTorque: number; maxSteer: number };
       readonly garageOpen: boolean;
+      readonly soundPanelOpen: boolean;
+      readonly soundMix: Record<string, number>;
+      readonly streetKit: StreetKitSummary;
+      readonly redline: number;
       startFree: () => void;
       startRace: () => void;
       startCol: () => void;

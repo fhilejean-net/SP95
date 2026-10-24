@@ -45,16 +45,23 @@ Le menu et la pause ouvrent un **atelier** où la voiture se prépare pièce par
 
 Le panneau affiche en direct la puissance, le poids et le rapport ch/t.
 
+## Son
+
+Le menu et la pause ouvrent **Son · mixage** : un fader par famille — général, moteur, admission, échappement, turbo, pneus, gravier, vent, effets — appliqué en direct et mémorisé dans le navigateur. `M` coupe tout sans toucher aux réglages. Les niveaux par défaut ont été rééquilibrés : le sifflement du turbo, le crissement des pneus et la dump valve passaient par-dessus le moteur.
+
+Le moteur est synthétisé : une pile d'harmoniques verrouillées sur la fréquence d'allumage, sans désaccordage ni ratio inharmonique, donc aucun battement qui ressemble à une boucle courte. Les nappes de bruit (admission, échappement, pneus, gravier, vent) bouclent chacune un buffer différent dont la fin est fondue dans le début : le point de boucle ne claque plus quand l'échappement s'ouvre à mi-régime.
+
 ## Contenu
 
 - **Carte ouverte** d'environ 2 km × 2 km : ville quadrillée avec immeubles, ceinture routière de campagne avec dénivelé, zone industrielle avec un grand pad de drift, quais, arbres et collines.
 - **Route du Col** : un massif au sud-ouest, gravi par une route à **lacets** de 1,18 km — quatre épingles, pentes jusqu'à 14,5 % — qui débouche sur un plateau sommital aménagé en aire de drift. Départ au pied du col, ou directement au sommet, depuis le menu.
 - **Boucle Rallye** : une spéciale en terre de 790 m dans les collines du sud-est, reliée à la ceinture par une piste en gravier. Départ « Rallye » dans le menu.
 - **Surfaces** : l'asphalte, la terre et l'herbe ne donnent pas la même adhérence. Sur la terre, le grip tombe à 62 % de celui du bitume, la résistance au roulement triple et l'angle de glissement de pic s'élargit : la voiture glisse plus tôt mais pardonne davantage. L'herbe est encore plus glissante (47 %).
+- **Mobilier urbain** : lampadaires, feux tricolores, panneaux stop et de rue, passages piétons, chantiers (cônes, barrières, clôtures, balises) et bennes viennent du **City Kit Roads de Kenney** ; 320 pièces placées le long des routes et aux carrefours, avec un collider pour celles que la voiture peut percuter.
 - **Conduite libre** : départ au centre-ville, circulation libre, réapparition en cas de tonneau.
 - **Drift** : score basé sur l'angle de dérive réel et la vitesse, multiplicateur qui monte tant que le dérapage continue, points perdus en cas de choc.
 - **Course** : 2 tours sur la ceinture, 12 portiques de contrôle, compte à rebours, chrono au tour, meilleur tour sauvegardé en local.
-- **HUD** : vitesse, rapport, régime, mini-carte, chrono, score de drift, messages.
+- **HUD** : vitesse, **régime en tr/min avec la zone rouge de la préparation**, rapport, mini-carte, chrono, score de drift, messages.
 - **Son** : moteur procédural lié au régime et à la charge, admission, échappement (plus bruyant avec la ligne d'atelier), turbo qui monte en pression, **flutter** et dump valve au lever de pied, **fart de boîte DSG** à chaque montée de rapport, **pops and bangs** à la décélération et au rupteur, crissement de pneus sur le bitume, grondement de gravier et cailloux sur la terre, vent, impacts.
 
 ## Technique
@@ -69,7 +76,7 @@ Le panneau affiche en direct la puissance, le poids et le rapport ch/t.
 - **Marche arrière** : sélectionnée à l'arrêt, limitée à ~27 km/h, l'accélérateur freine puis repasse en première ; le frein moteur s'oppose au sens de rotation réel des roues (il poussait auparavant la voiture en arrière).
 - **Transmission** : courbe de couple, embrayage progressif au démarrage, boîte auto pilotée par la vitesse des roues motrices (un burnout sur place reste en première), rupteur à coupure cyclique, frein moteur, ABS arrière, frein à main qui verrouille l'essieu arrière (le drift vient de la perte d'adhérence latérale, pas d'une animation).
 - **Rendu** : ciel de Preetham + carte d'environnement PMREM, matériaux PBR (peinture vernie), ombres dynamiques qui suivent la voiture, brouillard de distance, MSAA du canvas, tone mapping ACES. Rendu direct à la canvas (pas de chaîne de post-traitement) : c'était la source de surcoût GPU et de frames noires. Le pixel ratio est plafonné à 1,25 et une régulation automatique baisse la résolution puis les ombres si la machine tient moins de 48 fps.
-- **Assets** : tous les modèles (carrosserie, roues, bâtiments, arbres, cônes), textures et sons sont générés par code au chargement. Les seules dépendances sont les bibliothèques ci-dessus.
+- **Assets** : la voiture, les bâtiments, les arbres, le terrain et les sons sont générés par code au chargement. Le mobilier de rue est chargé depuis `public/models/kenney-city-roads/` (13 modèles GLB, une seule texture palette) et dessiné en `InstancedMesh` : environ douze draw calls pour toute la ville. Si un modèle manque, il est ignoré et la partie démarre quand même.
 - **Déterminisme** : la carte est générée avec une graine fixe ; elle est identique à chaque partie.
 
 ### Structure
@@ -78,10 +85,10 @@ Le panneau affiche en direct la puissance, le poids et le rapport ch/t.
 src/
   main.ts              boucle de jeu, modes, caméra, audio, HUD
   physics/             pneus, transmission, véhicule Rapier
-  world/               tracé des routes, terrain, ville, props
+  world/               tracé des routes, terrain, ville, mobilier Kenney
   render/              voiture, matériaux, ciel, régulation de qualité
   core/                entrées clavier/manette/tactile, caméra
-  game/                drift, course, HUD, audio, atelier (tuning + UI)
+  game/                drift, course, HUD, audio (+ DSP, mixage, panneau), atelier (tuning + UI)
 tests/                 physique et logique de jeu (Node)
 scripts/smoke.mjs      test de fumée navigateur (Playwright)
 ```
@@ -93,7 +100,7 @@ npm ci
 npm run dev        # serveur de dev
 npm run build      # typecheck + build de production dans dist/
 npm run preview    # sert le build
-npm test           # 29 tests Node : pneus, boîte, rupteur, véhicule, suspension, drift, marche arrière, réglages, surfaces, tracé du col
+npm test           # 34 tests Node : pneus, boîte, rupteur, véhicule, suspension, drift, marche arrière, réglages, surfaces, tracé du col, mixage et boucles audio
 ```
 
 Test navigateur (optionnel) :
@@ -104,7 +111,7 @@ npm run dev &
 node scripts/smoke.mjs
 ```
 
-Le test de fumée vérifie le démarrage, le menu, l'atelier (catégories, application d'une pièce), la conduite au clavier, le HUD, le compte à rebours de la course, les départs sur le col, sur la spéciale en terre (surface « terre » confirmée) et au sommet, ainsi que le déclenchement des effets sonores. Dans un environnement sans GPU, Chromium utilise SwiftShader : le rendu tourne alors à 1–2 fps et les contrôles temporels du test sont volontairement larges.
+Le test de fumée vérifie le démarrage, le menu, le mobilier Kenney, le panneau de mixage (un fader par famille, mémorisation, réinitialisation), l'atelier (catégories, application d'une pièce), la conduite au clavier, le HUD (dont le compte-tours), le compte à rebours de la course, les départs sur le col, sur la spéciale en terre (surface « terre » confirmée) et au sommet, ainsi que le déclenchement des effets sonores. Dans un environnement sans GPU, Chromium utilise SwiftShader : le rendu tourne alors à 1–2 fps et les contrôles temporels du test sont volontairement larges.
 
 ## Déploiement (GitHub Pages)
 
@@ -116,6 +123,10 @@ Le workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) const
 Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite sur `/SP95/`. L'étape `configure-pages` est lancée avec `enablement: true` : elle active Pages en mode « GitHub Actions » au premier déploiement, sans réglage manuel.
 
 > **Dépôt privé :** GitHub Pages n'est pas disponible sur l'offre gratuite pour un dépôt privé. Le dépôt doit rester public pour que le déploiement fonctionne.
+
+## Crédits
+
+- **City Kit Roads 2.2** de [Kenney](https://www.kenney.nl) — licence [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). Les modèles et leur licence sont dans `public/models/kenney-city-roads/`.
 
 ## Limites connues
 

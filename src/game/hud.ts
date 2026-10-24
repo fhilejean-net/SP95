@@ -30,6 +30,9 @@ export class Hud {
   private speedValue = el('speed-value');
   private gearValue = el('gear');
   private rpmFill = el('rpm-fill');
+  private rpmValue = el('rpm-value');
+  private rpmReadout = el('rpm-readout');
+  private rpmMax = el('rpm-max');
   private message = el('message');
   private minimap = el<HTMLCanvasElement>('minimap');
   private minimapBase: HTMLCanvasElement;
@@ -39,6 +42,7 @@ export class Hud {
   private mapCenter = 0;
   private lastSpeed = -1;
   private lastGear = -99;
+  private lastRpm = -1;
 
   constructor() {
     this.minimapBase = document.createElement('canvas');
@@ -147,7 +151,7 @@ export class Hud {
       mode === 'race' ? 'Course · 2 tours' : mode === 'free' ? 'Conduite libre' : 'SP95';
   }
 
-  updateSpeed(kmh: number, gear: number, rpmRatio: number): void {
+  updateSpeed(kmh: number, gear: number, rpm: number, redline: number): void {
     const rounded = Math.round(kmh);
     if (rounded !== this.lastSpeed) {
       this.speedValue.textContent = String(rounded);
@@ -157,8 +161,19 @@ export class Hud {
       this.gearValue.textContent = gear === -1 ? 'R' : gear === 0 ? 'N' : String(gear);
       this.lastGear = gear;
     }
-    const fill = Math.max(2, Math.min(100, rpmRatio * 100));
-    this.rpmFill.style.width = `${fill}%`;
+    const shown = Math.round(rpm / 10) * 10;
+    if (shown !== this.lastRpm) {
+      this.lastRpm = shown;
+      this.rpmValue.textContent = shown.toLocaleString('fr-FR');
+      this.rpmReadout.classList.toggle('redline', rpm > redline * 0.93);
+    }
+    const ratio = redline > 0 ? rpm / redline : 0;
+    this.rpmFill.style.width = `${Math.max(2, Math.min(100, ratio * 100))}%`;
+  }
+
+  /** Redline follows the garage spec: a Stage 3 engine does not rev like stock. */
+  setRedline(redline: number): void {
+    this.rpmMax.textContent = `/ ${redline.toLocaleString('fr-FR')}`;
   }
 
   updateDrift(pending: number, total: number, multiplier: number, active: boolean): void {

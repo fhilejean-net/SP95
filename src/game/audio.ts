@@ -3,7 +3,23 @@
  * and filtered noise. The interesting bits are the ones car people listen for:
  * a turbo that spools and flutters, a dual-clutch fart on every upshift, and
  * anti-lag style pops when you lift or bounce off the limiter.
+ *
+ * Two rules keep it clean at high revs:
+ *  - the engine is one phase-locked harmonic stack, with no detuned partials
+ *    and no inharmonic ratio, so nothing beats like a short audio loop;
+ *  - every noise voice loops a buffer whose end is crossfaded into its start,
+ *    so the loop point is silent instead of clicking every couple of seconds.
+ *
+ * Each family has its own bus, so the sound panel can balance them.
  */
+import { fillSeamlessNoise } from './audioDsp.ts';
+import {
+  DEFAULT_MIX,
+  clampChannel,
+  loadMix,
+  type SoundChannel,
+  type SoundMix,
+} from './audioMix.ts';
 
 export interface EngineTune {
   /** Rev limiter, rpm. */
@@ -18,11 +34,28 @@ export interface EngineTune {
 
 type NoiseKind = 'lowpass' | 'bandpass' | 'highpass';
 
+/** A band-limited engine waveform, built from integer harmonics only. */
+function engineWave(
+  ctx: AudioContext,
+  harmonics: number,
+  rolloff: number,
+  evenWeight: number,
+): PeriodicWave {
+  const real = new Float32Array(harmonics + 1);
+  const imag = new Float32Array(harmonics + 1);
+  for (let n = 1; n <= harmonics; n++) {
+    const weight = 1 / Math.pow(n, rolloff);
+    imag[n] = weight * (n % 2 === 0 ? evenWeight : 1);
+  }
+  return ctx.createPeriodicWave(real, imag);
+}
+
 export class CarAudio {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private engineGain: GainNode | null = null;
   private engineFilter: BiquadFilterNode | null = null;
+  private toneEdgeGain: GainNode | null = null;
   private intakeGain: GainNode | null = null;
   private exhaustGain: GainNode | null = null;
   private turboGain: GainNode | null = null;
@@ -33,8 +66,11 @@ export class CarAudio {
   private oscA: OscillatorNode | null = null;
   private oscB: OscillatorNode | null = null;
   private oscSub: OscillatorNode | null = null;
+  private lfo: OscillatorNode | null = null;
+  private buses = new Map<SoundChannel, GainNode>();
   private noiseBuffer: AudioBuffer | null = null;
   private muted = false;
+  private mix: SoundMix;
   started = false;
 
   /** 0..1 turbo boost pressure, integrated from throttle and revs. */
@@ -48,6 +84,15 @@ export class CarAudio {
   /** How many one-shot effects have fired: used by the smoke test. */
   events = 0;
   private tune: EngineTune = { redline: 7300, turbo: false, exhaustLevel: 0, engineLevel: 0 };
+
+  constructor() {
+    this.mix = loadMix();
+  }
+
+  /** Current user mix, as a copy. */
+  get soundMix(): SoundMix {
+    return { ...this.mix };
+  }
 
   init(): void {
     if (this.started) {
@@ -64,7 +109,7 @@ export class CarAudio {
     this.started = true;
 
     const master = ctx.createGain();
-    master.gain.value = 0.55;
+    master.gain.value = this.muted ? 0 : this.mix.master;
     const compressor = ctx.createDynamicsCompressor();
     compressor.threshold.value = -16;
     compressor.knee.value = 20;
@@ -75,53 +120,92 @@ export class CarAudio {
     compressor.connect(ctx.destination);
     this.master = master;
 
-    // White noise, shared by every noise voice.
-    const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-    this.noiseBuffer = buffer;
+    const bus = (channel: Exclude<SoundChannel, 'master'>): GainNode => {
+      const gain = ctx.createGain();
+      gain.gain.value = this.mix[channel];
+      gain.connect(master);
+      this.buses.set(channel, gain);
+      return gain;
+    };
+    const engineBus = bus('engine');
+    const intakeBus = bus('intake');
+    const exhaustBus = bus('exhaust');
+    const turboBus = bus('turbo');
+    const tyresBus = bus('tyres');
+    const gravelBus = bus('gravel');
+    const windBus = bus('wind');
+    const effectsBus = bus('effects');
 
-    // --- Engine: two detuned saws, a square an octave-and-a-half up and a sub.
+    /** One seamlessly looped noise buffer per voice family. */
+    const noise = (seconds: number): AudioBuffer => {
+      const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * seconds), ctx.sampleRate);
+      fillSeamlessNoise(buffer.getChannelData(0), Math.floor(ctx.sampleRate * 0.4));
+      return buffer;
+    };
+    const intakeNoise = noise(1.9);
+    const exhaustNoise = noise(2.3);
+    const tyreNoise = noise(2.7);
+    const gravelNoise = noise(3.1);
+    const windNoise = noise(4.3);
+    this.noiseBuffer = noise(2.1);
+
+    // --- Engine: one harmonic stack plus a half-order sub. No detune, no
+    // inharmonic partial: every component is locked to the firing frequency,
+    // so the tone cannot beat or repeat like a short sample.
     const engineGain = ctx.createGain();
     engineGain.gain.value = 0;
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = 1400;
-    filter.Q.value = 1.15;
+    filter.Q.value = 0.85;
     engineGain.connect(filter);
-    filter.connect(master);
+    filter.connect(engineBus);
     this.engineGain = engineGain;
     this.engineFilter = filter;
 
-    const makeOsc = (type: OscillatorType, gainValue: number, detune = 0) => {
+    const makeOsc = (wave: PeriodicWave, gainValue: number): { osc: OscillatorNode; gain: GainNode } => {
       const osc = ctx.createOscillator();
-      osc.type = type;
+      osc.setPeriodicWave(wave);
       osc.frequency.value = 60;
-      osc.detune.value = detune;
       const gain = ctx.createGain();
       gain.gain.value = gainValue;
       osc.connect(gain);
       gain.connect(engineGain);
       osc.start();
-      return osc;
+      return { osc, gain };
     };
-    this.oscA = makeOsc('sawtooth', 0.42, -6);
-    this.oscB = makeOsc('square', 0.16, 9);
-    this.oscSub = makeOsc('sine', 0.34);
+    const bodyWave = engineWave(ctx, 16, 1.15, 0.7);
+    const edgeWave = engineWave(ctx, 26, 0.8, 0.5);
+    const body = makeOsc(bodyWave, 0.5);
+    const edge = makeOsc(edgeWave, 0.16);
+    this.oscA = body.osc;
+    this.toneEdgeGain = edge.gain;
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.value = 30;
+    const subGain = ctx.createGain();
+    subGain.gain.value = 0.34;
+    sub.connect(subGain);
+    subGain.connect(engineGain);
+    sub.start();
+    this.oscSub = sub;
+    this.oscB = edge.osc;
 
-    // A slow amplitude wobble at the firing frequency gives the idle its lump.
+    // A slow amplitude wobble at half the firing frequency gives the idle its
+    // lump without adding a second, beating pitch.
     const lfo = ctx.createOscillator();
     lfo.type = 'sine';
-    lfo.frequency.value = 18;
+    lfo.frequency.value = 16;
     const lfoGain = ctx.createGain();
     lfoGain.gain.value = 0.012;
     lfo.connect(lfoGain);
     lfoGain.connect(engineGain.gain);
     lfo.start();
+    this.lfo = lfo;
 
     // --- Intake honk: follows throttle, gets louder with engine work.
     const intake = ctx.createBufferSource();
-    intake.buffer = buffer;
+    intake.buffer = intakeNoise;
     intake.loop = true;
     const intakeFilter = ctx.createBiquadFilter();
     intakeFilter.type = 'bandpass';
@@ -131,13 +215,13 @@ export class CarAudio {
     intakeGain.gain.value = 0;
     intake.connect(intakeFilter);
     intakeFilter.connect(intakeGain);
-    intakeGain.connect(master);
+    intakeGain.connect(intakeBus);
     intake.start();
     this.intakeGain = intakeGain;
 
     // --- Exhaust rasp.
     const exhaust = ctx.createBufferSource();
-    exhaust.buffer = buffer;
+    exhaust.buffer = exhaustNoise;
     exhaust.loop = true;
     const exhaustFilter = ctx.createBiquadFilter();
     exhaustFilter.type = 'bandpass';
@@ -147,41 +231,41 @@ export class CarAudio {
     exhaustGain.gain.value = 0;
     exhaust.connect(exhaustFilter);
     exhaustFilter.connect(exhaustGain);
-    exhaustGain.connect(master);
+    exhaustGain.connect(exhaustBus);
     exhaust.start();
     this.exhaustGain = exhaustGain;
 
     // --- Turbo: a thin high whine that tracks boost.
     const turboOsc = ctx.createOscillator();
     turboOsc.type = 'sine';
-    turboOsc.frequency.value = 1600;
+    turboOsc.frequency.value = 1200;
     const turboGain = ctx.createGain();
     turboGain.gain.value = 0;
     turboOsc.connect(turboGain);
-    turboGain.connect(master);
+    turboGain.connect(turboBus);
     turboOsc.start();
     this.turboOsc = turboOsc;
     this.turboGain = turboGain;
 
     // --- Tire squeal.
     const tire = ctx.createBufferSource();
-    tire.buffer = buffer;
+    tire.buffer = tyreNoise;
     tire.loop = true;
     const tireFilter = ctx.createBiquadFilter();
     tireFilter.type = 'bandpass';
-    tireFilter.frequency.value = 1450;
-    tireFilter.Q.value = 7;
+    tireFilter.frequency.value = 1250;
+    tireFilter.Q.value = 4.5;
     const tireGain = ctx.createGain();
     tireGain.gain.value = 0;
     tire.connect(tireFilter);
     tireFilter.connect(tireGain);
-    tireGain.connect(master);
+    tireGain.connect(tyresBus);
     tire.start();
     this.tireGain = tireGain;
 
     // --- Gravel / grass rumble.
     const gravel = ctx.createBufferSource();
-    gravel.buffer = buffer;
+    gravel.buffer = gravelNoise;
     gravel.loop = true;
     const gravelFilter = ctx.createBiquadFilter();
     gravelFilter.type = 'lowpass';
@@ -191,13 +275,13 @@ export class CarAudio {
     gravelGain.gain.value = 0;
     gravel.connect(gravelFilter);
     gravelFilter.connect(gravelGain);
-    gravelGain.connect(master);
+    gravelGain.connect(gravelBus);
     gravel.start();
     this.gravelGain = gravelGain;
 
     // --- Wind.
     const wind = ctx.createBufferSource();
-    wind.buffer = buffer;
+    wind.buffer = windNoise;
     wind.loop = true;
     const windFilter = ctx.createBiquadFilter();
     windFilter.type = 'lowpass';
@@ -206,22 +290,41 @@ export class CarAudio {
     windGain.gain.value = 0;
     wind.connect(windFilter);
     windFilter.connect(windGain);
-    windGain.connect(master);
+    windGain.connect(windBus);
     wind.start();
     this.windGain = windGain;
 
+    // Bursts and impacts live on the effects bus.
+    this.effects = effectsBus;
     this.lastTime = ctx.currentTime;
   }
+
+  private effects: GainNode | null = null;
 
   /** Applies the current garage spec: redline, turbo, exhaust, engine stage. */
   configure(tune: EngineTune): void {
     this.tune = tune;
   }
 
+  /** Moves one channel of the mix; the rest keeps playing. */
+  setChannel(channel: SoundChannel, value: number): void {
+    this.mix[channel] = clampChannel(value, DEFAULT_MIX[channel]);
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (channel === 'master') {
+      if (!this.muted && this.master) {
+        this.master.gain.setTargetAtTime(this.mix.master, ctx.currentTime, 0.04);
+      }
+      return;
+    }
+    const bus = this.buses.get(channel);
+    bus?.gain.setTargetAtTime(this.mix[channel], ctx.currentTime, 0.04);
+  }
+
   setMuted(muted: boolean): void {
     this.muted = muted;
     if (this.master && this.ctx) {
-      this.master.gain.setTargetAtTime(muted ? 0 : 0.55, this.ctx.currentTime, 0.05);
+      this.master.gain.setTargetAtTime(muted ? 0 : this.mix.master, this.ctx.currentTime, 0.05);
     }
   }
 
@@ -256,62 +359,65 @@ export class CarAudio {
     const rate = target > this.boost ? 0.32 : 0.55;
     this.boost += (target - this.boost) * Math.min(1, dt * rate * 10);
 
-    // --- Engine tone.
-    const firing = Math.max(26, (rpm / 60) * 2.1);
-    this.oscA.frequency.setTargetAtTime(firing, now, 0.035);
-    this.oscB.frequency.setTargetAtTime(firing * 1.495, now, 0.035);
-    this.oscSub.frequency.setTargetAtTime(firing * 0.5, now, 0.04);
+    // --- Engine tone. Four-stroke four-cylinder: two ignitions per rev.
+    const firing = Math.max(24, (rpm / 60) * 2);
+    this.oscA.frequency.setTargetAtTime(firing, now, 0.03);
+    this.oscB.frequency.setTargetAtTime(firing, now, 0.03);
+    this.oscSub.frequency.setTargetAtTime(firing * 0.5, now, 0.035);
+    this.lfo?.frequency.setTargetAtTime(Math.max(10, firing * 0.5), now, 0.05);
 
     const load = Math.max(0.12, throttle);
     const rpmFactor = Math.min(1, Math.max(0, (rpm - 700) / Math.max(1, tune.redline - 900)));
     const openExhaust = tune.exhaustLevel * 0.045;
     this.engineGain.gain.setTargetAtTime(
-      (0.032 + rpmFactor * 0.085 + openExhaust * 0.35) *
+      (0.03 + rpmFactor * 0.075 + openExhaust * 0.3) *
         (grounded ? 1 : 0.6) *
-        (0.55 + load * 0.45),
+        (0.6 + load * 0.4),
       now,
       0.05,
     );
+    this.toneEdgeGain?.gain.setTargetAtTime(0.1 + throttle * 0.16 + rpmFactor * 0.06, now, 0.06);
     if (this.engineFilter) {
       this.engineFilter.frequency.setTargetAtTime(
-        650 + rpmFactor * 3000 + throttle * 600 + tune.engineLevel * 260,
+        700 + rpmFactor * 3600 + throttle * 500 + tune.engineLevel * 240,
         now,
         0.06,
       );
     }
     if (this.intakeGain) {
       this.intakeGain.gain.setTargetAtTime(
-        (0.012 + rpmFactor * 0.03) * throttle * (1 + tune.engineLevel * 0.3),
+        (0.01 + rpmFactor * 0.026) * throttle * (1 + tune.engineLevel * 0.3),
         now,
         0.05,
       );
     }
     if (this.exhaustGain) {
       this.exhaustGain.gain.setTargetAtTime(
-        (0.008 + throttle * 0.05 * (0.35 + rpmFactor)) * (1 + tune.exhaustLevel * 0.55),
+        (0.007 + throttle * 0.042 * (0.35 + rpmFactor)) * (1 + tune.exhaustLevel * 0.55),
         now,
         0.05,
       );
     }
     if (this.turboOsc && this.turboGain) {
-      this.turboOsc.frequency.setTargetAtTime(1200 + this.boost * 4600 + rpmFactor * 700, now, 0.08);
-      this.turboGain.gain.setTargetAtTime(this.boost * 0.012 * (1 + tune.engineLevel * 0.4), now, 0.12);
+      // Keep the whine under the engine: it used to sit on top at half revs.
+      this.turboOsc.frequency.setTargetAtTime(900 + this.boost * 3400 + rpmFactor * 500, now, 0.08);
+      this.turboGain.gain.setTargetAtTime(this.boost * 0.006 * (1 + tune.engineLevel * 0.4), now, 0.12);
     }
     if (this.tireGain) {
       const squeal = offRoad
         ? 0
         : Math.min(1, Math.max(0, (Math.abs(slip) - 0.12) / 0.35));
-      this.tireGain.gain.setTargetAtTime(squeal * 0.17 * Math.min(1, speed / 18), now, 0.06);
+      this.tireGain.gain.setTargetAtTime(squeal * 0.12 * Math.min(1, speed / 18), now, 0.06);
     }
     if (this.gravelGain) {
       this.gravelGain.gain.setTargetAtTime(
-        offRoad ? roughness * 0.11 * Math.min(1, speed / 9) : 0,
+        offRoad ? roughness * 0.085 * Math.min(1, speed / 9) : 0,
         now,
         0.09,
       );
     }
     if (this.windGain) {
-      this.windGain.gain.setTargetAtTime(Math.min(0.12, (speed * speed) / 42000), now, 0.1);
+      this.windGain.gain.setTargetAtTime(Math.min(0.1, (speed * speed) / 42000), now, 0.1);
     }
 
     // --- Events -----------------------------------------------------------
@@ -334,7 +440,7 @@ export class CarAudio {
         freq: 2600,
         q: 1.2,
         type: 'bandpass',
-        gain: 0.05 + this.boost * 0.05,
+        gain: 0.045 + this.boost * 0.045,
         decay: 0.035,
       });
     }
@@ -353,11 +459,11 @@ export class CarAudio {
       freq: 150 + Math.min(1, rpm / 8000) * 90,
       q: 7,
       type: 'lowpass',
-      gain: 0.34 * strength,
+      gain: 0.26 * strength,
       decay: 0.075 + throttle * 0.05,
       attack: 0.004,
     });
-    this.burst({ freq: 900, q: 1.4, type: 'bandpass', gain: 0.07 * strength, decay: 0.05 });
+    this.burst({ freq: 900, q: 1.4, type: 'bandpass', gain: 0.06 * strength, decay: 0.05 });
   }
 
   /** Overrun crackle: a handful of uneven shots, never a machine gun. */
@@ -371,7 +477,7 @@ export class CarAudio {
         freq: 190 * pitch,
         q: 2.4,
         type: 'bandpass',
-        gain: (0.16 + Math.random() * 0.16) * strength,
+        gain: (0.12 + Math.random() * 0.13) * strength,
         decay: 0.045 + Math.random() * 0.05,
         attack: 0.002,
         delay,
@@ -381,7 +487,7 @@ export class CarAudio {
           freq: 1500 + Math.random() * 1800,
           q: 0.9,
           type: 'bandpass',
-          gain: 0.05 * strength,
+          gain: 0.04 * strength,
           decay: 0.03,
           delay: delay + 0.004,
         });
@@ -397,7 +503,7 @@ export class CarAudio {
       freq: 1900,
       q: 0.8,
       type: 'bandpass',
-      gain: 0.1 + boost * 0.1,
+      gain: 0.08 + boost * 0.08,
       decay: 0.14,
       attack: 0.006,
       sweepTo: 900,
@@ -408,7 +514,7 @@ export class CarAudio {
         freq: 2400 - i * 120,
         q: 2.6,
         type: 'bandpass',
-        gain: 0.05 * (1 - i / (chirps + 2)),
+        gain: 0.04 * (1 - i / (chirps + 2)),
         decay: 0.026,
         attack: 0.002,
         delay: 0.03 + i * 0.042,
@@ -428,9 +534,9 @@ export class CarAudio {
     sweepTo?: number;
   }): void {
     const ctx = this.ctx;
-    const master = this.master;
+    const output = this.effects;
     const buffer = this.noiseBuffer;
-    if (!ctx || !master || !buffer) return;
+    if (!ctx || !output || !buffer) return;
 
     const source = ctx.createBufferSource();
     source.buffer = buffer;
@@ -453,14 +559,14 @@ export class CarAudio {
 
     source.connect(filter);
     filter.connect(gain);
-    gain.connect(master);
-    source.start(start, Math.random() * 1.5);
+    gain.connect(output);
+    source.start(start, Math.random() * (buffer.duration - 0.1));
     source.stop(start + attack + opts.decay + 0.02);
   }
 
   impact(strength: number): void {
     const ctx = this.ctx;
-    if (!ctx || !this.master || !this.noiseBuffer) return;
+    if (!ctx || !this.effects || !this.noiseBuffer) return;
     const source = ctx.createBufferSource();
     source.buffer = this.noiseBuffer;
     const filter = ctx.createBiquadFilter();
@@ -468,11 +574,11 @@ export class CarAudio {
     filter.frequency.value = 420;
     const gain = ctx.createGain();
     const now = ctx.currentTime;
-    gain.gain.setValueAtTime(Math.min(0.5, strength * 0.35), now);
+    gain.gain.setValueAtTime(Math.min(0.45, strength * 0.3), now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
     source.connect(filter);
     filter.connect(gain);
-    gain.connect(this.master);
+    gain.connect(this.effects);
     source.start(now);
     source.stop(now + 0.3);
   }
@@ -483,7 +589,7 @@ export class CarAudio {
       freq: 900 + Math.random() * 1500,
       q: 1.4,
       type: 'bandpass',
-      gain: 0.03 + Math.random() * 0.03,
+      gain: 0.025 + Math.random() * 0.025,
       decay: 0.04,
     });
   }

@@ -33,6 +33,7 @@
           <button id="btn-rally">Rallye · piste en terre</button>
           <button id="btn-sommet">Sommet · aire de drift</button>
           <button id="btn-garage">Atelier · préparation</button>
+          <button id="btn-sound">Son · mixage</button>
         </div>
         <p class="menu-best" id="menu-best"></p>
         <div class="controls-grid">
@@ -78,6 +79,11 @@
           <span id="gear">1</span>
           <div id="rpm-bar"><span id="rpm-fill"></span></div>
         </div>
+        <div id="rpm-readout">
+          <span id="rpm-value">900</span>
+          <span id="rpm-unit">tr/min</span>
+          <span id="rpm-max">/ 7 300</span>
+        </div>
       </div>
 
       <canvas id="minimap" width="190" height="190"></canvas>
@@ -107,6 +113,7 @@
           <button id="btn-pause-rally">Rallye · piste en terre</button>
           <button id="btn-pause-sommet">Sommet · aire de drift</button>
           <button id="btn-pause-garage">Atelier · préparation</button>
+          <button id="btn-pause-sound">Son · mixage</button>
           <button id="btn-pause-menu">Menu principal</button>
         </div>
         <p class="menu-footnote">Échap pour reprendre.</p>
@@ -133,6 +140,21 @@
         <div class="garage-foot">
           <p class="menu-footnote">Chaque pièce est appliquée immédiatement et mémorisée.</p>
           <button id="btn-garage-close" class="primary">Terminer</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="sound" class="overlay hidden">
+      <div class="menu-card sound-card">
+        <p class="eyebrow">Son</p>
+        <h2 class="logo small">Mixage</h2>
+        <p class="sound-intro">
+          Chaque famille a son fader, appliqué en direct. <b>M</b> coupe tout sans toucher aux réglages.
+        </p>
+        <div id="sound-channels" class="sound-channels"></div>
+        <div class="sound-foot">
+          <button id="btn-sound-reset">Réinitialiser</button>
+          <button id="btn-sound-close" class="primary">Terminer</button>
         </div>
       </div>
     </div>

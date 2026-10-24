@@ -56,6 +56,49 @@ try {
     `${initial.debug.drawCalls} draw calls, ${initial.debug.triangles} triangles`,
   );
 
+  const kit = await page.evaluate(() => window.__sp95.streetKit);
+  check(
+    'the Kenney street kit is built',
+    kit.models >= 10 && kit.instances > 200 && kit.colliders > 150,
+    `${kit.models} models, ${kit.instances} pieces, ${kit.colliders} colliders`,
+  );
+
+  // Sound panel: one fader per family, applied live and remembered.
+  await page.click('#btn-sound');
+  await page.waitForTimeout(400);
+  const soundPanel = await page.evaluate(() => ({
+    open: window.__sp95.soundPanelOpen,
+    rows: document.querySelectorAll('#sound-channels .sound-row').length,
+    menuHidden: document.getElementById('menu').classList.contains('hidden'),
+  }));
+  check(
+    'the sound panel opens with one fader per channel',
+    soundPanel.open && soundPanel.rows === 9 && soundPanel.menuHidden,
+    `${soundPanel.rows} faders`,
+  );
+  await page.evaluate(() => {
+    const slider = document.querySelector('#sound-channels input[data-channel="turbo"]');
+    slider.value = '20';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const mixed = await page.evaluate(() => ({
+    mix: window.__sp95.soundMix,
+    stored: localStorage.getItem('sp95.audioMix'),
+  }));
+  check(
+    'a fader moves that channel and is remembered',
+    Math.abs(mixed.mix.turbo - 0.2) < 1e-6 && Boolean(mixed.stored),
+    `turbo ${mixed.mix.turbo}`,
+  );
+  await page.click('#btn-sound-reset');
+  const resetTurbo = await page.evaluate(() => window.__sp95.soundMix.turbo);
+  check('reset restores the balanced mix', Math.abs(resetTurbo - 0.45) < 1e-6, `${resetTurbo}`);
+  await page.click('#btn-sound-close');
+  const menuBack = await page.evaluate(
+    () => !document.getElementById('menu').classList.contains('hidden'),
+  );
+  check('closing the sound panel returns to the menu', menuBack);
+
   // Garage: pick a part, make sure the car is rebuilt with it.
   await page.click('#btn-garage');
   await page.waitForTimeout(400);
@@ -100,6 +143,17 @@ try {
   }));
   check('car accelerates under keyboard input', Boolean(accelerated), `${driving.speed.toFixed(0)} km/h`);
   check('engine and gearbox are live', driving.gear >= 1 && driving.rpm > 900, `gear ${driving.gear}, ${driving.rpm.toFixed(0)} rpm`);
+
+  const tach = await page.evaluate(() => ({
+    value: Number(document.getElementById('rpm-value').textContent.replace(/\s/g, '')),
+    max: document.getElementById('rpm-max').textContent.replace(/\s/g, ''),
+    redline: window.__sp95.redline,
+  }));
+  check(
+    'the tachometer shows live revs and the redline',
+    tach.value > 1000 && tach.max.endsWith(String(tach.redline)) && tach.redline === 7300,
+    `${tach.value} tr/min ${tach.max}`,
+  );
 
   check('no console errors while driving', errors.length === 0, errors.slice(0, 3).join(' | '));
 
