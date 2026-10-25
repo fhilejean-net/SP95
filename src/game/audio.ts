@@ -428,13 +428,13 @@ export class CarAudio {
     // Lift off at revs: overrun pops, wastegate chatter and turbo flutter.
     if (this.prevThrottle > 0.55 && throttle < 0.12 && this.prevRpm > 3800) {
       const strength = Math.min(1, (this.prevRpm - 3200) / 3600);
-      this.pops(2 + Math.round(strength * 3), strength * 0.9 + tune.exhaustLevel * 0.15);
+      this.pops(2 + Math.round(strength * 6), strength * 0.9 + tune.exhaustLevel * 0.15);
       if (this.boost > 0.25) this.blowOff(this.boost);
     }
     // Bouncing off the limiter: anti-lag bangs, not a clean cut.
     if (limiter && throttle > 0.35 && now - this.lastPop > 0.09) {
       this.lastPop = now;
-      this.popCount = (this.popCount + 1) % 3;
+      this.popCount = (this.popCount + 3) % 3;
       if (this.popCount === 0) this.pops(1, 0.75 + Math.random() * 0.25);
       if (this.boost > 0.3 && Math.random() > 0.55) this.burst({
         freq: 2600,
@@ -454,7 +454,7 @@ export class CarAudio {
   private dsgFart(throttle: number, rpm: number): void {
     if (!this.ctx) return;
     this.events++;
-    const strength = 0.35 + throttle * 0.45;
+    const strength = 1 + throttle * 0.45;
     this.burst({
       freq: 150 + Math.min(1, rpm / 8000) * 90,
       q: 7,
