@@ -2,7 +2,18 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { magicFormula, slipRatioFromWheelSpeed, tireForces } from '../src/physics/tire.ts';
-import { DIRT_TRACKS, MOUNTAIN_ROADS, RALLY_START, SPAWN, heightAt, surfaceAt } from '../src/world/layout.ts';
+import {
+  DIRT_TRACKS,
+  DRIFT_PAD,
+  MOUNTAIN_ROADS,
+  RALLY_START,
+  SPAWN,
+  SUMMIT,
+  heightAt,
+  padEdgeDistance,
+  surfaceAt,
+} from '../src/world/layout.ts';
+import { roadEnds } from '../src/world/terrain.ts';
 import { Drivetrain, torqueAtRpm } from '../src/physics/drivetrain.ts';
 import { Vehicle, NEUTRAL_INPUT, STOCK_SPEC, type VehicleInput } from '../src/physics/vehicle.ts';
 import { DEFAULT_SETUP, resolveSpec, type Setup } from '../src/game/tuning.ts';
@@ -486,6 +497,45 @@ test('the terrain sits just under the asphalt everywhere on the col', () => {
       ground < s.y + 0.02 && ground > s.y - 0.3,
       `terrain ${ground.toFixed(2)} vs road ${s.y.toFixed(2)} at ${s.x.toFixed(0)},${s.z.toFixed(0)}`,
     );
+  }
+});
+
+test('the summit arena is one flat slab, with ground under all of it', () => {
+  // The col stacks switchbacks, so a lower leg runs underneath the summit. Its
+  // 32 m embankment blend used to pull the ground up to 5 m below the concrete
+  // disc: the car drove off the disc and fell through it onto the hillside.
+  for (let r = 0; r <= SUMMIT.radius; r += 2.5) {
+    for (let a = 0; a < Math.PI * 2; a += 0.3) {
+      const x = SUMMIT.cx + Math.cos(a) * r;
+      const z = SUMMIT.cz + Math.sin(a) * r;
+      const ground = heightAt(x, z);
+      assert.ok(
+        Math.abs(ground - SUMMIT.y) < 0.02,
+        `ground ${ground.toFixed(2)} under the disc at r=${r.toFixed(0)}, road level ${SUMMIT.y.toFixed(2)}`,
+      );
+    }
+  }
+});
+
+test('the drift pad sits level with the street that reaches it', () => {
+  for (let x = DRIFT_PAD.cx - DRIFT_PAD.halfX; x <= DRIFT_PAD.cx + DRIFT_PAD.halfX; x += 6) {
+    for (let z = DRIFT_PAD.cz - DRIFT_PAD.halfZ; z <= DRIFT_PAD.cz + DRIFT_PAD.halfZ; z += 6) {
+      assert.ok(padEdgeDistance(x, z) <= 0, 'sample outside the pad');
+      const ground = heightAt(x, z);
+      assert.ok(
+        Math.abs(ground - DRIFT_PAD.y) < 0.25,
+        `ground ${ground.toFixed(2)} vs pad ${DRIFT_PAD.y.toFixed(2)} at ${x.toFixed(0)},${z.toFixed(0)}`,
+      );
+    }
+  }
+});
+
+test('city streets end on a turning circle instead of a raw cut', () => {
+  const ends = roadEnds();
+  assert.ok(ends.length >= 12, `only ${ends.length} dead ends treated`);
+  for (const end of ends) {
+    assert.ok(end.radius > 8, `${end.radius.toFixed(1)} m bulb at ${end.x.toFixed(0)},${end.z.toFixed(0)}`);
+    assert.equal(surfaceAt(end.x, end.z).kind, 'asphalte', 'a turning circle has to be paved');
   }
 });
 

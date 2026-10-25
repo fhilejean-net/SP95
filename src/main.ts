@@ -11,12 +11,20 @@ import {
   buildRaceCheckpoints,
   surfaceAt,
 } from './world/layout.ts';
-import { buildGradedRoads, buildRaceGates, buildRoads, buildTerrain } from './world/terrain.ts';
+import {
+  buildArenaPads,
+  buildGradedRoads,
+  buildRaceGates,
+  buildRoads,
+  buildTerrain,
+  roadEnds,
+} from './world/terrain.ts';
 import { buildCity, syncProps } from './world/city.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
 import { createSky } from './render/sky.ts';
 import { createCar, updateCarVisual, type CarVisual } from './render/car.ts';
+import { createTireSmoke } from './render/tireSmoke.ts';
 import { loadCarVisual } from './render/carModel.ts';
 import { CARS, findCar, loadCarId, saveCarId, type CarDef, type CarId } from './game/cars.ts';
 import { QualityGovernor } from './render/quality.ts';
@@ -123,6 +131,7 @@ async function boot(): Promise<void> {
   await setLoading(0.52, 'Tracé des routes…');
   buildRoads(scene, materials);
   buildGradedRoads(scene, materials);
+  buildArenaPads(world);
 
   await setLoading(0.68, 'Construction de la ville…');
   const props = buildCity(scene, world, materials);
@@ -194,6 +203,15 @@ async function boot(): Promise<void> {
   let fpsTime = 0;
   let fps = 0;
 
+  const smokeFx = createTireSmoke(lowFx ? 180 : 420);
+  scene.add(smokeFx.object);
+  /** Fractional puffs owed to each wheel, so the rate does not depend on fps. */
+  const smokeDebt = [0, 0, 0, 0];
+  const smokeTint = new THREE.Color();
+  const SMOKE_WHITE = new THREE.Color(0xe4e4e6);
+  const SMOKE_DUST = new THREE.Color(0xc7ad86);
+  const carVelocity = new THREE.Vector3();
+
   const carPosition = new THREE.Vector3(SPAWN.x, spawnY, SPAWN.z);
   const carForward = forwardFromHeading(SPAWN.heading);
   const cameraGround = (x: number, z: number) => terrain.sample(x, z);
@@ -238,6 +256,7 @@ async function boot(): Promise<void> {
     chase.snap(carPosition, carForward, ground);
     accumulator = 0;
     lastSpeed = 0;
+    smokeFx.clear();
   }
 
   function spawnFree(): void {
@@ -576,6 +595,42 @@ async function boot(): Promise<void> {
       telemetry.gear === -1,
     );
 
+    // Tire smoke and gravel dust. A wheel smokes once it slips, which is the
+    // only honest signal that the tires are spinning up or sliding: straight
+    // line driving never emits, and a burnout at walking pace still will.
+    carVelocity.set(state.velocity.x, state.velocity.y, state.velocity.z);
+    if (mode !== 'menu' && !paused && telemetry.speed > 1.5) {
+      for (let i = 0; i < telemetry.wheels.length; i++) {
+        const wheel = telemetry.wheels[i];
+        const slip = Math.hypot(wheel.slipRatio * 1.15, wheel.slipAngle);
+        if (!wheel.contact || slip < 0.2) {
+          smokeDebt[i] = 0;
+          continue;
+        }
+        const load = Math.min(1, wheel.load / 5200);
+        const bite = Math.min(1, (slip - 0.2) / 0.6);
+        smokeDebt[i] += dt * (16 + 100 * Math.pow(bite, 1.4)) * (0.4 + load * 0.6);
+        while (smokeDebt[i] >= 1) {
+          smokeDebt[i] -= 1;
+          const surface = surfaceAt(wheel.worldPosition.x, wheel.worldPosition.z).kind;
+          smokeTint.copy(surface === 'asphalte' ? SMOKE_WHITE : SMOKE_DUST);
+          const intensity = Math.min(1, 0.35 + slip * 1.1);
+          smokeFx.emit(
+            wheel.worldPosition.x + (Math.random() - 0.5) * 0.34,
+            wheel.worldPosition.y - wheel.suspensionLength + 0.05,
+            wheel.worldPosition.z + (Math.random() - 0.5) * 0.34,
+            carVelocity.x * 0.24 + (Math.random() - 0.5) * 1.2,
+            0.35 + Math.random() * 0.7,
+            carVelocity.z * 0.24 + (Math.random() - 0.5) * 1.2,
+            intensity,
+            smokeTint,
+          );
+        }
+      }
+    } else {
+      smokeDebt.fill(0);
+    }
+
     const lightPos = carPosition.clone().addScaledVector(sky.sunDirection, 260);
     sky.sun.position.copy(lightPos);
     sky.sun.target.position.copy(carPosition);
@@ -613,6 +668,10 @@ async function boot(): Promise<void> {
         cameraClearance,
       );
     }
+
+    // Point sizes are in pixels: convert from metres at the current fov.
+    const fov = (camera.fov * Math.PI) / 180;
+    smokeFx.update(dt, renderer.domElement.height / (2 * Math.tan(fov / 2)));
 
     hud.updateSpeed(telemetry.speedKmh, telemetry.gear, telemetry.rpm, spec.redlineRpm);
     hud.updateDrift(drift.pending, drift.total, drift.multiplier, drift.active);
@@ -741,6 +800,12 @@ async function boot(): Promise<void> {
     get streetKit(): StreetKitSummary {
       return streetKit;
     },
+    get roadEnds() {
+      return roadEnds().length;
+    },
+    get smoke() {
+      return smokeFx.live;
+    },
     get redline() {
       return spec.redlineRpm;
     },
@@ -802,6 +867,8 @@ declare global {
       readonly soundPanelOpen: boolean;
       readonly soundMix: Record<string, number>;
       readonly streetKit: StreetKitSummary;
+      readonly roadEnds: number;
+      readonly smoke: number;
       readonly redline: number;
       readonly car: string;
       readonly cars: string[];

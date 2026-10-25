@@ -16,8 +16,6 @@ export interface CarDef {
   yaw: number;
   /** Wheel node names in the GLB, in FL, FR, RL, RR order. */
   wheels: [string, string, string, string];
-  /** Glow quads to add at the rear, for a model without usable lamp geometry. */
-  brakeGlow: boolean;
   spec: VehicleSpec;
 }
 
@@ -36,7 +34,6 @@ export const CARS: CarDef[] = [
       'Lamborghini_Aventador_Wheel_RL',
       'Lamborghini_Aventador_Wheel_RR',
     ],
-    brakeGlow: true,
     spec: {
       ...STOCK_SPEC,
       name: 'Aventador',
@@ -73,7 +70,6 @@ export const CARS: CarDef[] = [
     model: 'models/cars/rx7.glb',
     yaw: Math.PI,
     wheels: ['FL_WHEEL', 'FR_WHEEL', 'RL_WHEEL', 'RR_WHEEL'],
-    brakeGlow: true,
     spec: {
       ...STOCK_SPEC,
       name: 'RX-7',
@@ -112,7 +108,6 @@ export const CARS: CarDef[] = [
     model: 'models/cars/i20n.glb',
     yaw: 0,
     wheels: ['FL_WHEEL', 'FR_WHEEL', 'RL_WHEEL', 'RR_WHEEL'],
-    brakeGlow: true,
     spec: {
       ...STOCK_SPEC,
       name: 'i20 N',

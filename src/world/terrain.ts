@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   DIRT_TRACKS,
   DRIFT_PAD,
@@ -185,6 +186,41 @@ function ribbonGeometry(
   return geometry;
 }
 
+export interface RoadEnd {
+  x: number;
+  z: number;
+  y: number;
+  radius: number;
+}
+
+/**
+ * Ends of the open streets that finish in open ground. An end that lands on
+ * another road is a junction and gets no turning circle.
+ */
+export function roadEnds(): RoadEnd[] {
+  const ends: RoadEnd[] = [];
+  for (const road of SAMPLED_ROADS) {
+    if (road.def.closed || road.def.surface === 'dirt') continue;
+    for (const p of [road.points[0], road.points[road.points.length - 1]]) {
+      let junction = false;
+      for (const other of SAMPLED_ROADS) {
+        if (other === road) continue;
+        const reach = (other.def.width + road.def.width) * 0.5 + 3;
+        for (const s of other.samples) {
+          if (Math.hypot(s.x - p.x, s.z - p.z) < reach) {
+            junction = true;
+            break;
+          }
+        }
+        if (junction) break;
+      }
+      if (junction) continue;
+      ends.push({ x: p.x, z: p.z, y: p.y, radius: road.def.width * 0.62 + 3 });
+    }
+  }
+  return ends;
+}
+
 export function buildRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void {
   const dashPositions: number[] = [];
   const dashIndices: number[] = [];
@@ -307,6 +343,59 @@ export function buildRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void
   startLine.rotation.z = RACE_START.heading;
   startLine.position.set(RACE_START.x, heightAt(RACE_START.x, RACE_START.z) + ROAD_LIFT + 0.012, RACE_START.z);
   scene.add(startLine);
+
+  // A street that simply stopped left its asphalt and shoulder hanging over the
+  // bank, black underside and all. Each dead end now finishes on a turning
+  // circle: the kerb of concrete first, the asphalt bulb on top of it.
+  const ends = roadEnds();
+  if (ends.length > 0) {
+    const disc = new THREE.CircleGeometry(1, 30);
+    disc.rotateX(-Math.PI / 2);
+    const asphalt: THREE.BufferGeometry[] = [];
+    const kerbs: THREE.BufferGeometry[] = [];
+    for (const end of ends) {
+      const kerb = disc.clone();
+      kerb.scale(end.radius + 1.8, 1, end.radius + 1.8);
+      kerb.translate(end.x, end.y + ROAD_LIFT - 0.018, end.z);
+      kerbs.push(kerb);
+
+      const bulb = disc.clone();
+      bulb.scale(end.radius, 1, end.radius);
+      bulb.translate(end.x, end.y + ROAD_LIFT, end.z);
+      asphalt.push(bulb);
+    }
+    const kerbMesh = new THREE.Mesh(mergeGeometries(kerbs), mats.concrete);
+    kerbMesh.receiveShadow = true;
+    kerbMesh.name = 'road-ends-kerb';
+    scene.add(kerbMesh);
+    const bulbMesh = new THREE.Mesh(mergeGeometries(asphalt), mats.asphalt);
+    bulbMesh.receiveShadow = true;
+    bulbMesh.name = 'road-ends';
+    scene.add(bulbMesh);
+  }
+}
+
+/**
+ * Both arenas are levelled in the terrain, but the terrain collider is a coarse
+ * mesh: near their rims a triangle can dip a little below the concrete. A thin
+ * slab over each arena gives the concrete its own collision, so a wheel never
+ * drops through the surface the player can see.
+ */
+export function buildArenaPads(world: RAPIER.World): void {
+  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  const HALF = 0.06;
+  world.createCollider(
+    RAPIER.ColliderDesc.cylinder(HALF, SUMMIT.radius)
+      .setTranslation(SUMMIT.cx, SUMMIT.y + 0.04 - HALF, SUMMIT.cz)
+      .setFriction(0.98),
+    body,
+  );
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(DRIFT_PAD.halfX, HALF, DRIFT_PAD.halfZ)
+      .setTranslation(DRIFT_PAD.cx, DRIFT_PAD.y + 0.022 - HALF, DRIFT_PAD.cz)
+      .setFriction(0.98),
+    body,
+  );
 }
 
 /**

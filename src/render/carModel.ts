@@ -100,7 +100,6 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
   const group = new THREE.Group();
   group.name = 'car';
   const wheelGroups: THREE.Group[] = [];
-  const bodyGeometries: THREE.BufferGeometry[] = [];
   let paintMaterial: THREE.MeshStandardMaterial | null = null;
 
   for (const mesh of meshes) {
@@ -117,7 +116,6 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
       body.castShadow = true;
       body.receiveShadow = true;
       group.add(body);
-      bodyGeometries.push(geometry);
       if (!paintMaterial && material && /body|paint/i.test(material.name)) paintMaterial = material;
     } else {
       // Hub-local vertices, so the group can spin and steer around the hub.
@@ -137,52 +135,21 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
     }
   }
 
-  const bodyBox = bounds(bodyGeometries);
-  const bodySize = bodyBox.getSize(new THREE.Vector3());
-  const bodyCentre = bodyBox.getCenter(new THREE.Vector3());
-
   // --- Lamps --------------------------------------------------------------
-  // The models carry their own lamps, but none is a separate node we could
-  // light up. Thin emissive bars sit just behind the rear panel instead; at
-  // rest they are dark, under braking they glow.
+  // The three models bake their lamps into the bodywork: the Aventador and the
+  // i20 have no lamp nodes at all, and the RX-7's only emissive material is its
+  // headlights. Thin emissive quads used to be stuck a few millimetres behind
+  // the rear panel to fake brake lights, but on these shapes the panel curves
+  // away and they ended up hanging in the air behind the car. Nothing is added
+  // here now: the modelled lamps simply stay as they are. The procedural
+  // fallback keeps the lamps that are part of its own bodywork.
   const brakeLights: THREE.Mesh[] = [];
-  let reverseLight: THREE.Mesh;
-  if (def.brakeGlow) {
-    const rear = bodyBox.max.z;
-    const lampY = bodyBox.min.y + bodySize.y * 0.62;
-    for (const side of [-1, 1]) {
-      const material = new THREE.MeshStandardMaterial({
-        color: 0x3a0407,
-        emissive: 0xff1a24,
-        emissiveIntensity: 0.4,
-        roughness: 0.35,
-        metalness: 0.1,
-        transparent: true,
-        opacity: 0.9,
-      });
-      const lamp = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.075), material);
-      lamp.position.set(bodyCentre.x + side * bodySize.x * 0.28, lampY, rear + 0.004);
-      group.add(lamp);
-      brakeLights.push(lamp);
-    }
-    const reverseMaterial = new THREE.MeshStandardMaterial({
-      color: 0x777777,
-      emissive: 0xffffff,
-      emissiveIntensity: 0,
-      roughness: 0.4,
-    });
-    reverseLight = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.055), reverseMaterial);
-    reverseLight.position.set(bodyCentre.x, lampY - 0.1, rear + 0.004);
-    group.add(reverseLight);
-  } else {
-    const hidden = new THREE.Mesh(
-      new THREE.BufferGeometry(),
-      new THREE.MeshStandardMaterial({ visible: false }),
-    );
-    hidden.visible = false;
-    group.add(hidden);
-    reverseLight = hidden;
-  }
+  const reverseLight = new THREE.Mesh(
+    new THREE.BufferGeometry(),
+    new THREE.MeshStandardMaterial({ visible: false }),
+  );
+  reverseLight.visible = false;
+  group.add(reverseLight);
 
   const mounts = wheelGroups.map((wheel) => ({ x: wheel.position.x, z: wheel.position.z }));
   const modelRadius = frontRadius;

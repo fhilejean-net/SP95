@@ -752,15 +752,37 @@ export function heightAt(x: number, z: number): number {
     const t = smoothstep(flat, flat + 8, road.dist);
     h = (road.y - 0.012) * (1 - t) + h * t;
   }
+
+  // The arena is re-floored after the cuts. The col is a stack of switchbacks:
+  // a lower leg passes some twenty metres underneath the summit, and its 32 m
+  // embankment blend was pulling the ground 2 to 5 m below the concrete disc.
+  // The disc then had no collider under it and the car dropped through onto the
+  // hillside. Inside the disc nothing may sit below the concrete; over the next
+  // ten metres the floor eases back to whatever the road cuts left, so the rim
+  // is a bank rather than a cliff. Where a road runs above the plateau (the
+  // final switchback) the max keeps the road shelf, so the arena never buries
+  // the road that leads to it.
+  if (summit < SUMMIT.radius + 10) {
+    const t = smoothstep(SUMMIT.radius, SUMMIT.radius + 10, summit);
+    h = Math.max(h, SUMMIT.y * (1 - t) + h * t);
+  }
+
+  // Whatever the pads lift, the asphalt always wins: the floor above lifts the
+  // last metres of the col to the arena level, and without this the road that
+  // leads to the arena would end up under its own shoulder.
+  if (engineered && engineered.dist < engineered.width * 0.5 + 1.2) {
+    h = Math.min(h, engineered.y - 0.02);
+  }
+
   return h;
 }
 
-/** Terrain height without the drift pad blend, used to seed the pad height. */
-export function rawHeightAt(x: number, z: number): number {
-  return naturalHeightAt(x, z);
-}
-
-DRIFT_PAD.y = rawHeightAt(DRIFT_PAD.cx, DRIFT_PAD.cz);
+/**
+ * The pad is level with the streets that reach it, not with the hilltop under
+ * it. Seeded from the natural ground it sat four metres above the avenue and
+ * the access road, which then tunnelled under a floating slab of concrete.
+ */
+DRIFT_PAD.y = nearestRoad(DRIFT_PAD.cx - DRIFT_PAD.halfX + 6, DRIFT_PAD.cz).y;
 
 /** Foot of the climb, where the col joins the ring road. */
 export const COL_START = (() => {

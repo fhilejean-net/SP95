@@ -63,6 +63,9 @@ try {
     `${kit.models} models, ${kit.instances} pieces, ${kit.colliders} colliders`,
   );
 
+  const ends = await page.evaluate(() => window.__sp95.roadEnds);
+  check('the open streets end on a turning circle', ends >= 12, `${ends} dead ends`);
+
   // The modelled car: the GLB replaces the lofted shell, wheels on the mounts.
   const carState = await page.evaluate(() => ({
     id: window.__sp95.car,
@@ -193,6 +196,8 @@ try {
 
   await page.keyboard.down('KeyW');
   const accelerated = await waitFor(() => window.__sp95.speedKmh > 35);
+  const smoked = await waitFor(() => window.__sp95.smoke > 0, 20_000);
+  check('wheelspin throws tire smoke', Boolean(smoked), `${await page.evaluate(() => window.__sp95.smoke)} puffs`);
   const spinA = await page.evaluate(() => window.__sp95.wheelSpin);
   // SwiftShader runs at about one frame per second: give it a few frames.
   await page.waitForTimeout(3000);
@@ -290,6 +295,27 @@ try {
     'the summit arena is paved and high up',
     summit.mode === 'free' && summit.surface === 'asphalte' && summit.position.y > 50,
     `${summit.surface}, y=${summit.position.y.toFixed(0)}`,
+  );
+  // The concrete has to hold the car up over the whole disc, not just at the
+  // spawn: a lower switchback runs underneath it.
+  const padHeights = [];
+  // Well clear of the cone circle at r = 38 and of the road ramp.
+  for (const [dx, dz] of [[46, 0], [-46, 0], [0, 46], [0, -46], [34, 34]]) {
+    padHeights.push(
+      await page.evaluate(
+        ([x, z]) => {
+          window.__sp95.teleport(-480 + x, -420 + z, 0);
+          return window.__sp95.position.y;
+        },
+        [dx, dz],
+      ),
+    );
+  }
+  const padSpread = Math.max(...padHeights) - Math.min(...padHeights);
+  check(
+    'the summit concrete carries the car everywhere on the disc',
+    padSpread < 0.2 && Math.min(...padHeights) > 60,
+    `y ${padHeights.map((v) => v.toFixed(2)).join(', ')}`,
   );
 
   // Engine sound effects: a full-throttle launch then a lift should have fired
