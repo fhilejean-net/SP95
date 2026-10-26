@@ -73,6 +73,13 @@ try {
     `${hoods.houses} houses, ${hoods.shops} shops`,
   );
 
+  const vegetation = await page.evaluate(() => window.__sp95.vegetation);
+  check(
+    'the landscape is planted with the modelled trees and grass',
+    vegetation.trees > 0 && vegetation.grass > 0,
+    `${vegetation.trees} trees, ${vegetation.grass} grass tufts`,
+  );
+
   // The modelled car: the GLB replaces the lofted shell, wheels on the mounts.
   const carState = await page.evaluate(() => ({
     id: window.__sp95.car,

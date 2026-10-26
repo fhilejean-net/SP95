@@ -35,7 +35,11 @@ export const SUPERMOTARD: BikeDef = {
     muFront: 1.34,
     muRear: 1.3,
     peakSlipAngle: 0.15,
-    looseGrip: 0.85,
+    // A cross bike is at home in the grass and on the trails: knobby tires
+    // still give up grip compared with asphalt, but on a surface whose own
+    // grip is 0.47 to 0.62 that multiplier has to be well over one, otherwise
+    // the bike simply cannot put a wheel down off the road.
+    looseGrip: 1.35,
     brakeTorque: 980,
     maxSteer: 0.62,
     steerRate: 3.4,

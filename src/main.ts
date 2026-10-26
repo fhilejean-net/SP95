@@ -23,6 +23,7 @@ import {
 } from './world/terrain.ts';
 import { NEIGHBOURHOODS, buildCity, syncProps } from './world/city.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
+import { buildVegetation, type VegetationSummary } from './world/vegetation.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
 import { createSky } from './render/sky.ts';
 import { createCar, updateCarVisual, type CarVisual } from './render/car.ts';
@@ -146,11 +147,14 @@ async function boot(): Promise<void> {
   await setLoading(0.74, 'Mobilier urbain…');
   const streetKit = await buildStreetKit(scene, world, materials);
 
-  await setLoading(0.8, 'Installation du circuit…');
+  await setLoading(0.8, 'Plantation des arbres…');
+  const vegetation = await buildVegetation(scene, world, lowFx);
+
+  await setLoading(0.85, 'Installation du circuit…');
   const checkpoints = buildRaceCheckpoints(12);
   buildRaceGates(scene, materials, checkpoints);
 
-  await setLoading(0.84, 'Montage de la voiture…');
+  await setLoading(0.88, 'Montage de la voiture…');
   let setup: Setup = loadSetup();
   let carDef: CarDef = findCar(loadCarId());
   let spec: VehicleSpec = resolveSpec(setup, carDef.spec);
@@ -238,6 +242,11 @@ async function boot(): Promise<void> {
 
   const carPosition = new THREE.Vector3(SPAWN.x, spawnY, SPAWN.z);
   const carForward = forwardFromHeading(SPAWN.heading);
+  /** Ground attitude under the bike, smoothed: the visual follows the hill. */
+  const slopeState = { pitch: 0, roll: 0 };
+  const slopeNormal = new THREE.Vector3();
+  const localNormal = new THREE.Vector3();
+  const bodyQuat = new THREE.Quaternion();
   const cameraGround = (x: number, z: number) => terrain.sample(x, z);
 
   /** How much of the car -> camera segment is free of walls and ground. */
@@ -819,14 +828,52 @@ async function boot(): Promise<void> {
         state.rotation.z,
         state.rotation.w,
       );
+
+      // The physics body only ever yaws, so the ground normal under the tires
+      // is what tells the visual about the hill. Average the two contact
+      // normals (a wheelie leaves only the rear one), rotate them into the
+      // bike's own frame, and smooth them: a raycast normal jitters on gravel
+      // and the bike would shiver.
+      slopeNormal.set(0, 0, 0);
+      let slopeSamples = 0;
+      for (const wheel of telemetry.wheels) {
+        if (!wheel.contact || !wheel.contactNormal) continue;
+        slopeNormal.x += wheel.contactNormal.x;
+        slopeNormal.y += wheel.contactNormal.y;
+        slopeNormal.z += wheel.contactNormal.z;
+        slopeSamples++;
+      }
+      let targetPitch = 0;
+      let targetRoll = 0;
+      if (slopeSamples > 0) {
+        slopeNormal.normalize();
+        bodyQuat.set(state.rotation.x, state.rotation.y, state.rotation.z, state.rotation.w).invert();
+        localNormal.copy(slopeNormal).applyQuaternion(bodyQuat);
+        targetPitch = Math.atan2(localNormal.z, localNormal.y);
+        targetRoll = Math.atan2(localNormal.x, localNormal.y);
+      }
+      const slopeRate = Math.min(1, dt * (slopeSamples > 0 ? 9 : 2.5));
+      slopeState.pitch += (targetPitch - slopeState.pitch) * slopeRate;
+      slopeState.roll += (targetRoll - slopeState.roll) * slopeRate;
+
       const rearSuspension = telemetry.wheels[1]?.suspensionLength ?? bike.restLength;
-      bikeVisual.setPose(
-        bike.lean,
-        bike.pitch,
-        bike.steer,
+      const frontSuspension = telemetry.wheels[0]?.suspensionLength ?? bike.restLength;
+      bikeVisual.setPose({
+        lean: bike.lean,
+        pitch: bike.pitch,
+        steer: bike.steer,
         rearSuspension,
-        SUPERMOTARD.spec.wheelRadius,
-      );
+        frontSuspension,
+        restLength: bike.restLength,
+        wheelRadius: SUPERMOTARD.spec.wheelRadius,
+        slopePitch: slopeState.pitch,
+        slopeRoll: slopeState.roll,
+        accel: bike.longAccel,
+        brake: telemetry.brake,
+        // The rider's idle motion runs on wall time: it must keep breathing
+        // while the bike is moving, not only in the menu.
+        time: performance.now() / 1000,
+      });
       bikeVisual.setSpin(
         telemetry.wheels[0]?.spinAngle ?? 0,
         telemetry.wheels[1]?.spinAngle ?? 0,
@@ -1106,6 +1153,9 @@ async function boot(): Promise<void> {
     get streetKit(): StreetKitSummary {
       return streetKit;
     },
+    get vegetation(): VegetationSummary {
+      return vegetation;
+    },
     get roadEnds() {
       return roadEnds().length;
     },
@@ -1140,6 +1190,9 @@ async function boot(): Promise<void> {
         bavette: Boolean(t.bavette),
         steerDeg: (bike.steer * 180) / Math.PI,
         rearSuspension: t.wheels[1]?.suspensionLength ?? 0,
+        frontSuspension: t.wheels[0]?.suspensionLength ?? 0,
+        slopePitchDeg: (slopeState.pitch * 180) / Math.PI,
+        slopeRollDeg: (slopeState.roll * 180) / Math.PI,
         wheels: t.wheels.length,
       };
     },
@@ -1216,6 +1269,7 @@ declare global {
       readonly soundMix: Record<string, number>;
       readonly tcs: boolean;
       readonly streetKit: StreetKitSummary;
+      readonly vegetation: VegetationSummary;
       readonly roadEnds: number;
       readonly neighbourhoods: { houses: number; shops: number };
       readonly smoke: number;
@@ -1231,6 +1285,9 @@ declare global {
         bavette: boolean;
         steerDeg: number;
         rearSuspension: number;
+        frontSuspension: number;
+        slopePitchDeg: number;
+        slopeRollDeg: number;
         wheels: number;
       } | null;
       readonly car: string;

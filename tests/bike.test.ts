@@ -154,7 +154,9 @@ test('the supermotard pulls away, wheelies on the pop and brakes down', async ()
   assert.ok(bike.popWheelie(), 'the clutch-up should be available at speed');
   step(150);
   const raised = bike.pitch;
-  assert.ok(raised > 0.6, `pitch ${raised.toFixed(2)} rad`);
+  // A wheelie is a riding position, not a loop: the pop must settle well
+  // under the bavette angle instead of slapping the tail down at once.
+  assert.ok(raised > 0.5, `pitch ${raised.toFixed(2)} rad`);
   assert.ok(!bike.telemetryState.wheels[0].contact, 'the front wheel should be in the air');
   assert.equal(bike.telemetryState.wheels.length, 2);
   // It settles instead of running straight over: the rider catches it.
@@ -163,9 +165,10 @@ test('the supermotard pulls away, wheelies on the pop and brakes down', async ()
   const settled = raised;
   step(180);
   assert.ok(
-    bike.pitch > settled - 0.12 && bike.pitch > 0.6,
+    bike.pitch > settled - 0.12 && bike.pitch > 0.5,
     `the throttle should hold the wheelie (${settled.toFixed(2)} -> ${bike.pitch.toFixed(2)})`,
   );
+  assert.ok(bike.pitch < BAVETTE_ANGLE - 0.1, `the hold angle must leave room for the bavette (${bike.pitch.toFixed(2)})`);
 
   input.brake = 1;
   step(90);

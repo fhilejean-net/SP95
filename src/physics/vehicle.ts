@@ -88,6 +88,9 @@ export interface WheelTelemetry {
   slipAngle: number;
   slipRatio: number;
   worldPosition: Vec3;
+  /** Ground normal under the contact patch: the bike follows it visually. */
+  contactNormal?: Vec3;
+  contactPoint?: Vec3;
 }
 
 export interface VehicleTelemetry {

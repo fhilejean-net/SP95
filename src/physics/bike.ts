@@ -314,9 +314,11 @@ export class Bike {
     if (Math.abs(dot(this.body.linvel(), forwardOf(this.rotation))) < 2) return false;
     // A clutch dump, not a launch ramp: it breaks the front loose, then the
     // throttle decides how high the rider takes it. At the top of a wheelie the
-    // same button is the push into a bavette, so it keeps some authority there.
+    // same button is the push into a bavette: from the angle the throttle
+    // holds it needs a real kick, otherwise the tail never reaches the road.
+    const bavettePush = this.pitch > 0.45;
     const headroom = 0.35 + 0.65 * clamp(1 - this.pitch / 1.2, 0, 1);
-    this.pitchVelocity += 1.0 * headroom;
+    this.pitchVelocity += (bavettePush ? 3.9 : 0.62) * headroom;
     this.popCooldown = 0.6;
     return true;
   }
@@ -623,7 +625,11 @@ export class Bike {
     }
 
     if (speed > 0.4) {
-      const rolling = 0.012 * totalLoad * rearGround.rolling * Math.sign(vLong);
+      // Knobby tires do not plough through grass the way a road tire does:
+      // three quarters of the rolling resistance is what made the bike stop
+      // dead the moment it left the tarmac.
+      const looseRoll = rearGround.kind === 'asphalte' ? 1 : 0.55;
+      const rolling = 0.012 * totalLoad * rearGround.rolling * looseRoll * Math.sign(vLong);
       this.body.applyImpulse(
         { x: -forward.x * rolling * dt, y: 0, z: -forward.z * rolling * dt },
         true,
@@ -753,6 +759,8 @@ export class Bike {
       slipAngle: wheel.slipAngle,
       slipRatio: wheel.slipRatio,
       worldPosition: add(pos, rotate(q, wheel.mount)),
+      contactNormal: wheel.contactNormal,
+      contactPoint: wheel.contactPoint,
     };
   }
 }

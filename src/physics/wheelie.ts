@@ -53,9 +53,14 @@ export const LOOP_ANGLE = 1.52;
  */
 export const BAVETTE_ANGLE = 0.9;
 
-/** Where a closed throttle and full gas put the front, radians. */
+/**
+ * Where a closed throttle and full gas put the front, radians. The top of the
+ * range is the angle a rider actually rides at on a supermotard: a little past
+ * 34°., high enough to read as a wheelie and far enough under the bavette that
+ * the tail stays off the road unless he pushes for it.
+ */
 export const HOLD_LOW = 0.02;
-export const HOLD_HIGH = 0.82;
+export const HOLD_HIGH = 0.62;
 
 /** Gravity, m/s². */
 const G = 9.81;
@@ -64,9 +69,13 @@ const G = 9.81;
 const LIFT_ANGLE = 0.16;
 
 /** Balance stiffness of the rider's corrections, Nm per rad of error. */
-const RIDER_GAIN = 5200;
-/** How hard the rider reacts to the front already moving, Nm·s/rad. */
-const RIDER_DAMPING = 1400;
+const RIDER_GAIN = 6000;
+/**
+ * How hard the rider reacts to the front already moving, Nm·s/rad. The pop
+ * arrives with a lot of angular speed; without this the bike overshoots the
+ * angle the throttle asks for and slaps the tail down on every clutch-up.
+ */
+const RIDER_DAMPING = 2100;
 /** Torque the rider can ask the tire for, Nm. */
 const RIDER_MAX = 2600;
 /** Axle torque at which the engine can answer the rider fully, Nm. */

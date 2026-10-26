@@ -12,17 +12,32 @@ import * as THREE from 'three';
  * what a bike visual must never do.
  */
 
+export interface BikePose {
+  /** Bike lean, positive to the right, radians. */
+  lean: number;
+  /** Wheelie pitch about the rear contact, positive nose-up. */
+  pitch: number;
+  steer: number;
+  /** Current rear and front suspension lengths, metres. */
+  rearSuspension: number;
+  frontSuspension: number;
+  /** Static suspension length, metres. */
+  restLength: number;
+  wheelRadius: number;
+  /** Ground pitch along the bike and roll across it, radians. */
+  slopePitch: number;
+  slopeRoll: number;
+  /** Smoothed longitudinal acceleration, m/s², for the rider's weight shift. */
+  accel: number;
+  brake: number;
+  time: number;
+}
+
 export interface BikeVisual {
   group: THREE.Group;
   /** Front then rear. */
   wheels: THREE.Group[];
-  setPose(
-    lean: number,
-    pitch: number,
-    steer: number,
-    rearSuspension: number,
-    wheelRadius: number,
-  ): void;
+  setPose(pose: BikePose): void;
   setSpin(front: number, rear: number): void;
   setBrake(braking: boolean): void;
   /** World position of the number plate: the bavette scrapes there. */
@@ -428,17 +443,17 @@ export function createBike(): BikeVisual {
   return {
     group,
     wheels: [front, rear],
-    setPose(leanAngle, pitch, steer, rearSuspension, wheelRadius) {
-      if (wheelRadius !== currentRadius) {
-        currentRadius = wheelRadius;
+    setPose(state: BikePose) {
+      if (state.wheelRadius !== currentRadius) {
+        currentRadius = state.wheelRadius;
       }
       // The rear contact is the anchor: place the local ground where the ray
       // found it, so neither the lean nor the wheelie can lift the rear tire.
-      pose.position.y = -(rearSuspension + currentRadius);
-      leanPivot.rotation.z = -leanAngle;
-      pitchPivot.rotation.x = pitch;
-      barGroup.rotation.y = -steer;
-      front.rotation.y = -steer;
+      pose.position.y = -(state.rearSuspension + currentRadius);
+      leanPivot.rotation.z = -(state.lean + state.slopeRoll);
+      pitchPivot.rotation.x = state.pitch + state.slopePitch;
+      barGroup.rotation.y = -state.steer;
+      front.rotation.y = -state.steer;
     },
     setSpin(frontSpin, rearSpin) {
       front.rotation.x = -frontSpin;
