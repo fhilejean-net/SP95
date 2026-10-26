@@ -6,10 +6,11 @@ commit hash so the history stays readable.
 
 ## Ready
 
-- [ ] **Rider shoulder seam** — `S`. The left sleeve still leaves a visible gap at the armpit
+- [x] ~~**Rider shoulder seam**~~ — `S`. The left sleeve still leaves a visible gap at the armpit
   when the bar is on full lock. Blend the shoulder ball into the torso (bigger ball, slightly
   lower joint) and check from the front at full lock.
   *Done when:* `artifacts/steer-right.png` shows no gap at either shoulder.
+  *Cycle 1:* `b9228cc` — deltoïde comblant la coupe d'aisselle, cuir mat, capture des deux épaules
 
 - [ ] **Fork cables** — `M`. The brake/clutch lines are baked into the chassis mesh in the GLB
   and stay put when the bar turns. Cut the tube-like body meshes near the steering head into the
