@@ -226,11 +226,14 @@ export async function loadRiderVisual(): Promise<RiderVisual | null> {
   sourceMaterial.envMapIntensity = 1.15;
   sourceMaterial.needsUpdate = true;
 
+  // Cuir mat, pas de chrome : sur un cylindre vu de côté, le reflet d'environnement
+  // frôle la surface sous incidence rasante, où Fresnel tend vers 1 — d'où le gris
+  // d'acier même avec une couleur presque noire. Il faut couper l'environnement.
   const leather = new THREE.MeshStandardMaterial({
     color: 0x141419,
-    roughness: 0.36,
-    metalness: 0.3,
-    envMapIntensity: 1.2,
+    roughness: 0.78,
+    metalness: 0,
+    envMapIntensity: 0.18,
   });
 
   const group = new THREE.Group();
@@ -327,7 +330,15 @@ export async function loadRiderVisual(): Promise<RiderVisual | null> {
     const shoulder = new THREE.Group();
     shoulder.position.copy(shoulderJoint).sub(hipOrigin);
     spine.add(shoulder);
-    shoulder.add(ball(0.075));
+    // La rotule d'épaule est centrée sur le pivot : elle reste donc vissée dans le
+    // trou laissé par la découpe du torse quel que soit l'angle du bras. À 7,5 cm
+    // elle laissait l'aisselle ouverte au braquage maximal ; 9,6 cm atteint la
+    // ligne de coupe et déborde de 1,2 cm vers l'intérieur de la veste.
+    const deltoid = ball(0.088);
+    deltoid.position.set(-side * 0.02, -0.032, 0.004);
+    deltoid.scale.set(1.04, 0.92, 1.02);
+    deltoid.castShadow = true;
+    shoulder.add(deltoid);
 
     const upperArm = new THREE.Mesh(sleeve(armUpper, 0.047, 0.042), leather);
     upperArm.castShadow = true;
