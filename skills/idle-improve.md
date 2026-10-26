@@ -1,58 +1,61 @@
 # Skill — idle-improve
 
-**Trigger.** All of these are true:
+**But.** Faire avancer le jeu sans qu'on te le demande : une entrée du backlog à la fois,
+vérifiée, commitée, puis la suivante — dans le même tour, tant que le travail tient debout.
 
-- The user's request is finished and reported.
-- Nothing is waiting on you: no question asked, no failing check, no half-done refactor.
-- The user has not sent a new message in the current turn.
+**Déclencheur.** La demande en cours est terminée et rapportée. Alors tu **ne t'arrêtes pas**
+pour demander « je continue ? » : tu attaques le cycle suivant. L'utilisateur peut
+t'interrompre à tout moment ; c'est lui qui décide de te stopper, pas toi qui attends son feu vert.
 
-**Goal.** Use idle time to make the game measurably better, one small, verified, committed step
-at a time — never a rewrite, never speculative features.
+## La boucle, c'est toi
 
-## Source of work
+Aucune clé API, aucun CLI externe, aucun processus de fond : c'est l'agent qui exécute le
+cycle. `scripts/agent-loop.mjs` ne fait que tenir l'état durable (`docs/agent-loop.md`) et
+refuser les mouvements dangereux. Un cycle :
 
-`docs/backlog.md` is the only list. Each entry has a size (`S`/`M`/`L`) and an explicit
-"done when" line. Never invent work outside it; add new ideas to the *Ideas* section instead.
+1. **Lire l'état** — `node scripts/agent-loop.mjs`. S'il dit `running` avec un battement
+   récent, un autre cycle est vivant : ne pas en démarrer un second (finir le tour et le dire).
+2. **Réclamer** — `node scripts/agent-loop.mjs --start`. Refuse si l'arbre est sale : c'est
+   volontaire, on ne construit pas par-dessus du travail non vérifié.
+3. **Implémenter** le plus petit changement qui satisfait le « done when » de l'entrée. Marquer
+   l'avancement : `node scripts/agent-loop.mjs --beat --note "suspension retouchée"` après
+   chaque étape notable, sinon une session tuée passera pour morte alors que le travail est fait.
+4. **Vérifier** : `npx tsc --noEmit`, `npm test`, `npm run build`. Un changement visuel demande
+   aussi une capture du serveur de dev. Pas de test supprimé, pas d'assertion affaiblie.
+5. **Committer** sur la branche de travail, dans le style du dépôt.
+6. **Clore** — `node scripts/agent-loop.mjs --finish --commit <sha> --note "ce qui change"`.
+   L'entrée est barrée dans `docs/backlog.md`, le journal reçoit une ligne, l'état repasse à
+   `idle` et la prochaine entrée s'affiche. Puis retour à l'étape 1.
 
-Pick the first entry that is:
+Si le cycle échoue deux fois sur la même cause : annuler les modifications
+(`--abort --note "…"`), marquer l'entrée `--blocked --reason "…"` et le dire. Un `main` rouge
+est pire qu'une entrée intacte.
 
-1. not struck through,
-2. size **S** or **M** (an L only if the previous two idle cycles were clean),
-3. not already in progress on another branch (`git branch -a --list '*idle*'`).
+## Ne jamais laisser un tour sale
 
-## One cycle = one entry
+Avant de terminer un tour — parce que la demande utilisateur reprend, parce que le budget de
+contexte arrive au bout, ou parce que tu dois poser une question — l'arbre Git doit être propre :
 
-1. Read the code the entry names. Understand it before writing anything.
-2. Implement the smallest version that satisfies "done when".
-3. Verify, in this order: `npx tsc --noEmit`, `npm test`, `npm run build`. A visual change also
-   needs a screenshot from the running dev server.
-4. If a check fails twice on the same cause, revert your edits and mark the entry
-   `blocked: <reason>` — a red `main` is worse than an untouched backlog.
-5. Commit on the working branch with the repo's style. Push only when the user's rules for this
-   repo allow pushing to `main`; otherwise leave the commit local and say so.
-6. Strike the entry through in `docs/backlog.md`, with the commit hash and one line of what
-   changed, in the same commit or the next one.
+- soit le cycle est fini et commité (`--finish`),
+- soit les modifications sont annulées (`--abort`).
 
-## Stop conditions
+Un worktree sale bloque le cycle suivant et rend la reprise ambiguë. C'est la seule règle non
+négociable de cette boucle.
 
-Stop the cycle and stay quiet until the user writes when any of these happen:
+## Ce qui arrête la boucle
 
-- two consecutive failed checks,
-- the backlog has no eligible entry (then write one line in `artifacts/idle-improve.log`),
-- the dev server or the browser tooling cannot be restored,
-- the change would need a new dependency, a service, or a design decision the user has not made.
+- L'utilisateur écrit (sa demande passe avant tout).
+- Deux échecs consécutifs sur la même cause.
+- Plus aucune entrée éligible : écrire une ligne dans le journal et s'arrêter.
+- Le changement exigerait une dépendance, un service, ou une décision de design que
+  l'utilisateur n'a pas prise : poser la question, ne pas la trancher seul.
 
-## Automation
+Une amélioration par cycle, jamais deux entrées mélangées dans un commit : la boucle doit
+rester relisible et réversible.
 
-`scripts/idle-improve.mjs` drives the cycle from a terminal:
+## Livraison
 
-```bash
-node scripts/idle-improve.mjs --dry-run          # print the prompt it would send
-node scripts/idle-improve.mjs --once --live      # run a single cycle through the claude CLI
-node scripts/idle-improve.mjs --loop --live      # keep going, one entry at a time
-```
-
-It refuses to run when the tree is dirty, outside the configured hours (`IDLE_HOURS=9-22`), or
-without `ANTHROPIC_API_KEY` — in that last case it writes the prompt to
-`artifacts/idle-next-task.md` so the next agent turn can start from it.
-Always run it with `IDLE_HOURS` narrow the first time, and check the log after one cycle.
+Chaque cycle commité est poussé sur `main` (le site publié suit), sauf si l'utilisateur a dit
+de ne pas pousser : c'est son dépôt et son déploiement. Ne jamais pousser un cycle dont une
+vérification a échoué. Le compte-rendu reste court : une phrase par cycle dans le chat, et le
+détail dans `docs/agent-loop.md`. Pas de message par appel d'outil.

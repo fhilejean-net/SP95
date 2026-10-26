@@ -186,24 +186,26 @@ Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite su
 - Les performances dépendent du GPU : avec les maisons des quartiers en plus des immeubles, une carte intégrée peut descendre sous 60 fps (la régulation baisse alors la qualité toute seule).
 - **Frein à main et fumée** : le contrôle de traction garde un départ en ligne droite propre, donc la fumée ne sort plus au simple démarrage : il faut un burnout (frein à main, ou antipatinage coupé avec `T`) ou une glisse.
 - Testé automatiquement (physique + fumée navigateur) ; l'appréciation visuelle et le ressenti au volant restent à valider sur une vraie machine.
-- **Boucle d'amélioration** : `scripts/idle-improve.mjs` prépare la mission suivante, mais rien ne la lance à ta place — hors d'une session d'agent, le fichier `artifacts/idle-next-task.md` attend simplement quelqu'un pour le lire.
+- **Boucle d'amélioration** : elle tourne dans la session de l'agent, pas dans un processus de fond. Rien ne se relance tout seul quand *aucune* session n'est ouverte (pas d'ordonnanceur ici) : c'est la session suivante qui reprend, et elle reprend sans qu'on lui raconte où le travail s'est arrêté.
 
 ## Agents
 
 Deux skills vivent dans `skills/` pour un agent qui reprend ce dépôt (voir aussi `AGENTS.md` et `docs/backlog.md`) :
 
 - **`session-recovery`** : la marche à suivre quand une session casse (runner redémarré, tour interrompu, worktree sale). Reprendre l'état sans refaire le travail déjà fait, ne jamais écraser les fichiers du propriétaire, et rendre la main avec un état vérifié.
-- **`idle-improve`** : quoi faire quand l'agent n'a plus rien à faire. Il prend la première ligne de `docs/backlog.md`, améliore le jeu sur *un* point, le vérifie, puis rend le travail visible — jamais de code livré non vérifié.
+- **`idle-improve`** : quoi faire quand l'agent n'a plus rien à faire. Il prend la première entrée de `docs/backlog.md`, améliore le jeu sur *un* point, le vérifie, le commit, et enchaîne — sans attendre de prompt.
 
-Trois modes, et le script est prudent par construction : il refuse de tourner si le worktree est sale (pas d'empilement de modifications non vérifiées), hors des heures ouvrables, ou sans agent disponible.
+La boucle n'a besoin d'aucune clé API ni d'aucun CLI externe : c'est l'agent lui-même qui l'exécute, dans son tour. `scripts/agent-loop.mjs` ne fait que garder l'état durable et refuser les gestes risqués :
 
 ```
-node scripts/idle-improve.mjs                 # imprime le prompt de la prochaine entrée
-node scripts/idle-improve.mjs --once --live   # un cycle : l'agent fait une entrée puis s'arrête
-IDLE_HOURS=9-22 nohup node scripts/idle-improve.mjs --loop --live > idle.log 2>&1 &
+node scripts/agent-loop.mjs                    # état, battement, prochaine entrée
+node scripts/agent-loop.mjs --start            # réclame l'entrée (refusé si l'arbre est sale)
+node scripts/agent-loop.mjs --beat --note "…"  # battement pendant le cycle
+node scripts/agent-loop.mjs --finish --commit <sha> --note "…"
+node scripts/agent-loop.mjs --blocked --reason "…"   # deux échecs sur la même cause
 ```
 
-Le mode `--live` lance la CLI `claude` (ou la commande `IDLE_AGENT_CMD`) et exige `ANTHROPIC_API_KEY` ; sans clé, le prompt est écrit dans `artifacts/idle-next-task.md` pour que la session suivante reprenne dessus. Chaque cycle est journalisé dans `artifacts/idle-improve.log`, et un verrou `artifacts/.idle-improve.pid` empêche deux boucles de tourner en même temps. Ces fichiers sont hors git.
+L'état vit dans `docs/agent-loop.md`, versionné : il survit à un runner tué et à un `git clone` ailleurs. Un battement de plus de 12 minutes sur un cycle `running` signale une session morte en plein travail — la suivante reprend cette entrée-là, pas la suivante du backlog.
 
 ## Crédits
 

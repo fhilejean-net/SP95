@@ -12,6 +12,22 @@ and without losing uncommitted changes.
 
 ## Checklist
 
+### 0. Read the durable state first
+
+```bash
+node scripts/agent-loop.mjs    # status, heartbeat age, entry in progress, next entry
+```
+
+This file (`docs/agent-loop.md`) is committed, so it survives a killed runner, a closed
+session and a fresh clone. Three cases:
+
+- `status: running`, heartbeat **stale** → the previous session died mid-cycle. Resume **that**
+  entry first, from whatever survived on disk (step 1), then `--beat`. Do not start the next
+  backlog entry and do not restart the current one from zero.
+- `status: running`, heartbeat **fresh** → another session is working right now. Do not run a
+  parallel cycle on the same repo: report it and stop.
+- `status: idle` / `blocked` → nothing half-done; go on with the user's request.
+
 ### 1. Find out what survived (30 seconds, do not skip)
 
 ```bash
@@ -62,4 +78,7 @@ A preview that was shown before the restart is gone: re-show it, do not tell the
 
 - Run the checks that cover what changed: `npx tsc --noEmit`, `npm test`, `npm run build`.
 - Commit coherent work early: a restart costs nothing if the work is committed.
+- Close the interrupted cycle with `--finish --commit <sha> --note "…"` if it was in fact done,
+  or `--abort --note "…"` if it was not. Never close it twice: check `docs/agent-loop.md`'s
+  journal for the cycle number before writing a row.
 - When reporting, say what was verified **after** the restart, not what was verified before it.
