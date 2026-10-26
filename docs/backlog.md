@@ -16,6 +16,7 @@ commit hash so the history stays readable.
   and stay put when the bar turns. Cut the tube-like body meshes near the steering head into the
   `frontUpper` group by geometry (thin, high, close to the bar axis) instead of by name.
   *Done when:* turning the bar on the spot moves the lines with it, verified by screenshot.
+  *blocked:* les durites n'existent pas comme maillages séparés : elles sont fondues dans des groupes anonymes du cadre (mesuré sur moto.glb : aucune maille fine et longue près de l'axe de direction, seulement des pads de guidon et des stickers). Découper par triangles à l'aveugle percerait la colonne de direction ; ajouter des durites procédurales laisserait les anciennes immobiles en double. Trois options pour l'utilisateur : accepter le double, tenter la découpe par triangles avec risque sur le cadre, ou laisser tel quel.
 
 - [ ] **Forest shadows** — `S`. Tree shadows are off in `?fx=low` and the groves look pasted on.
   Enable shadow casting on the nearest instanced tree meshes only (distance-gated), measure the

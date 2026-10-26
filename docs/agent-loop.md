@@ -12,13 +12,13 @@ modifie pas le bloc d'état à la main.
 - `status: blocked` → deux échecs sur la même cause : s'arrêter et le dire à l'utilisateur.
 
 <!-- state:start -->
-status: idle
+status: blocked
 task: —
-cycle: 1
+cycle: 2
 started: —
-heartbeat: 2026-10-26T21:40:37Z
+heartbeat: 2026-10-26T21:58:59Z
 commit: b9228cc
-owner: session-133120
+owner: session-134537
 <!-- state:end -->
 
 ## Journal
@@ -26,3 +26,4 @@ owner: session-133120
 | # | Date | Entrée | Commit | Note |
 | --- | --- | --- | --- | --- |
 | 1 | 2026-10-26 | Rider shoulder seam | `b9228cc` | deltoïde comblant la coupe d'aisselle, cuir mat, capture des deux épaules |
+| 2 | 2026-10-26 | Fork cables | — | bloqué : les durites n'existent pas comme maillages séparés : elles sont fondues dans des groupes anonymes du cadre (mesuré sur moto.glb : aucune maille fine et longue près de l'axe de direction, seulement des pads de guidon et des stickers). Découper par triangles à l'aveugle percerait la colonne de direction ; ajouter des durites procédurales laisserait les anciennes immobiles en double. Trois options pour l'utilisateur : accepter le double, tenter la découpe par triangles avec risque sur le cadre, ou laisser tel quel. |
