@@ -154,7 +154,7 @@ async function boot(): Promise<void> {
   const streetKit = await buildStreetKit(scene, world, materials);
 
   await setLoading(0.8, 'Plantation des arbres…');
-  const vegetation = await buildVegetation(scene, world, lowFx);
+  const vegetation = await buildVegetation(scene, world, lowFx, sky.sunDirection);
 
   await setLoading(0.85, 'Installation du circuit…');
   const checkpoints = buildRaceCheckpoints(12);

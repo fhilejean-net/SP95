@@ -164,6 +164,100 @@ function instance(
 }
 
 /**
+ * Tree contact shadows.
+ *
+ * Without a shadow map (the `?fx=low` mode turns it off), a tree standing on
+ * grass has no contact with the ground at all: the forest reads as cut-outs
+ * pasted over the hill. One soft blob per tree, merged into a single mesh,
+ * grounds them for one draw call — the only budget that mode can afford, since
+ * switching the shadow map back on would re-render the whole scene into it.
+ */
+function blobTexture(): THREE.Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  if (context) {
+    const gradient = context.createRadialGradient(32, 32, 2, 32, 32, 31);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
+    gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.3)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 64, 64);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function contactShadows(
+  placements: Placement[][],
+  heights: number[],
+  sun: THREE.Vector3,
+): THREE.Mesh | null {
+  // La tache s'allonge dans l'axe de l'ombre réelle : le soleil est bas, donc
+  // elle part du tronc vers l'opposé du soleil.
+  const along = new THREE.Vector2(sun.x, sun.z);
+  if (along.lengthSq() < 1e-6) along.set(0, 1);
+  along.normalize();
+  const across = new THREE.Vector2(-along.y, along.x);
+
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const corners: [number, number][] = [
+    [-1, -1],
+    [1, -1],
+    [1, 1],
+    [-1, 1],
+  ];
+
+  for (let v = 0; v < placements.length; v++) {
+    const height = heights[v] ?? 10;
+    for (const p of placements[v]) {
+      const h = height * p.scale;
+      const radius = h * 0.21;
+      const shift = h * 0.26;
+      const cx = p.x + along.x * shift;
+      const cz = p.z + along.y * shift;
+      const base = positions.length / 3;
+      for (const [u, w] of corners) {
+        const ax = along.x * u * radius * 1.45 + across.x * w * radius;
+        const az = along.y * u * radius * 1.45 + across.y * w * radius;
+        // Chaque coin suit le terrain : une tache plane s'enterrerait en amont
+        // d'une pente et flotterait en aval, ce qui est pire que pas d'ombre.
+        positions.push(cx + ax, heightAt(cx + ax, cz + az) + 0.06, cz + az);
+        uvs.push((u + 1) / 2, (w + 1) / 2);
+      }
+      indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+  }
+  if (positions.length === 0) return null;
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeBoundingSphere();
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      map: blobTexture(),
+      color: 0x0d1a10,
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+      // Le sens d'enroulement dépend de l'azimut du soleil : une seule face et
+      // la moitié des taches disparaîtrait selon l'heure.
+      side: THREE.DoubleSide,
+    }),
+  );
+  mesh.name = 'tree-contact-shadows';
+  mesh.renderOrder = 1;
+  return mesh;
+}
+
+/**
  * The grass model's materials use specular-glossiness: rebuild them from the
  * diffuse texture and cut the alpha instead of blending, which keeps the tufts
  * out of the transparency sort and lets them cast shadows.
@@ -210,6 +304,7 @@ export async function buildVegetation(
   scene: THREE.Scene,
   world: RAPIER.World,
   lowFx: boolean,
+  sun: THREE.Vector3,
 ): Promise<VegetationSummary> {
   const [trees, birches, grass] = await Promise.all([
     loader.loadAsync(`${MODEL_ROOT}models/cars/trees_low_poly.glb`),
@@ -345,6 +440,18 @@ export async function buildVegetation(
   treeVariants.forEach((entry, i) => {
     instance(scene, entry.variant, placements[i], `trees-${names[i] ?? i}`, !lowFx);
   });
+
+  // En qualité normale le soleil projette de vraies ombres ; en `?fx=low` il
+  // n'y a pas de shadow map du tout, donc les arbres flottent. Les flaques de
+  // contact ne sont ajoutées que dans ce cas, sinon elles doubleraient l'ombre.
+  if (lowFx) {
+    const blobs = contactShadows(
+      placements,
+      treeVariants.map((entry) => entry.height),
+      sun,
+    );
+    if (blobs) scene.add(blobs);
+  }
 
   // Trunks are solid: a forest you can drive through is wallpaper. One static
   // body carries every collider, so the broad phase sees a single island.
