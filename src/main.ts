@@ -5,6 +5,7 @@ import { Vehicle, type VehicleInput, type VehicleSpec } from './physics/vehicle.
 import { Bike } from './physics/bike.ts';
 import { SUPERMOTARD } from './game/bikes.ts';
 import {
+  bikePresetLabel,
   loadBikeSetup,
   resolveBikeSpec,
   saveBikeSetup,
@@ -458,6 +459,7 @@ async function boot(): Promise<void> {
     saveBikeSetup(bikeSetup);
     bikeSpec = resolveBikeSpec(bikeSetup, SUPERMOTARD.spec);
     rebuildBike();
+    hud.setBikePreset(bikePresetLabel(bikeSetup));
     hud.flash('Moto réglée', { duration: 900 });
   }
 
@@ -491,6 +493,7 @@ async function boot(): Promise<void> {
     vehicle = next;
     hud.setVehicle('bike');
     hud.setRedline(bikeSpec.redlineRpm);
+    hud.setBikePreset(bikePresetLabel(bikeSetup));
     configureAudio();
     drift.reset();
     stunt.reset();

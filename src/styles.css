@@ -368,6 +368,21 @@ button.primary {
   color: var(--muted);
 }
 
+/* Ce qui est réellement monté sur la moto : le nom du preset, ou « réglage
+   perso » dès qu'un choix s'en écarte. */
+#bike-preset {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(10, 13, 17, 0.5);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.62);
+}
+
 .drift-main {
   display: flex;
   align-items: baseline;

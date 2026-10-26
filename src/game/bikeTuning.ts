@@ -82,6 +82,20 @@ export const BIKE_PRESETS: BikeSetupPreset[] = [
 
 export const BIKE_DEFAULT_SETUP: BikeSetup = { engine: 0, gearing: 0, tires: 0, suspension: 0 };
 
+/**
+ * Nom du preset qui correspond exactement au réglage courant, ou « Réglage
+ * perso » dès qu'un seul choix s'en écarte : le HUD doit dire ce qui est monté,
+ * pas le dernier bouton cliqué.
+ */
+export function bikePresetLabel(setup: BikeSetup): string {
+  const match = BIKE_PRESETS.find((preset) =>
+    (Object.keys(preset.setup) as (keyof BikeSetup)[]).every(
+      (key) => preset.setup[key] === setup[key],
+    ),
+  );
+  return match?.label ?? 'Réglage perso';
+}
+
 const ENGINE = [
   { torque: 68, redline: 8500, upshift: 8000, mass: 0 },
   { torque: 73, redline: 8700, upshift: 8150, mass: 0 },

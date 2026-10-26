@@ -35,6 +35,7 @@ export class Hud {
   private stuntMult = el('stunt-mult');
   private stuntLabel = el('stunt-label');
   private stuntAngle = el('stunt-angle');
+  private bikePreset = el('bike-preset');
   private tcsChip = el('tcs-chip');
   private wheelieChip = el('wheelie-chip');
   private hint = el('hint');
@@ -230,6 +231,11 @@ export class Hud {
     this.stuntLabel.textContent = deep ? 'BAVETTE' : 'WHEELIE';
     this.stuntLabel.classList.toggle('bavette', deep);
     this.stuntAngle.textContent = `${Math.round(angleDeg)}°`;
+  }
+
+  /** Nom du réglage monté sur la moto : preset de l'atelier ou « réglage perso ». */
+  setBikePreset(label: string): void {
+    this.bikePreset.textContent = label;
   }
 
   /** The assist is on unless the driver turned it off: the chip shows both. */

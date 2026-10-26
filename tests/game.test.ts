@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { DriftScore } from '../src/game/drift.ts';
 import { StuntScore } from '../src/game/stunt.ts';
 import { Race } from '../src/game/race.ts';
+import { BIKE_DEFAULT_SETUP, bikePresetLabel } from '../src/game/bikeTuning.ts';
 
 test('drift score grows with speed and slip, then banks', () => {
   const drift = new DriftScore();
@@ -123,4 +124,14 @@ test('race formatTime prints minute:second.hundredths', () => {
   assert.equal(Race.formatTime(0), '0:00.00');
   assert.equal(Race.formatTime(61.239), '1:01.23');
   assert.equal(Race.formatTime(null), '—');
+});
+
+test('the HUD names the preset only while the setup matches it', () => {
+  assert.equal(bikePresetLabel(BIKE_DEFAULT_SETUP), 'Série');
+  // Un seul choix qui s'écarte et le nom du preset devient faux : « perso ».
+  assert.equal(bikePresetLabel({ ...BIKE_DEFAULT_SETUP, tires: 1 }), 'Réglage perso');
+  assert.equal(
+    bikePresetLabel({ engine: 1, gearing: 1, tires: 0, suspension: 1 }),
+    'Stunt',
+  );
 });
