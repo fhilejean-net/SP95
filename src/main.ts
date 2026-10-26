@@ -5,6 +5,12 @@ import { Vehicle, type VehicleInput, type VehicleSpec } from './physics/vehicle.
 import { Bike } from './physics/bike.ts';
 import { SUPERMOTARD } from './game/bikes.ts';
 import {
+  loadBikeSetup,
+  resolveBikeSpec,
+  saveBikeSetup,
+  type BikeSetup,
+} from './game/bikeTuning.ts';
+import {
   COL_START,
   RACE_START,
   RALLY_START,
@@ -34,7 +40,7 @@ import { createTireSmoke } from './render/tireSmoke.ts';
 import { loadCarVisual } from './render/carModel.ts';
 import { CARS, findCar, loadCarId, saveCarId, type CarDef, type CarId } from './game/cars.ts';
 import { QualityGovernor } from './render/quality.ts';
-import { ChaseCamera } from './core/camera.ts';
+import { ChaseCamera, cameraModeLabel } from './core/camera.ts';
 import { InputManager } from './core/input.ts';
 import { Hud, type GameMode } from './game/hud.ts';
 import { DriftScore } from './game/drift.ts';
@@ -173,6 +179,9 @@ async function boot(): Promise<void> {
   let carPose = { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading };
   let bike: Bike | null = null;
   let bikeVisual: BikeVisual | null = null;
+  let bikeSetup: BikeSetup = loadBikeSetup();
+  /** The bike as the workshop built it: every bike readout uses this one. */
+  let bikeSpec = resolveBikeSpec(bikeSetup, SUPERMOTARD.spec);
   let ridingBike = false;
   let tcsEnabled = loadTcs();
   vehicle.tcsEnabled = tcsEnabled;
@@ -277,7 +286,7 @@ async function boot(): Promise<void> {
 
   function setCarPose(x: number, z: number, heading: number): void {
     const ground = terrain.sample(x, z);
-    const height = ridingBike ? SUPERMOTARD.spec.cgHeight : rideHeightFor(spec);
+    const height = ridingBike ? bikeSpec.cgHeight : rideHeightFor(spec);
     vehicle.respawn(x, ground + height, z, heading);
     // Let the springs settle so the tires sit on the ground immediately.
     for (let i = 0; i < 60; i++) {
@@ -416,15 +425,40 @@ async function boot(): Promise<void> {
   /** Builds the supermotard the first time it is asked for. */
   function ensureBike(): Bike {
     if (bike) return bike;
-    const spec = SUPERMOTARD.spec;
-    const y = terrain.sample(SUMMIT_START.x, SUMMIT_START.z) + spec.cgHeight;
+    const y = terrain.sample(SUMMIT_START.x, SUMMIT_START.z) + bikeSpec.cgHeight;
     bike = new Bike(
       world,
       { x: SUMMIT_START.x, y, z: SUMMIT_START.z, heading: SUMMIT_START.heading, surfaceAt },
-      spec,
+      bikeSpec,
     );
     bike.body.setEnabled(false);
     return bike;
+  }
+
+  /** Rebuilds the bike on its marks: the workshop changed its spec. */
+  function rebuildBike(): void {
+    if (!bike) return;
+    const position = bike.position;
+    const rotation = bike.rotation;
+    const heading = Math.atan2(2 * (rotation.w * rotation.y), 1 - 2 * rotation.y * rotation.y);
+    world.removeRigidBody(bike.body);
+    bike = new Bike(
+      world,
+      { x: position.x, y: position.y, z: position.z, heading, surfaceAt },
+      bikeSpec,
+    );
+    bike.body.setEnabled(ridingBike);
+    vehicle = bike;
+    configureAudio();
+    hud.setRedline(bikeSpec.redlineRpm);
+  }
+
+  function applyBikeSetup(next: BikeSetup): void {
+    bikeSetup = { ...next };
+    saveBikeSetup(bikeSetup);
+    bikeSpec = resolveBikeSpec(bikeSetup, SUPERMOTARD.spec);
+    rebuildBike();
+    hud.flash('Moto réglée', { duration: 900 });
   }
 
   /**
@@ -434,7 +468,7 @@ async function boot(): Promise<void> {
    */
   let bikeVisualPromise: Promise<BikeVisual> | null = null;
   function bikeVisualReady(): Promise<BikeVisual> {
-    bikeVisualPromise ??= loadBikeVisual(SUPERMOTARD.spec).catch((error) => {
+    bikeVisualPromise ??= loadBikeVisual(bikeSpec).catch((error) => {
       console.error(error);
       hud.flash('Modèle 3D indisponible — moto de secours', { duration: 1900 });
       return createBike();
@@ -456,7 +490,7 @@ async function boot(): Promise<void> {
     next.body.setEnabled(true);
     vehicle = next;
     hud.setVehicle('bike');
-    hud.setRedline(SUPERMOTARD.spec.redlineRpm);
+    hud.setRedline(bikeSpec.redlineRpm);
     configureAudio();
     drift.reset();
     stunt.reset();
@@ -503,7 +537,7 @@ async function boot(): Promise<void> {
       });
     }
     startMode('free', 'summit');
-    hud.flash('Supermotard · E pour le wheelie', { accent: true, duration: 2200 });
+    hud.flash('Supermotard · Espace pour le wheelie', { accent: true, duration: 2200 });
   }
 
   /** TCS on/off: cuts the per-wheel torque cap, for drifts and burnouts. */
@@ -550,7 +584,7 @@ async function boot(): Promise<void> {
       // One cylinder, one bang every other turn: that is the thumper. The
       // quickshifter is a fuel cut, not a dual-clutch fart.
       audio.configure({
-        redline: SUPERMOTARD.spec.redlineRpm,
+        redline: bikeSpec.redlineRpm,
         cylinders: 1,
         turbo: false,
         exhaustLevel: 1,
@@ -570,9 +604,16 @@ async function boot(): Promise<void> {
     });
   }
 
-  const garage = new Garage(setup, carDef, applySetup, (id) => {
-    void selectCar(id);
-  });
+  const garage = new Garage(
+    setup,
+    bikeSetup,
+    carDef,
+    applySetup,
+    (id) => {
+      void selectCar(id);
+    },
+    applyBikeSetup,
+  );
 
   /** Swaps the model, then the physics footprint that goes with it. */
   async function selectCar(id: CarId): Promise<void> {
@@ -606,7 +647,9 @@ async function boot(): Promise<void> {
 
   function openGarage(): void {
     if (mode !== 'menu' && !paused) togglePause();
-    garage.open(setup);
+    // The panel tunes whatever is in the garage: two wheels or four.
+    if (ridingBike) garage.openBike(bikeSetup);
+    else garage.open(setup);
   }
 
   function openSound(): void {
@@ -648,14 +691,21 @@ async function boot(): Promise<void> {
     (event.currentTarget as HTMLElement).blur();
     setTcs(!tcsEnabled);
   });
+  /** Dumps the clutch: the kick, then the clack of the lever letting go. */
+  function triggerWheelie(): void {
+    if (!ridingBike || !bike) return;
+    const bavette = bike.pitch > 0.45;
+    audio.init();
+    if (bike.popWheelie()) audio.clutchBang(bavette ? 0.7 : 1);
+  }
+
   document.getElementById('wheelie-chip')?.addEventListener('click', (event) => {
     (event.currentTarget as HTMLElement).blur();
-    if (ridingBike) bike?.popWheelie();
-    audio.init();
+    triggerWheelie();
   });
   // The touch handbrake doubles as the wheelie button on the bike.
   document.getElementById('touch-handbrake')?.addEventListener('pointerdown', () => {
-    if (ridingBike) bike?.popWheelie();
+    triggerWheelie();
   });
   document.getElementById('btn-pause-free')?.addEventListener('click', () => startMode('free', freeSpawn));
   document.getElementById('btn-pause-race')?.addEventListener('click', () => startMode('race'));
@@ -865,7 +915,7 @@ async function boot(): Promise<void> {
         rearSuspension,
         frontSuspension,
         restLength: bike.restLength,
-        wheelRadius: SUPERMOTARD.spec.wheelRadius,
+        wheelRadius: bikeSpec.wheelRadius,
         slopePitch: slopeState.pitch,
         slopeRoll: slopeState.roll,
         accel: bike.longAccel,
@@ -1004,7 +1054,7 @@ async function boot(): Promise<void> {
     smokeFx.update(dt, pixelsPerMeter);
     sparkFx.update(dt, pixelsPerMeter);
 
-    const redline = ridingBike ? SUPERMOTARD.spec.redlineRpm : spec.redlineRpm;
+    const redline = ridingBike ? bikeSpec.redlineRpm : spec.redlineRpm;
     hud.updateSpeed(telemetry.speedKmh, telemetry.gear, telemetry.rpm, redline);
     if (ridingBike) {
       hud.updateStunt(
@@ -1059,8 +1109,11 @@ async function boot(): Promise<void> {
     }
     if (input.consume('mute')) audio.setMuted(!audio.isMuted);
     if (input.consume('tcs') && mode !== 'menu' && !ridingBike) setTcs(!tcsEnabled);
+    if (input.consume('camera') && mode !== 'menu') {
+      hud.flash(cameraModeLabel(chase.nextMode()), { duration: 900 });
+    }
     if (mode !== 'menu' && !paused && ridingBike && input.consume('wheelie')) {
-      bike?.popWheelie();
+      triggerWheelie();
     }
     if (mode !== 'menu' && !paused && input.consume('reset')) {
       respawn();
@@ -1119,6 +1172,26 @@ async function boot(): Promise<void> {
     get setup() {
       return { ...setup };
     },
+    get bikeSetup() {
+      return { ...bikeSetup };
+    },
+    get bikeSpec() {
+      return {
+        peakTorque: bikeSpec.peakTorque,
+        mass: bikeSpec.mass,
+        redline: bikeSpec.redlineRpm,
+        looseGrip: bikeSpec.looseGrip,
+      };
+    },
+    get cameraMode() {
+      return chase.mode;
+    },
+    get bikePitch() {
+      return bike?.pitch ?? 0;
+    },
+    get pushingBack() {
+      return bike?.pushingBack ?? false;
+    },
     get surface() {
       return vehicle.telemetryState.surface.kind;
     },
@@ -1166,7 +1239,7 @@ async function boot(): Promise<void> {
       return smokeFx.live;
     },
     get redline() {
-      return ridingBike ? SUPERMOTARD.spec.redlineRpm : spec.redlineRpm;
+      return ridingBike ? bikeSpec.redlineRpm : spec.redlineRpm;
     },
     get vehicleKind() {
       return ridingBike ? 'bike' : 'car';
@@ -1275,6 +1348,11 @@ declare global {
       readonly smoke: number;
       readonly redline: number;
       readonly vehicleKind: 'car' | 'bike';
+      readonly bikeSetup: Record<string, number>;
+      readonly bikeSpec: { peakTorque: number; mass: number; redline: number; looseGrip: number };
+      readonly cameraMode: string;
+      readonly bikePitch: number;
+      readonly pushingBack: boolean;
       readonly stuntTotal: number;
       readonly stuntPending: number;
       readonly sparks: number;

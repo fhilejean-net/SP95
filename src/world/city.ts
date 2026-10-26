@@ -387,51 +387,8 @@ export function buildCity(
     );
   }
 
-  // --- Trees ---------------------------------------------------------------
-  const trunkGeo = new THREE.CylinderGeometry(0.22, 0.34, 3.2, 6);
-  trunkGeo.translate(0, 1.6, 0);
-  const canopyGeo = new THREE.IcosahedronGeometry(2.6, 0);
-  canopyGeo.translate(0, 4.6, 0);
-  const treeCount = 520;
-  const trunks = new THREE.InstancedMesh(trunkGeo, mats.trunk, treeCount);
-  const canopies = new THREE.InstancedMesh(canopyGeo, mats.foliage, treeCount);
-  trunks.castShadow = true;
-  canopies.castShadow = true;
-  canopies.receiveShadow = true;
-
-  let treeIdx = 0;
-  let guard = 0;
-  while (treeIdx < treeCount && guard < treeCount * 12) {
-    guard++;
-    const x = (rand() - 0.5) * 1720;
-    const z = (rand() - 0.5) * 1720;
-    if (x > CITY.minX - 30 && x < CITY.maxX + 30 && z > CITY.minZ - 30 && z < CITY.maxZ + 45) continue;
-    if (padEdgeDistance(x, z) < 25) continue;
-    const road = nearestRoad(x, z);
-    if (roadClearance(x, z) < road.width * 0.5 + 14) continue;
-    if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius + 12) continue;
-    const y = heightAt(x, z);
-    if (y > 104) continue;
-    const s = 0.75 + rand() * 0.9;
-    const rotation = rand() * Math.PI * 2;
-    position.set(x, y - 0.2, z);
-    scale.set(s, s * (0.85 + rand() * 0.5), s);
-    quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotation);
-    matrix.compose(position, quat, scale);
-    trunks.setMatrixAt(treeIdx, matrix);
-    canopies.setMatrixAt(treeIdx, matrix);
-    canopies.setColorAt(
-      treeIdx,
-      new THREE.Color().setHSL(0.24 + rand() * 0.06, 0.3 + rand() * 0.2, 0.24 + rand() * 0.12),
-    );
-    treeIdx++;
-  }
-  trunks.count = treeIdx;
-  canopies.count = treeIdx;
-  trunks.instanceMatrix.needsUpdate = true;
-  canopies.instanceMatrix.needsUpdate = true;
-  if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
-  scene.add(trunks, canopies);
+  // Trees live in world/vegetation.ts: the modelled birches and broadleaves
+  // replaced the old procedural cones.
 
   // --- Knockable cones around the drift pad --------------------------------
   const props: DynamicProp[] = [];

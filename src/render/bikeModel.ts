@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { BikeSpec } from '../physics/bike.ts';
 import { createRider, type BikePose, type BikeVisual } from './bike.ts';
-import { loadRiderVisual, type RiderVisual } from './riderModel.ts';
+import { RIDER_HIP_HEIGHT, loadRiderVisual, type RiderVisual } from './riderModel.ts';
 
 /**
  * The modelled bike.
@@ -62,7 +62,7 @@ function classify(mesh: THREE.Object3D): Part {
       return 'frontLower';
     }
     if (
-      /^(fork|forks_top_clamp|Renthal_Limited_Edition_Bars|front_brake_master|clutch_perch|fork_clamp_bolt|tripple_clamp)/.test(
+      /^(fork|forks_top_clamp|Renthal_Limited_Edition_Bars|RENTHAL|front_brake_master|clutch_perch|fork_clamp_bolt|tripple_clamp|renthal_left_hand_grip|waffle_grip|throttle|ignition_stop_button)/.test(
         name,
       )
     ) {
@@ -251,6 +251,19 @@ export async function loadBikeVisual(spec: BikeSpec): Promise<BikeVisual> {
   }
 
   // --- Assembly -----------------------------------------------------------
+  // --- Saddle, pegs and grips ---------------------------------------------
+  // The rider is posed against the real bike, not against guessed numbers:
+  // the seat top sets his hips, the footpegs his boots, the bar ends his hands.
+  const seatNodes = ['seat_half1', 'seat_half2']
+    .map((name) => root.getObjectByName(name))
+    .filter((node): node is THREE.Object3D => Boolean(node));
+  const seatBox = seatNodes.length > 0 ? boxOf(seatNodes, yaw) : null;
+  // The GLB splits the handlebar: its named node only covers one half, so the
+  // grips are placed off the steering head — where the bar is bolted — with
+  // the standard MX bar offsets, then turned with the steering.
+  const barsNode = root.getObjectByName('Renthal_Limited_Edition_Bars1');
+  const barsBox = barsNode ? boxOf([barsNode], yaw) : null;
+
   const group = new THREE.Group();
   group.name = 'bike';
   const pose = new THREE.Group();
@@ -351,8 +364,44 @@ export async function loadBikeVisual(spec: BikeSpec): Promise<BikeVisual> {
   const bodyRig = new THREE.Group();
   bike.add(bodyRig);
   let rider: RiderVisual | null = riderModel;
+  /** Bar centre in bike space, and how far the grips sit either side of it. */
+  const gripOrigin = new THREE.Vector3(0, 1.1, -0.3);
+  let gripHalfWidth = 0.41;
+  // Model coordinates -> the metres the rider is built in.
+  const toBike = (point: THREE.Vector3) =>
+    point.clone().multiplyScalar(scale).add(modelSpace.position);
   if (rider) {
+    const seatTop = seatBox ? toBike(new THREE.Vector3(0, seatBox.max.y, 0)).y : 0.95;
+    // `seat_half` covers the saddle *and* the rear subframe: the rider sits on
+    // the front third of that box, against the tank, not halfway down the
+    // fender. Sitting on the box centre put him 30 cm too far back, with his
+    // arms stretched to the bars.
+    const seatZ = seatBox
+      ? toBike(new THREE.Vector3(0, 0, seatBox.min.z + (seatBox.max.z - seatBox.min.z) * 0.3)).z
+      : 0.02;
+    // The group's origin is the rider's feet; what has to sit on the saddle is
+    // his hips, so the group is pushed down by the hip height.
+    rider.group.position.set(0, seatTop + 0.04 - RIDER_HIP_HEIGHT, seatZ);
     bodyRig.add(rider.group);
+
+    // Boots: the footpegs sit a hand's width below the saddle and just behind
+    // the hips. The GLB has no reliably named peg nodes (the `fastway_peg`
+    // ones are tyre studs, 15 cm off the ground), so the pegs are placed off
+    // the saddle the model does name.
+    const pegY = seatTop - 0.6;
+    const pegZ = seatZ + 0.12;
+    rider.anchors.footL.set(0.2, pegY, pegZ).sub(rider.group.position);
+    rider.anchors.footR.set(-0.2, pegY, pegZ).sub(rider.group.position);
+
+    // Grips: measured off the top clamp, which the model does name.
+    const topBike = toBike(topCentre);
+    gripOrigin.copy(topBike).add(new THREE.Vector3(0, 0.075, 0.015));
+    if (barsBox) {
+      // Use the bar's own reach along the bar when the node has it: the half
+      // width is the real thing, so the gloves sit on the grips.
+      const halfWidth = Math.max(Math.abs(barsBox.max.x - topCentre.x), Math.abs(topCentre.x - barsBox.min.x));
+      gripHalfWidth = Math.max(0.36, Math.min(0.46, halfWidth * scale));
+    }
   } else {
     bodyRig.add(createRider());
   }
@@ -406,15 +455,30 @@ export async function loadBikeVisual(spec: BikeSpec): Promise<BikeVisual> {
       // lower leg further down.
       slider.position.y = clamp(drop + Math.min(0, frontSag), -0.05, 0.1) / scale;
 
+      // The grips turn with the bar: swing them around the steering axis so the
+      // gloves go with the handlebar instead of hovering over the tank.
+      if (rider) {
+        const angle = -poseState.steer;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        for (const side of [1, -1]) {
+          const dx = side * gripHalfWidth;
+          const dz = 0.02;
+          const x = dx * cos + dz * sin;
+          const z = -dx * sin + dz * cos;
+          const target = side > 0 ? rider.anchors.gripL : rider.anchors.gripR;
+          target
+            .set(gripOrigin.x + x, gripOrigin.y, gripOrigin.z + z)
+            .sub(rider.group.position);
+        }
+      }
+
       rider?.update({
         lean: poseState.lean,
         pitch: poseState.pitch,
         accel: poseState.accel,
         brake: poseState.brake,
         steer: poseState.steer,
-        // bodyRig already carries the suspension drop; the rider must not
-        // take it twice.
-        drop: 0,
         time: poseState.time,
       });
     },

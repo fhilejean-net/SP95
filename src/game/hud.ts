@@ -207,7 +207,7 @@ export class Hud {
     this.tcsChip.classList.toggle('hidden', bike);
     this.wheelieChip.classList.toggle('hidden', !bike);
     this.hint.textContent = bike
-      ? 'E wheelie · frein pour reposer l’avant · ZQSD conduire · Souris caméra · Échap pause'
+      ? 'Espace wheelie · S frein et marche arrière · C caméra · ZQSD conduire · Échap pause'
       : 'ZQSD conduire · Espace frein à main · T antipatinage · Souris caméra · Échap pause';
     // On a bike the handbrake button has nothing to pull: it becomes the
     // one-touch wheelie, right where the thumb already is.

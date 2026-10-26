@@ -2,18 +2,23 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /**
- * The modelled rider.
+ * The modelled pillion.
  *
- * The GLB is a single static mesh of a woman in leathers, standing with one
- * hand on her hip. That is not a riding pose, so the mesh is skinned here with
- * a small procedural humanoid: the legs fold onto the pegs, the torso leans
- * over the tank, and the free arm reaches for the bar. The right hand stays on
- * the hip, which reads as the stunt rider's pose rather than a broken arm.
+ * The GLB is a single static mesh of a woman standing with one hand on her
+ * hip. Skinning such a mesh with a guessed skeleton is what stretched her thigh
+ * towards the bars: the weights pull the wrong vertices, and the two arms never
+ * match the pose the bike needs.
  *
- * Weights are computed from the vertex position: distance to the limb bones
- * for the arms, and side plus height bands for the legs and torso. It is not a
- * hand-painted rig, but at the distance the chase camera sits it is stable,
- * and it costs one draw call.
+ * So the mesh is cut instead of deformed. The torso, the head and the legs
+ * become rigid pieces, each one pivoting around a real joint (hip, knee,
+ * ankle): a piece keeps its shape, so nothing can stretch. Ball joints in the
+ * same leather hide the seams at the knees and the hips.
+ *
+ * The arms are the one part that cannot survive the cut: the source has one arm
+ * hanging and one bent onto the hip, and a riding pose needs both hands on the
+ * grips. They are rebuilt as tapered leather sleeves, and a two-bone IK solves
+ * each one against the handlebar so the gloves actually hold the bars — even
+ * when the bar turns or the rider leans on the tank.
  */
 
 export interface RiderPose {
@@ -25,93 +30,52 @@ export interface RiderPose {
   accel: number;
   brake: number;
   steer: number;
-  /** Body drop from the rear suspension, metres. */
-  drop: number;
   time: number;
+}
+
+/** Attachment points, in the rider's own space, refreshed by the bike. */
+export interface RiderAnchors {
+  gripL: THREE.Vector3;
+  gripR: THREE.Vector3;
+  footL: THREE.Vector3;
+  footR: THREE.Vector3;
 }
 
 export interface RiderVisual {
   group: THREE.Group;
+  anchors: RiderAnchors;
   update(pose: RiderPose): void;
   dispose(): void;
 }
 
+/** Standing height of the source mesh, in metres. */
 const HEIGHT = 1.68;
+/** Source mesh height, in model units. */
+const SOURCE_HEIGHT = 1.0016;
+
+/** Joint heights as a fraction of the standing height. */
+const HIP = 0.472;
+/** Height of the hip line above the rider group's origin, metres. */
+export const RIDER_HIP_HEIGHT = HIP * 1.68;
+const KNEE = 0.268;
+const ANKLE = 0.062;
+const SHOULDER = 0.805;
+const NECK = 0.848;
+
 const loader = new GLTFLoader();
 const MODEL_ROOT = import.meta.env.BASE_URL;
 
-function smoothstep(edge0: number, edge1: number, x: number): number {
-  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
-  return t * t * (3 - 2 * t);
+const DOWN = new THREE.Vector3(0, -1, 0);
+
+function quatFromTo(from: THREE.Vector3, to: THREE.Vector3): THREE.Quaternion {
+  return new THREE.Quaternion().setFromUnitVectors(from, to.clone().normalize());
 }
 
-function distanceToSegment(
-  px: number,
-  py: number,
-  pz: number,
-  ax: number,
-  ay: number,
-  az: number,
-  bx: number,
-  by: number,
-  bz: number,
-): number {
-  const abx = bx - ax;
-  const aby = by - ay;
-  const abz = bz - az;
-  const apx = px - ax;
-  const apy = py - ay;
-  const apz = pz - az;
-  const lengthSq = abx * abx + aby * aby + abz * abz;
-  const t = Math.max(0, Math.min(1, (apx * abx + apy * aby + apz * abz) / (lengthSq || 1)));
-  const cx = ax + abx * t;
-  const cy = ay + aby * t;
-  const cz = az + abz * t;
-  return Math.hypot(px - cx, py - cy, pz - cz);
-}
-
-interface Joint {
-  name: string;
-  parent: number;
-  position: [number, number, number];
-}
-
-/**
- * Joint centres in mesh space: the bbox is one unit tall, centred on zero, and
- * the model faces +X before the yaw that turns it toward the game's -Z.
- */
-const JOINTS: Joint[] = [
-  { name: 'hips', parent: -1, position: [0, -0.02, 0] },
-  { name: 'spine', parent: 0, position: [0, 0.12, 0] },
-  { name: 'chest', parent: 1, position: [0, 0.1, 0] },
-  { name: 'neck', parent: 2, position: [0, 0.13, 0] },
-  { name: 'head', parent: 3, position: [0, 0.08, 0] },
-
-  { name: 'upperArmL', parent: 2, position: [0.12, 0.11, 0] },
-  { name: 'foreArmL', parent: 5, position: [0.03, -0.22, -0.01] },
-  { name: 'handL', parent: 6, position: [0, -0.14, 0] },
-
-  { name: 'upperArmR', parent: 2, position: [-0.12, 0.11, 0] },
-  { name: 'foreArmR', parent: 8, position: [-0.05, -0.19, -0.02] },
-  { name: 'handR', parent: 9, position: [0.13, -0.1, 0.02] },
-
-  { name: 'thighL', parent: 0, position: [0.06, 0, 0] },
-  { name: 'shinL', parent: 11, position: [0.01, -0.24, 0.005] },
-  { name: 'footL', parent: 12, position: [0, -0.18, 0.005] },
-
-  { name: 'thighR', parent: 0, position: [-0.06, 0, 0] },
-  { name: 'shinR', parent: 14, position: [-0.01, -0.24, 0.005] },
-  { name: 'footR', parent: 15, position: [0, -0.18, 0.005] },
-];
-
-/** World-space (mesh-space) joint centres, derived from the hierarchy. */
-function jointCentres(): THREE.Vector3[] {
-  const out: THREE.Vector3[] = [];
-  for (const joint of JOINTS) {
-    const parent = joint.parent >= 0 ? out[joint.parent] : new THREE.Vector3();
-    out.push(parent.clone().add(new THREE.Vector3(...joint.position)));
-  }
-  return out;
+/** A tapered leather sleeve, hung from its joint. */
+function sleeve(length: number, top: number, bottom: number): THREE.BufferGeometry {
+  const geometry = new THREE.CylinderGeometry(top, bottom, length, 10, 1, false);
+  geometry.translate(0, -length / 2, 0);
+  return geometry;
 }
 
 export async function loadRiderVisual(): Promise<RiderVisual | null> {
@@ -131,269 +95,407 @@ export async function loadRiderVisual(): Promise<RiderVisual | null> {
   });
   if (meshes.length === 0) return null;
   const mesh = meshes[0];
-
   const original = mesh.geometry;
   const position = original.getAttribute('position');
   const normal = original.getAttribute('normal');
   const uv = original.getAttribute('uv');
   const count = position.count;
 
-  // Mesh space: Y up, one unit tall, centred on zero, nose toward +X. The yaw
-  // turns that nose to -Z, the game's forward, without touching the height.
-  const transform = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+  // Model space -> rider space: human height, feet on y = 0, facing -Z like
+  // the bike, centred on the spine.
+  const scale = HEIGHT / SOURCE_HEIGHT;
+  const yaw = new THREE.Matrix4().makeRotationY(Math.PI / 2).multiply(source.matrixWorld);
   const vertex = new THREE.Vector3();
   const baked = new Float32Array(count * 3);
-  const normals = new Float32Array(count * 3);
-  const uvs = uv ? new Float32Array(count * 2) : null;
-  const normalMatrix = new THREE.Matrix3().getNormalMatrix(source.matrixWorld);
-  const world = new THREE.Matrix4().multiplyMatrices(transform, source.matrixWorld);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
   for (let i = 0; i < count; i++) {
-    vertex.set(position.getX(i), position.getY(i), position.getZ(i)).applyMatrix4(world);
+    vertex.set(position.getX(i), position.getY(i), position.getZ(i)).applyMatrix4(yaw);
     baked[i * 3] = vertex.x;
     baked[i * 3 + 1] = vertex.y;
     baked[i * 3 + 2] = vertex.z;
-    if (normal) {
-      vertex
-        .set(normal.getX(i), normal.getY(i), normal.getZ(i))
-        .applyMatrix3(normalMatrix)
-        .applyMatrix4(new THREE.Matrix4().makeRotationY(Math.PI / 2))
-        .normalize();
+    minX = Math.min(minX, vertex.x);
+    maxX = Math.max(maxX, vertex.x);
+    minY = Math.min(minY, vertex.y);
+    minZ = Math.min(minZ, vertex.z);
+    maxZ = Math.max(maxZ, vertex.z);
+  }
+  const centreZ = (minZ + maxZ) / 2;
+  for (let i = 0; i < count; i++) {
+    baked[i * 3] = (baked[i * 3] - (minX + maxX) / 2) * scale;
+    baked[i * 3 + 1] = (baked[i * 3 + 1] - minY) * scale;
+    baked[i * 3 + 2] = (baked[i * 3 + 2] - centreZ) * scale;
+  }
+
+  const positions = new THREE.Float32BufferAttribute(baked, 3);
+  const normals = new Float32Array(count * 3);
+  if (normal) {
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(yaw);
+    for (let i = 0; i < count; i++) {
+      vertex.set(normal.getX(i), normal.getY(i), normal.getZ(i)).applyMatrix3(normalMatrix).normalize();
       normals[i * 3] = vertex.x;
       normals[i * 3 + 1] = vertex.y;
       normals[i * 3 + 2] = vertex.z;
-    } else {
-      normals[i * 3 + 1] = 1;
     }
-    if (uvs && uv) {
-      uvs[i * 2] = uv.getX(i);
-      uvs[i * 2 + 1] = uv.getY(i);
+  } else {
+    for (let i = 0; i < count; i++) normals[i * 3 + 1] = 1;
+  }
+  const normalAttribute = new THREE.Float32BufferAttribute(normals, 3);
+  const uvAttribute = uv ? new THREE.Float32BufferAttribute(Float32Array.from(uv.array as ArrayLike<number>), 2) : null;
+
+  // --- Cut the mesh into rigid pieces --------------------------------------
+  const hipY = HIP * HEIGHT;
+  const kneeY = KNEE * HEIGHT;
+  const ankleY = ANKLE * HEIGHT;
+  const shoulderY = SHOULDER * HEIGHT;
+  const neckY = NECK * HEIGHT;
+
+  /**
+   * The arms are cut along the two chains the source pose actually has: one
+   * hanging from the shoulder, one bent down onto the hip. A plain |x| test
+   * leaves the inner half of the sleeve behind, which is what looked like a
+   * tube sticking out of her chest.
+   */
+  const armChain = [
+    new THREE.Vector3(0.152, 1.352, 0),
+    new THREE.Vector3(0.168, 1.05, 0.01),
+    new THREE.Vector3(0.155, 0.82, 0.015),
+    new THREE.Vector3(0.11, 0.8, 0.01),
+  ];
+  const distanceToChain = (x: number, y: number, z: number): number => {
+    let best = Infinity;
+    for (let i = 0; i < armChain.length - 1; i++) {
+      const a = armChain[i];
+      const b = armChain[i + 1];
+      const abx = b.x - a.x;
+      const aby = b.y - a.y;
+      const abz = b.z - a.z;
+      const lengthSq = abx * abx + aby * aby + abz * abz || 1;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * abx + (y - a.y) * aby + (z - a.z) * abz) / lengthSq));
+      const dx = x - (a.x + abx * t);
+      const dy = y - (a.y + aby * t);
+      const dz = z - (a.z + abz * t);
+      best = Math.min(best, dx * dx + dy * dy + dz * dz);
     }
+    return Math.sqrt(best);
+  };
+  const isArm = (x: number, y: number, z: number) =>
+    y > 0.7 && (distanceToChain(Math.abs(x), y, z) < 0.075 || (Math.abs(x) > 0.152 && y > 0.82));
+
+  const torso: number[] = [];
+  const head: number[] = [];
+  const thigh: number[][] = [[], []];
+  const shin: number[][] = [[], []];
+  const foot: number[][] = [[], []];
+
+  const rawIndex = original.index?.array as ArrayLike<number> | undefined;
+  const indices = rawIndex ?? Uint32Array.from({ length: count }, (_, i) => i);
+  const triangleCount = Math.floor(indices.length / 3);
+
+  for (let t = 0; t < triangleCount; t++) {
+    const a = indices[t * 3];
+    const b = indices[t * 3 + 1];
+    const c = indices[t * 3 + 2];
+    const cx = (baked[a * 3] + baked[b * 3] + baked[c * 3]) / 3;
+    const cy = (baked[a * 3 + 1] + baked[b * 3 + 1] + baked[c * 3 + 1]) / 3;
+    const side = cx > 0 ? 0 : 1;
+
+    if (cy < ankleY) foot[side].push(a, b, c);
+    else if (cy < kneeY) shin[side].push(a, b, c);
+    else if (cy < hipY) thigh[side].push(a, b, c);
+    else if (isArm(cx, cy, (baked[a * 3 + 2] + baked[b * 3 + 2] + baked[c * 3 + 2]) / 3)) continue;
+    else if (cy > neckY) head.push(a, b, c);
+    else torso.push(a, b, c);
   }
 
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(baked, 3));
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-  if (uvs) geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  if (original.index) {
-    const src = original.index.array;
-    const index = new Uint32Array(src.length);
-    index.set(src as unknown as ArrayLike<number>);
-    geometry.setIndex(new THREE.BufferAttribute(index, 1));
-  }
-
-  // --- Skeleton -----------------------------------------------------------
-  const centres = jointCentres();
-  const bones: THREE.Bone[] = [];
-  for (const joint of JOINTS) {
-    const bone = new THREE.Bone();
-    bone.name = joint.name;
-    if (joint.parent >= 0) {
-      bone.position.set(...joint.position);
-      bones[joint.parent].add(bone);
-    } else {
-      bone.position.copy(centres[0]);
-    }
-    bones.push(bone);
-  }
-
-  const index = (name: string) => JOINTS.findIndex((joint) => joint.name === name);
-  const hips = index('hips');
-  const spine = index('spine');
-  const chest = index('chest');
-  const neck = index('neck');
-  const head = index('head');
-  const thighL = index('thighL');
-  const shinL = index('shinL');
-  const footL = index('footL');
-  const thighR = index('thighR');
-  const shinR = index('shinR');
-  const footR = index('footR');
-  const upperArmL = index('upperArmL');
-  const foreArmL = index('foreArmL');
-  const handL = index('handL');
-  const upperArmR = index('upperArmR');
-  const foreArmR = index('foreArmR');
-  const handR = index('handR');
-
-  const kneeY = centres[shinL].y;
-  const ankleY = centres[footL].y;
-  const armL = [centres[upperArmL], centres[foreArmL], centres[handL]];
-  const armR = [centres[upperArmR], centres[foreArmR], centres[handR]];
-
-  const torsoBones = [hips, spine, chest, neck, head];
-  const torsoCentres = torsoBones.map((bone) => centres[bone].y);
-
-  const skinIndices: number[] = [];
-  const skinWeights: number[] = [];
-  const armWeight = (p: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3) =>
-    distanceToSegment(p.x, p.y, p.z, a.x, a.y, a.z, b.x, b.y, b.z);
-
-  const add = (weights: Map<number, number>, bone: number, weight: number) => {
-    if (weight <= 0.0001) return;
-    weights.set(bone, (weights.get(bone) ?? 0) + weight);
+  const build = (triangles: number[]): THREE.BufferGeometry => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', positions);
+    geometry.setAttribute('normal', normalAttribute);
+    if (uvAttribute) geometry.setAttribute('uv', uvAttribute);
+    geometry.setIndex(triangles);
+    geometry.computeBoundingSphere();
+    return geometry;
   };
 
-  const point = new THREE.Vector3();
-  for (let i = 0; i < count; i++) {
-    point.set(baked[i * 3], baked[i * 3 + 1], baked[i * 3 + 2]);
-    const weights = new Map<number, number>();
+  const sourceMaterial = (mesh.material as THREE.MeshStandardMaterial).clone();
+  sourceMaterial.roughness = Math.max(0.32, sourceMaterial.roughness);
+  sourceMaterial.envMapIntensity = 1.15;
+  sourceMaterial.needsUpdate = true;
 
-    // Torso and head: a soft partition by height around each joint.
-    let torsoTotal = 0;
-    const torsoRaw: number[] = [];
-    for (let b = 0; b < torsoBones.length; b++) {
-      const d = Math.abs(point.y - torsoCentres[b]);
-      const raw = 1 / (Math.pow(d + 0.012, 2.4));
-      torsoRaw.push(raw);
-      torsoTotal += raw;
-    }
-
-    // Legs: side and height bands, blended at knee and ankle. The z limit
-    // keeps the hair hanging behind the seat out of the thigh bones.
-    if (point.y < 0 && Math.abs(point.x) > 0.008 && point.z < 0.12) {
-      const side = point.x > 0 ? 1 : -1;
-      const thigh = side > 0 ? thighL : thighR;
-      const shin = side > 0 ? shinL : shinR;
-      const foot = side > 0 ? footL : footR;
-      const sideWeight = smoothstep(0.005, 0.032, Math.abs(point.x));
-      const shinBlend = smoothstep(kneeY + 0.055, kneeY - 0.055, point.y);
-      const footBlend = smoothstep(ankleY + 0.035, ankleY - 0.035, point.y);
-      const hipBlend = smoothstep(-0.12, 0.01, point.y);
-      const leg = sideWeight * (1 - hipBlend * 0.45);
-      if (leg > 0) {
-        add(weights, hips, sideWeight * hipBlend * 0.45);
-        add(weights, thigh, leg * (1 - shinBlend));
-        add(weights, shin, leg * shinBlend * (1 - footBlend));
-        add(weights, foot, leg * shinBlend * footBlend);
-      }
-      if (leg >= 0.999) {
-        // Fully a leg: no torso bleed.
-        torsoTotal = 0;
-      } else {
-        for (let b = 0; b < torsoBones.length; b++) {
-          add(weights, torsoBones[b], (torsoRaw[b] / torsoTotal) * (1 - leg));
-        }
-      }
-    } else {
-      // Arms: proximity to the two arm chains. The right arm is bent onto the
-      // hip, so its hand is captured by the forearm segment, not by an x band.
-      const dL = Math.min(armWeight(point, armL[0], armL[1]), armWeight(point, armL[1], armL[2]));
-      const dR = Math.min(armWeight(point, armR[0], armR[1]), armWeight(point, armR[1], armR[2]));
-      const sideL = Math.abs(point.x) > 0.035 || point.y > 0.14;
-      const armLWeight = sideL ? smoothstep(0.125, 0.055, dL) : 0;
-      const armRWeight = sideL ? smoothstep(0.125, 0.055, dR) : 0;
-      const armness = Math.max(armLWeight, armRWeight) * smoothstep(-0.18, -0.12, point.y);
-      if (armness > 0.001) {
-        const useLeft = armLWeight >= armRWeight;
-        const chain = useLeft ? [upperArmL, foreArmL, handL] : [upperArmR, foreArmR, handR];
-        const distances = useLeft ? [armL[0], armL[1]] : [armR[0], armR[1]];
-        const dUpper = armWeight(point, distances[0], distances[1]);
-        const dFore = armWeight(point, distances[1], useLeft ? armL[2] : armR[2]);
-        const wUpper = 1 / Math.pow(dUpper + 0.03, 3);
-        const wFore = 1 / Math.pow(dFore + 0.03, 3);
-        const sum = wUpper + wFore;
-        add(weights, chain[0], armness * (wUpper / sum));
-        add(weights, chain[1], armness * (wFore / sum));
-        // The hand bone takes over at the very end of the chain.
-        const handDistance = point.distanceTo(useLeft ? armL[2] : armR[2]);
-        const handW = smoothstep(0.09, 0.045, handDistance) * armness;
-        if (handW > 0) {
-          add(weights, chain[2], handW * 0.7);
-        }
-      }
-      for (let b = 0; b < torsoBones.length; b++) {
-        add(weights, torsoBones[b], (torsoRaw[b] / torsoTotal) * (1 - armness));
-      }
-      // Hair and jacket skirts below the hips still belong to the torso.
-      if (point.y < -0.1) add(weights, hips, 0.3);
-    }
-
-    // Keep the four strongest influences and normalise.
-    const sorted = [...weights.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
-    const total = sorted.reduce((sum, entry) => sum + entry[1], 0) || 1;
-    for (let k = 0; k < 4; k++) {
-      const entry = sorted[k];
-      skinIndices.push(entry ? entry[0] : 0);
-      skinWeights.push(entry ? entry[1] / total : 0);
-    }
-  }
-
-  geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
-  geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
-  geometry.computeBoundingSphere();
-
-  const material = (mesh.material as THREE.MeshStandardMaterial).clone();
-  material.roughness = Math.max(0.35, material.roughness);
-  material.envMapIntensity = 1.2;
-  material.needsUpdate = true;
-  const skinned = new THREE.SkinnedMesh(geometry, material);
-  skinned.name = 'rider';
-  skinned.castShadow = true;
-  skinned.receiveShadow = true;
-  skinned.frustumCulled = false;
-
-  const skeleton = new THREE.Skeleton(bones);
-  skinned.add(bones[0]);
-  skinned.bind(skeleton);
+  const leather = new THREE.MeshStandardMaterial({
+    color: 0x141419,
+    roughness: 0.36,
+    metalness: 0.3,
+    envMapIntensity: 1.2,
+  });
 
   const group = new THREE.Group();
   group.name = 'rider';
-  group.scale.setScalar(HEIGHT);
-  // Hip over the middle of the seat, not on the rear fender: on the modelled
-  // CRF the seat pad runs from the tank to z ≈ 0.45, so the rider sits at 0.12.
-  group.position.set(0, 0.945, 0.08);
-  group.add(skinned);
 
-  // --- Seated pose --------------------------------------------------------
-  // Knees forward over the shrouds, boots back on the pegs: the hip-to-peg
-  // distance is what sets these two angles, and the binding probes the rest.
-  bones[thighL].rotation.set(0.62, 0, 0.3);
-  bones[thighR].rotation.set(0.62, 0, -0.3);
-  bones[shinL].rotation.x = -1.77;
-  bones[shinR].rotation.x = -1.77;
-  bones[footL].rotation.x = 0.55;
-  bones[footR].rotation.x = 0.55;
+  // --- Hierarchy ------------------------------------------------------------
+  // root (saddle) -> pelvis (hip line) -> spine (torso) -> head, arms.
+  //                \-> thighs -> shins -> boots
+  const pelvis = new THREE.Group();
+  pelvis.position.set(0, hipY, 0);
+  group.add(pelvis);
 
-  bones[upperArmL].rotation.set(1.32, 0, 0.26);
-  bones[foreArmL].rotation.set(-0.42, 0, 0);
-  bones[handL].rotation.x = 0.2;
+  const spine = new THREE.Group();
+  pelvis.add(spine);
 
-  // The right arm keeps the hand on the hip: it is the pose the model came in,
-  // and on a stunt bike it reads as deliberate.
-  bones[upperArmR].rotation.set(0.1, 0, 0);
-  bones[foreArmR].rotation.set(0, 0, 0);
-
-  const base = {
-    spine: 0.24,
-    chest: 0.1,
-    neck: -0.14,
-    head: 0,
-    armL: 1.32,
-    legL: 0.3,
+  const piece = (
+    triangles: number[],
+    joint: THREE.Vector3,
+    parent: THREE.Object3D,
+    parentOrigin: THREE.Vector3,
+    material: THREE.Material,
+  ): THREE.Group => {
+    const holder = new THREE.Group();
+    holder.position.copy(joint).sub(parentOrigin);
+    const part = new THREE.Mesh(build(triangles), material);
+    part.position.copy(joint).multiplyScalar(-1);
+    part.castShadow = true;
+    part.receiveShadow = true;
+    holder.add(part);
+    parent.add(holder);
+    return holder;
   };
 
-  const set = (bone: number, x: number, y: number, z: number) => bones[bone].rotation.set(x, y, z);
+  const hipOrigin = new THREE.Vector3(0, hipY, 0);
+  piece(torso, hipOrigin, spine, hipOrigin, sourceMaterial);
+  const headGroup = piece(head, new THREE.Vector3(0, neckY, 0), spine, hipOrigin, sourceMaterial);
+
+  const ball = (radius: number): THREE.Mesh => new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 9), leather);
+
+  const thighLen = hipY - kneeY;
+  const shinLen = kneeY - ankleY;
+  const armUpper = 0.3;
+  const armFore = 0.26;
+
+  interface Limb {
+    side: number;
+    thigh: THREE.Group;
+    shin: THREE.Group;
+    boot: THREE.Group;
+    shoulder: THREE.Group;
+    forearm: THREE.Group;
+    /** Sleeve meshes, stretched to whatever the grip asks for. */
+    upperArm: THREE.Mesh;
+    foreArm: THREE.Mesh;
+    glove: THREE.Mesh;
+  }
+  const limbs: Limb[] = [];
+
+  for (const side of [1, -1]) {
+    const which = side > 0 ? 0 : 1;
+    const hipJoint = new THREE.Vector3(side * 0.085, hipY, 0);
+    const kneeJoint = new THREE.Vector3(side * 0.09, kneeY, 0);
+    const ankleJoint = new THREE.Vector3(side * 0.09, ankleY, 0);
+
+    const thighGroup = piece(thigh[which], hipJoint, pelvis, hipOrigin, sourceMaterial);
+    const shinGroup = new THREE.Group();
+    shinGroup.position.set(0, -thighLen, 0);
+    thighGroup.add(shinGroup);
+    const shinMesh = new THREE.Mesh(build(shin[which]), sourceMaterial);
+    shinMesh.position.copy(kneeJoint).multiplyScalar(-1);
+    shinMesh.castShadow = true;
+    shinMesh.receiveShadow = true;
+    shinGroup.add(shinMesh);
+
+    const bootGroup = new THREE.Group();
+    bootGroup.position.set(0, -shinLen, 0);
+    shinGroup.add(bootGroup);
+    const bootMesh = new THREE.Mesh(build(foot[which]), sourceMaterial);
+    bootMesh.position.copy(ankleJoint).multiplyScalar(-1);
+    bootMesh.castShadow = true;
+    bootGroup.add(bootMesh);
+
+    // Ball joints under the cut edges.
+    const hipBall = ball(0.08);
+    hipBall.position.copy(hipJoint).sub(hipOrigin);
+    pelvis.add(hipBall);
+    shinGroup.add(ball(0.066));
+    thighGroup.add(ball(0.072));
+
+    // --- Arms -------------------------------------------------------------
+    // Slightly inboard of the sleeve: the deltoid has to sit inside the jacket
+    // or the arm reads as a pipe bolted to the collarbone.
+    const shoulderJoint = new THREE.Vector3(side * 0.128, shoulderY - 0.01, 0);
+    const shoulder = new THREE.Group();
+    shoulder.position.copy(shoulderJoint).sub(hipOrigin);
+    spine.add(shoulder);
+    shoulder.add(ball(0.075));
+
+    const upperArm = new THREE.Mesh(sleeve(armUpper, 0.047, 0.042), leather);
+    upperArm.castShadow = true;
+    shoulder.add(upperArm);
+
+    const forearm = new THREE.Group();
+    forearm.position.set(0, -armUpper, 0);
+    shoulder.add(forearm);
+    const foreArm = new THREE.Mesh(sleeve(armFore, 0.042, 0.036), leather);
+    foreArm.castShadow = true;
+    forearm.add(foreArm);
+    forearm.add(ball(0.042));
+    const glove = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 9), leather);
+    glove.position.set(0, -armFore, 0);
+    glove.scale.set(0.9, 0.8, 1.2);
+    glove.castShadow = true;
+    forearm.add(glove);
+
+    limbs.push({
+      side,
+      thigh: thighGroup,
+      shin: shinGroup,
+      boot: bootGroup,
+      shoulder,
+      forearm,
+      upperArm,
+      foreArm,
+      glove,
+    });
+  }
+
+  const anchors: RiderAnchors = {
+    gripL: new THREE.Vector3(0.24, 1.02, -0.3),
+    gripR: new THREE.Vector3(-0.24, 1.02, -0.3),
+    footL: new THREE.Vector3(0.2, 0.36, 0.06),
+    footR: new THREE.Vector3(-0.2, 0.36, 0.06),
+  };
+
+  // --- IK -------------------------------------------------------------------
+  const dir = new THREE.Vector3();
+  const mid = new THREE.Vector3();
+  const bend = new THREE.Vector3();
+  const lowerDir = new THREE.Vector3();
+  const inverse = new THREE.Quaternion();
+  // Kept apart from `inverse`: the solver runs inside the loop that uses it.
+  const boneInverse = new THREE.Quaternion();
+  const spineInverse = new THREE.Quaternion();
+  const hipPoint = new THREE.Vector3();
+  const target = new THREE.Vector3();
+  const armTarget = new THREE.Vector3();
+
+  /**
+   * Two-bone IK. `rootJoint` and `goal` are in the parent's space; the middle
+   * joint bends towards `bendHint` (made perpendicular to the chain).
+   */
+  const solve = (
+    upper: THREE.Object3D,
+    lower: THREE.Object3D,
+    rootJoint: THREE.Vector3,
+    goal: THREE.Vector3,
+    upperLen: number,
+    lowerLen: number,
+    bendHint: THREE.Vector3,
+  ): void => {
+    dir.copy(goal).sub(rootJoint);
+    let distance = dir.length();
+    const reach = upperLen + lowerLen - 1e-3;
+    const minimum = Math.abs(upperLen - lowerLen) + 1e-3;
+    if (distance < 1e-4) {
+      dir.set(0, -1, 0);
+      distance = 1e-4;
+    } else if (distance > reach) {
+      dir.multiplyScalar(reach / distance);
+      distance = reach;
+    } else if (distance < minimum) {
+      dir.multiplyScalar(minimum / distance);
+      distance = minimum;
+    }
+    dir.multiplyScalar(1 / distance);
+
+    const cos = (upperLen * upperLen + distance * distance - lowerLen * lowerLen) / (2 * upperLen * distance);
+    const along = upperLen * Math.max(-1, Math.min(1, cos));
+    const height = Math.sqrt(Math.max(0, upperLen * upperLen - along * along));
+
+    bend.copy(bendHint).addScaledVector(dir, -bendHint.dot(dir));
+    if (bend.lengthSq() < 1e-6) bend.set(0, 0, -1);
+    bend.normalize();
+
+    mid.copy(rootJoint).addScaledVector(dir, along).addScaledVector(bend, height);
+
+    upper.quaternion.copy(quatFromTo(DOWN, mid.clone().sub(rootJoint).normalize()));
+
+    lowerDir.copy(goal).sub(mid).normalize();
+    boneInverse.copy(upper.quaternion).invert();
+    lowerDir.applyQuaternion(boneInverse);
+    lower.quaternion.copy(quatFromTo(DOWN, lowerDir));
+  };
+
+  const legBend = new THREE.Vector3(0, -0.4, 1);
+  const armBend = new THREE.Vector3(0, -0.5, -0.1);
 
   return {
     group,
+    anchors,
     update(pose: RiderPose) {
-      // The rider stays a little more upright than the bike in a corner.
-      group.rotation.z = pose.lean * 0.22;
-      // Under power he lies on the tank; on the brakes he braces back.
       const load = Math.max(-1, Math.min(1, pose.accel / 9));
       const brace = Math.max(0, Math.min(1, pose.brake));
       const wheelie = Math.max(0, Math.min(1, pose.pitch / 0.9));
-      const breathe = Math.sin(pose.time * 2.1) * 0.008;
-      set(spine, base.spine + load * 0.16 - brace * 0.12 - wheelie * 0.16 + breathe, 0, 0);
-      set(chest, base.chest + load * 0.05 - brace * 0.05 - wheelie * 0.08, 0, 0);
-      set(neck, base.neck + wheelie * 0.2, -pose.steer * 0.35, 0);
-      set(upperArmL, base.armL - wheelie * 0.18, 0, base.legL * 0.8 + pose.steer * 0.12);
-      set(foreArmL, -0.42 - wheelie * 0.1, 0, 0);
-      group.position.y = 0.945 + pose.drop;
+      const breathe = Math.sin(pose.time * 2.1) * 0.012;
+
+      // Spine: on the tank under power, braced back on the brakes, pulled down
+      // by gravity in a wheelie.
+      spine.rotation.x = 0.17 + load * 0.15 - brace * 0.09 - wheelie * 0.22 + breathe;
+      spine.rotation.z = -pose.lean * 0.3;
+      spine.rotation.y = pose.steer * 0.12;
+      headGroup.rotation.x = -spine.rotation.x * 0.75;
+      headGroup.rotation.z = pose.lean * 0.24;
+
+      // A rider counter-steers with his hips: the pelvis leans less than the
+      // bike, and follows the wheelie a little.
+      pelvis.rotation.z = -pose.lean * 0.1;
+      pelvis.rotation.x = -pose.pitch * 0.16;
+
+      // Everything below works in the pelvis frame.
+      inverse.copy(pelvis.quaternion).invert();
+      spineInverse.copy(spine.quaternion).invert();
+
+      for (const limb of limbs) {
+        const left = limb.side > 0;
+
+        // --- Leg: hip -> boot on the peg ---
+        target.copy(left ? anchors.footL : anchors.footR).sub(hipOrigin);
+        target.applyQuaternion(inverse);
+        hipPoint.set(limb.side * 0.085, 0, 0);
+        solve(limb.thigh, limb.shin, hipPoint, target, thighLen, shinLen, legBend);
+        // Boots stay as modelled: flat, toes forward.
+        limb.boot.quaternion.copy(limb.thigh.quaternion).multiply(limb.shin.quaternion).invert();
+
+        // --- Arm: shoulder -> grip ---
+        // The shoulders hang off the spine, so the grip has to come all the way
+        // down into that frame before the IK sees it: otherwise the arms point
+        // wherever the torso happens to be rotated.
+        armTarget.copy(left ? anchors.gripL : anchors.gripR).sub(hipOrigin).applyQuaternion(inverse);
+        armTarget.applyQuaternion(spineInverse);
+        hipPoint.copy(limb.shoulder.position);
+        armBend.set(limb.side * 0.9, -0.4, -0.15);
+        // The sleeves stretch to the distance the bar asks for. A rider's arm
+        // is not a fixed length between the saddle and the grips, and stretching
+        // the sleeve is invisible where a floating hand would be obvious.
+        const reachToGrip = armTarget.distanceTo(hipPoint);
+        // 6 % over the distance, so the elbow keeps a bend instead of locking
+        // into a straight tube when the rider leans on the bars.
+        const upperLen = Math.max(0.16, reachToGrip * 0.55);
+        const foreLen = Math.max(0.14, reachToGrip * 0.51);
+        solve(limb.shoulder, limb.forearm, hipPoint, armTarget, upperLen, foreLen, armBend);
+        limb.upperArm.scale.y = upperLen / armUpper;
+        limb.foreArm.scale.y = foreLen / armFore;
+        limb.forearm.position.y = -upperLen;
+        limb.glove.position.y = -foreLen;
+      }
     },
     dispose() {
-      geometry.dispose();
-      material.dispose();
+      group.traverse((child) => {
+        const part = child as THREE.Mesh;
+        if (part.isMesh) part.geometry.dispose();
+      });
+      sourceMaterial.dispose();
+      leather.dispose();
     },
   };
 }

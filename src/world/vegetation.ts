@@ -218,8 +218,12 @@ export async function buildVegetation(
   ]);
 
   // Leaf cards are alpha-cut in the source; blending them would sort badly at
-  // distance and self-shadow into black blotches.
+  // distance and self-shadow into black blotches. The birches also ship with a
+  // very pale bark and paper-white leaves: at the scale they are drawn here
+  // they read as ghosts against the grass, so their albedo is pulled down and
+  // warmed until they sit in the same light as the terrain.
   for (const gltf of [trees, birches]) {
+    const birch = gltf === birches;
     gltf.scene.traverse((child) => {
       const mesh = child as THREE.Mesh;
       if (!mesh.isMesh) return;
@@ -230,6 +234,11 @@ export async function buildVegetation(
       // leaves only the dark twigs and the tree reads as a burnt skeleton.
       material.alphaTest = 0.1;
       material.depthWrite = true;
+      if (birch) {
+        material.color.multiplyScalar(0.72);
+        material.color.offsetHSL(0.015, 0.04, 0);
+        material.roughness = 0.92;
+      }
       material.needsUpdate = true;
     });
   }
@@ -256,6 +265,19 @@ export async function buildVegetation(
   const trunks: { x: number; y: number; z: number; height: number; radius: number }[] = [];
   const spacing: { x: number; z: number }[] = [];
 
+  // Forests, not wallpaper: six groves spread over the map, each one dense
+  // enough that driving through it feels like a wood. The rest of the trees
+  // still line the roads and fill the meadows.
+  const forests = Array.from({ length: 6 }, () => {
+    const angle = rand() * Math.PI * 2;
+    const radius = 180 + rand() * 560;
+    return {
+      x: Math.cos(angle) * radius,
+      z: Math.sin(angle) * radius,
+      radius: 55 + rand() * 45,
+    };
+  });
+
   let attempts = 0;
   let placedTrees = 0;
   while (placedTrees < treeCount && attempts < treeCount * 50) {
@@ -265,7 +287,15 @@ export async function buildVegetation(
     const roll = rand();
     let x: number;
     let z: number;
-    if (roll < 0.3) {
+    if (roll < 0.55) {
+      // Inside a grove: gaussian scatter around its centre keeps the middle
+      // dense and the edge ragged, which is how a forest thins out.
+      const grove = forests[Math.floor(rand() * forests.length)];
+      const spread = grove.radius * Math.sqrt(-2 * Math.log(1 - rand() * 0.94));
+      const angle = rand() * Math.PI * 2;
+      x = grove.x + Math.cos(angle) * spread;
+      z = grove.z + Math.sin(angle) * spread;
+    } else if (roll < 0.78) {
       const angle = rand() * Math.PI * 2;
       const radius = 25 + rand() * 300;
       x = -480 + Math.cos(angle) * radius;

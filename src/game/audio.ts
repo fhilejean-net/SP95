@@ -750,6 +750,48 @@ export class CarAudio {
     source.stop(start + attack + opts.decay + 0.02);
   }
 
+  /**
+   * The clutch dumped at the lever: a hard metallic clack, the spring letting
+   * go, then the chain snatching as the rear wheel takes the torque. Three
+   * bursts rather than a sample, so the pitch moves with every attempt.
+   */
+  clutchBang(strength = 1): void {
+    if (!this.ctx) return;
+    this.events++;
+    const hit = Math.max(0.15, Math.min(1, strength));
+    // Lever and basket: bright, very short.
+    this.burst({
+      freq: 2300 + Math.random() * 1200,
+      q: 1.6,
+      gain: 0.05 * hit,
+      decay: 0.035 + Math.random() * 0.02,
+    });
+    // Pressure plate and springs: the body of the clack.
+    this.burst({
+      freq: 720 + Math.random() * 180,
+      q: 2.2,
+      gain: 0.045 * hit,
+      decay: 0.07 + Math.random() * 0.03,
+    });
+    // Case thump, well under the engine so it does not read as an impact.
+    this.burst({
+      freq: 190,
+      q: 0.9,
+      type: 'lowpass',
+      gain: 0.055 * hit,
+      decay: 0.11,
+    });
+    // Chain taking up the slack a moment later.
+    this.burst({
+      freq: 1500 + Math.random() * 400,
+      q: 0.7,
+      type: 'highpass',
+      gain: 0.016 * hit,
+      decay: 0.16,
+      delay: 0.035,
+    });
+  }
+
   /** Tail unit grinding the road: a short bright scrape, not a crash. */
   scrape(strength: number): void {
     if (!this.ctx) return;

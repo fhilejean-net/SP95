@@ -120,6 +120,42 @@ test('lean follows the yaw rate and is capped', () => {
   assert.ok(Math.abs(leanFor(40, -3, 0.9)) <= 0.9);
 });
 
+test('the bike backs up at walking pace when the brake is held at a standstill', async () => {
+  await RAPIER.init();
+  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  world.timestep = 1 / 120;
+  const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  world.createCollider(RAPIER.ColliderDesc.cuboid(600, 0.5, 600).setTranslation(0, -0.5, 0), ground);
+  const spec = SUPERMOTARD.spec;
+  const bike = new Bike(world, { x: 0, y: spec.cgHeight, z: 0, heading: 0 }, spec);
+  const input: VehicleInput = { ...NEUTRAL_INPUT };
+  const step = (count: number) => {
+    for (let i = 0; i < count; i++) {
+      bike.step(1 / 120, input, world);
+      world.step();
+    }
+  };
+
+  step(180);
+  assert.equal(bike.pushingBack, false, 'a still bike does not back up on its own');
+  input.brake = 1;
+  step(120);
+  assert.equal(bike.pushingBack, true, 'holding the brake at a standstill walks it back');
+  assert.equal(bike.telemetryState.gear, -1, 'the dash reads R');
+
+  // Walking pace, and it holds it instead of accelerating away backwards.
+  step(360);
+  const backing = Math.abs(bike.telemetryState.speedKmh);
+  assert.ok(backing > 2, `it should actually move (${backing.toFixed(1)} km/h)`);
+  assert.ok(backing < 8, `a push is not reverse gear (${backing.toFixed(1)} km/h)`);
+  // The tires roll instead of dragging: no slip ratio is burned on the way back.
+  assert.ok(Math.abs(bike.telemetryState.wheels[1].slipRatio) < 0.05);
+
+  input.brake = 0;
+  step(60);
+  assert.equal(bike.pushingBack, false, 'letting go stops the push');
+});
+
 test('the supermotard pulls away, wheelies on the pop and brakes down', async () => {
   await RAPIER.init();
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });

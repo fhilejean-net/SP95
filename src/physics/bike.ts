@@ -127,6 +127,10 @@ export class Bike {
   private readonly surfaceAt: (x: number, z: number) => SurfaceGrip;
   private popCooldown = 0;
   private bailTimer = 0;
+  /** Time the rider has held the brake at a standstill: he walks it back. */
+  private pushTimer = 0;
+  /** True while the bike is being pushed backwards, feet down. */
+  pushingBack = false;
   private prevLong = 0;
   /** Smoothed longitudinal acceleration, m/s²: drives the weight transfer. */
   longAccel = 0;
@@ -338,6 +342,8 @@ export class Bike {
     this.bailTimer = 0;
     this.prevLong = 0;
     this.longAccel = 0;
+    this.pushTimer = 0;
+    this.pushingBack = false;
     for (const wheel of this.wheels) {
       wheel.omega = 0;
       wheel.suspensionLength = this.restLength;
@@ -372,6 +378,22 @@ export class Bike {
     this.popCooldown = Math.max(0, this.popCooldown - dt);
     this.bailTimer = Math.max(0, this.bailTimer - dt);
 
+    // --- Walk-back reverse --------------------------------------------------
+    // A supermotard has no reverse gear, so backing up is the rider pushing:
+    // hold the brake at a standstill and the bike rolls back at walking pace
+    // with both tires rolling, never with the rear wheel dragging.
+    const wantsPush = input.throttle < 0.05 && input.brake > 0.55 && this.bailTimer <= 0;
+    this.pushTimer = wantsPush ? this.pushTimer + dt : 0;
+    // The standstill is what *engages* the walk-back; once the rider is
+    // pushing, the bike keeps rolling until he lets the brake go. Testing the
+    // speed every tick made it stutter: push, drift over 0.5 m/s, drop out,
+    // stop, push again.
+    if (!wantsPush) this.pushingBack = false;
+    else if (!this.pushingBack && Math.abs(vLong) < 0.5 && this.pushTimer > 0.35) {
+      this.pushingBack = true;
+    }
+    const brakeInput = this.pushingBack ? 0 : input.brake;
+
     // --- Steering -----------------------------------------------------------
     // A supermotard has a wide lock, but the faster it goes the less of it the
     // rider uses: the yaw rate itself is capped by grip below.
@@ -389,7 +411,7 @@ export class Bike {
       dt,
       rear.omega,
       input.throttle,
-      input.brake,
+      brakeInput,
       vLong,
       groundSpeed,
     );
@@ -495,13 +517,19 @@ export class Bike {
       // Braking is a slip target on both wheels. The front brake does most of
       // the stopping and the rear only stabilises, as on a real bike.
       const brakeShare = wheel.front ? 0.78 : 0.22;
-      const brakeTorque = input.brake * this.spec.brakeTorque * 2.1 * brakeShare;
+      const brakeTorque = brakeInput * this.spec.brakeTorque * 2.1 * brakeShare;
       let forces;
       if (wheel.front) {
         wheel.omega = cvLong / wheel.radius;
-        const kappa = Math.abs(cvLong) < 0.3 ? 0 : -input.brake * 0.1 * Math.sign(cvLong);
+        const kappa = Math.abs(cvLong) < 0.3 ? 0 : -brakeInput * 0.1 * Math.sign(cvLong);
         wheel.slipRatio = kappa;
         forces = tireForces({ kappa, alpha, fz: gripLoad, mu, peakAngle });
+      } else if (this.pushingBack) {
+        // The tire rolls the way the push moves it: a walking rider never spins
+        // the wheel, so there is no slip ratio to chew up grip.
+        wheel.omega = cvLong / wheel.radius;
+        wheel.slipRatio = 0;
+        forces = tireForces({ kappa: 0, alpha, fz: gripLoad, mu, peakAngle });
       } else {
         const kappa = slipRatioFromWheelSpeed(wheel.omega, wheel.radius, cvLong);
         wheel.slipRatio = kappa;
@@ -551,7 +579,7 @@ export class Bike {
     const pitchInput = {
       axleTorque: drive.axleTorque * clamp(1 - Math.abs(vLong) / 62, 0.1, 1),
       throttle: input.throttle,
-      brake: input.brake,
+      brake: brakeInput,
       rearContact: this.wheels[1].contact && this.bailTimer <= 0,
       speed: vLong,
       grip: this.rearSurfaceGrip(),
@@ -635,6 +663,14 @@ export class Bike {
         true,
       );
     }
+    if (this.pushingBack) {
+      // 4,5 km/h backwards is a rider walking beside his bike, not a reverse
+      // gear: the force fades as the target speed is reached, and letting go of
+      // the brake stops it on the spot.
+      const error = -1.25 - vLong;
+      const push = clamp(error, -1.2, 1.2) * this.spec.mass * 2.4;
+      this.body.applyImpulse({ x: forward.x * push * dt, y: 0, z: forward.z * push * dt }, true);
+    }
     if (speed > 0.4) {
       const drag = 0.5 * 1.225 * this.spec.dragArea * speed;
       this.body.applyImpulse(
@@ -647,8 +683,8 @@ export class Bike {
     const bodySlip = Math.atan2(dot(velocity, cross(forward, up)), Math.max(Math.abs(vLong), 1.2));
     this.surface = rearGround;
     this.telemetry = this.buildTelemetry(velocity, bodySlip, looped);
-    this.telemetry.rpm = drive.rpm;
-    this.telemetry.gear = drive.gear;
+    this.telemetry.rpm = this.pushingBack ? Math.max(900, this.telemetry.rpm) : drive.rpm;
+    this.telemetry.gear = this.pushingBack ? -1 : drive.gear;
     this.telemetry.shifting = drive.shifting;
     this.telemetry.limiter = drive.limiter;
     this.telemetry.throttle = input.throttle;
