@@ -186,6 +186,24 @@ Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite su
 - Les performances dépendent du GPU : avec les maisons des quartiers en plus des immeubles, une carte intégrée peut descendre sous 60 fps (la régulation baisse alors la qualité toute seule).
 - **Frein à main et fumée** : le contrôle de traction garde un départ en ligne droite propre, donc la fumée ne sort plus au simple démarrage : il faut un burnout (frein à main, ou antipatinage coupé avec `T`) ou une glisse.
 - Testé automatiquement (physique + fumée navigateur) ; l'appréciation visuelle et le ressenti au volant restent à valider sur une vraie machine.
+- **Boucle d'amélioration** : `scripts/idle-improve.mjs` prépare la mission suivante, mais rien ne la lance à ta place — hors d'une session d'agent, le fichier `artifacts/idle-next-task.md` attend simplement quelqu'un pour le lire.
+
+## Agents
+
+Deux skills vivent dans `skills/` pour un agent qui reprend ce dépôt (voir aussi `AGENTS.md` et `docs/backlog.md`) :
+
+- **`session-recovery`** : la marche à suivre quand une session casse (runner redémarré, tour interrompu, worktree sale). Reprendre l'état sans refaire le travail déjà fait, ne jamais écraser les fichiers du propriétaire, et rendre la main avec un état vérifié.
+- **`idle-improve`** : quoi faire quand l'agent n'a plus rien à faire. Il prend la première ligne de `docs/backlog.md`, améliore le jeu sur *un* point, le vérifie, puis rend le travail visible — jamais de code livré non vérifié.
+
+Trois modes, et le script est prudent par construction : il refuse de tourner si le worktree est sale (pas d'empilement de modifications non vérifiées), hors des heures ouvrables, ou sans agent disponible.
+
+```
+node scripts/idle-improve.mjs                 # imprime le prompt de la prochaine entrée
+node scripts/idle-improve.mjs --once --live   # un cycle : l'agent fait une entrée puis s'arrête
+IDLE_HOURS=9-22 nohup node scripts/idle-improve.mjs --loop --live > idle.log 2>&1 &
+```
+
+Le mode `--live` lance la CLI `claude` (ou la commande `IDLE_AGENT_CMD`) et exige `ANTHROPIC_API_KEY` ; sans clé, le prompt est écrit dans `artifacts/idle-next-task.md` pour que la session suivante reprenne dessus. Chaque cycle est journalisé dans `artifacts/idle-improve.log`, et un verrou `artifacts/.idle-improve.pid` empêche deux boucles de tourner en même temps. Ces fichiers sont hors git.
 
 ## Crédits
 
