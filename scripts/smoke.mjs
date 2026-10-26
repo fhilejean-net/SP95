@@ -66,6 +66,13 @@ try {
   const ends = await page.evaluate(() => window.__sp95.roadEnds);
   check('the open streets end on a turning circle', ends >= 12, `${ends} dead ends`);
 
+  const hoods = await page.evaluate(() => window.__sp95.neighbourhoods);
+  check(
+    'the streets are lined with houses and shops',
+    hoods.houses > 100 && hoods.shops >= 10,
+    `${hoods.houses} houses, ${hoods.shops} shops`,
+  );
+
   // The modelled car: the GLB replaces the lofted shell, wheels on the mounts.
   const carState = await page.evaluate(() => ({
     id: window.__sp95.car,
@@ -117,12 +124,17 @@ try {
   );
   await page.click('#btn-sound-reset');
   const resetTurbo = await page.evaluate(() => window.__sp95.soundMix.turbo);
-  check('reset restores the balanced mix', Math.abs(resetTurbo - 0.45) < 1e-6, `${resetTurbo}`);
+  check('reset restores the balanced mix', Math.abs(resetTurbo - 0.4) < 1e-6, `${resetTurbo}`);
   await page.click('#btn-sound-close');
   const menuBack = await page.evaluate(
     () => !document.getElementById('menu').classList.contains('hidden'),
   );
   check('closing the sound panel returns to the menu', menuBack);
+
+  // The two compressor-surge recordings are fetched and decoded once the audio
+  // context starts. Nothing else is sampled: the engine is synthesised.
+  const samples = await waitFor(() => window.__sp95.audioSamples === 2, 40_000);
+  check('the given recordings decode', Boolean(samples), `${samples} buffers`);
 
   // Garage: pick a part, make sure the car is rebuilt with it.
   await page.click('#btn-garage');
@@ -196,7 +208,11 @@ try {
 
   await page.keyboard.down('KeyW');
   const accelerated = await waitFor(() => window.__sp95.speedKmh > 35);
-  const smoked = await waitFor(() => window.__sp95.smoke > 0, 20_000);
+  // Traction control keeps a straight launch clean, so ask for smoke the way a
+  // player does: full lock at speed, which puts the tires past their peak.
+  await page.keyboard.down('KeyA');
+  const smoked = await waitFor(() => window.__sp95.smoke > 0, 25_000);
+  await page.keyboard.up('KeyA');
   check('wheelspin throws tire smoke', Boolean(smoked), `${await page.evaluate(() => window.__sp95.smoke)} puffs`);
   const spinA = await page.evaluate(() => window.__sp95.wheelSpin);
   // SwiftShader runs at about one frame per second: give it a few frames.
@@ -278,8 +294,15 @@ try {
   );
   await page.keyboard.down('KeyW');
   const rallyMoved = await waitFor(() => window.__sp95.speedKmh > 20, 45_000);
+  const gravelWheels = await page.evaluate(() => window.__sp95.wheels);
   await page.keyboard.up('KeyW');
   check('the car drives on gravel', Boolean(rallyMoved));
+  const gravelSlip = Math.max(...gravelWheels.map((wheel) => Math.abs(wheel.slip)));
+  check(
+    'the gravel launch is not one long wheelspin',
+    gravelSlip < 0.7,
+    `${gravelSlip.toFixed(2)} max slip at ${(await page.evaluate(() => window.__sp95.speedKmh)).toFixed(0)} km/h`,
+  );
 
   // Summit drift arena.
   await page.keyboard.press('Escape');
@@ -324,12 +347,131 @@ try {
   await waitFor(() => window.__sp95.paused === true, 8000);
   await page.click('#btn-pause-free');
   await page.waitForTimeout(800);
+
+  // TCS: the pause-menu button and the T key both move the switch, the HUD
+  // chip follows it, and the choice is remembered.
+  const tcsBefore = await page.evaluate(() => window.__sp95.tcs);
+  await page.keyboard.press('KeyT');
+  // The switch is applied on the next animation frame, and SwiftShader runs at
+  // a few frames per second: give the game loop the time to see the key.
+  const tcsToggled = await page
+    .waitForFunction((before) => window.__sp95.tcs !== before, tcsBefore, { timeout: 8000 })
+    .then(() => true)
+    .catch(() => false);
+  const tcsAfter = await page.evaluate(() => ({
+    state: window.__sp95.tcs,
+    stored: localStorage.getItem('sp95.tcs'),
+    chipOff: document.getElementById('tcs-chip').classList.contains('off'),
+  }));
+  check(
+    'T switches the traction control off and the chip shows it',
+    Boolean(tcsToggled) &&
+      tcsAfter.state === !tcsBefore &&
+      tcsAfter.stored === (tcsAfter.state ? 'on' : 'off') &&
+      tcsAfter.chipOff,
+    `tcs ${tcsAfter.state}, stored ${tcsAfter.stored}`,
+  );
+  await page.click('#tcs-chip');
+  const tcsBack = await page
+    .waitForFunction(() => window.__sp95.tcs === true, null, { timeout: 8000 })
+    .then(() => true)
+    .catch(() => false);
+  const chipBack = await page.evaluate(
+    () => !document.getElementById('tcs-chip').classList.contains('off'),
+  );
+  check('the TCS chip switches the assist back on', tcsBack && chipBack);
+
   await page.keyboard.down('KeyW');
   await waitFor(() => window.__sp95.speedKmh > 45, 60_000);
   await page.keyboard.up('KeyW');
   await page.waitForTimeout(600);
   const effects = await page.evaluate(() => window.__sp95.audioEvents);
   check('shift and overrun effects fire', effects > 0, `${effects} events`);
+
+  // --- Supermotard ---------------------------------------------------------
+  await page.keyboard.press('Escape');
+  await waitFor(() => window.__sp95.paused === true, 8000);
+  await page.click('#btn-pause-moto');
+  const bikeReady = await waitFor(() => window.__sp95.vehicleKind === 'bike', 30_000);
+  await page.waitForTimeout(1500);
+  const bikeHud = await page.evaluate(() => ({
+    kind: window.__sp95.vehicleKind,
+    redline: window.__sp95.redline,
+    wheels: window.__sp95.wheels.length,
+    stuntVisible: !document.getElementById('stunt-panel').classList.contains('hidden'),
+    tcsHidden: document.getElementById('tcs-chip').classList.contains('hidden'),
+    wheelieVisible: !document.getElementById('wheelie-chip').classList.contains('hidden'),
+    state: window.__sp95.bikeState,
+  }));
+  check(
+    'the supermotard replaces the car with its own HUD and two wheels',
+    Boolean(bikeReady) &&
+      bikeHud.kind === 'bike' &&
+      bikeHud.redline === 8500 &&
+      bikeHud.wheels === 2 &&
+      bikeHud.stuntVisible &&
+      bikeHud.tcsHidden &&
+      bikeHud.wheelieVisible,
+    `${bikeHud.redline} tr/min, ${bikeHud.wheels} wheels`,
+  );
+
+  await page.evaluate(() => window.__sp95.teleport(176, 132, 0));
+  await page.waitForTimeout(1000);
+  await page.keyboard.down('KeyW');
+  const bikeFast = await waitFor(() => window.__sp95.speedKmh > 25, 90_000);
+  check('the bike pulls away', Boolean(bikeFast), `${(await page.evaluate(() => window.__sp95.speedKmh)).toFixed(0)} km/h`);
+
+  await page.keyboard.down('KeyA');
+  const leaned = await waitFor(() => Math.abs(window.__sp95.bikeState.leanDeg) > 20, 30_000);
+  await page.keyboard.up('KeyA');
+  check(
+    'the bike leans into the turn',
+    Boolean(leaned),
+    `${(await page.evaluate(() => window.__sp95.bikeState.leanDeg)).toFixed(0)}°`,
+  );
+
+  const popped = await page.evaluate(() => window.__sp95.popWheelie());
+  const wheelie = await waitFor(() => window.__sp95.bikeState.pitchDeg > 25, 30_000);
+  const scored = await page.evaluate(() => window.__sp95.stuntPending > 0);
+  check(
+    'the wheelie button lifts the front and scores',
+    popped && Boolean(wheelie) && scored,
+    `${(await page.evaluate(() => window.__sp95.bikeState.pitchDeg)).toFixed(0)}°, ${Math.round(await page.evaluate(() => window.__sp95.stuntPending))} pts`,
+  );
+
+  // The bavette is a push past the angle the throttle holds: the wheelie has
+  // to settle first, then a second clutch-up takes it over the balance point
+  // and the rider brakes back out of it.
+  await waitFor(() => window.__sp95.bikeState.pitchDeg > 40, 30_000);
+  await page.evaluate(() => window.__sp95.popWheelie());
+  const bavette = await page
+    .waitForFunction(
+      () => window.__sp95.bikeState?.pitchDeg > 52 && window.__sp95.sparks > 0,
+      null,
+      { timeout: 25_000, polling: 60 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  check('a bavette throws sparks', bavette);
+
+  await page.keyboard.up('KeyW');
+  await page.keyboard.down('KeyS');
+  const dropped = await waitFor(() => window.__sp95.bikeState.pitchDeg < 12, 30_000);
+  await page.keyboard.up('KeyS');
+  check('the brake brings the front back down', Boolean(dropped));
+
+  // Back to a car: the garage must put the bike away and rebuild the car.
+  await page.keyboard.press('Escape');
+  await waitFor(() => window.__sp95.paused === true, 8000);
+  await page.click('#btn-pause-garage');
+  await page.waitForTimeout(400);
+  await page.click('#garage-cars .car-choice[data-car="rx7"]');
+  const backInCar = await waitFor(
+    () => window.__sp95.vehicleKind === 'car' && window.__sp95.car === 'rx7',
+    60_000,
+  );
+  await page.click('#btn-garage-close');
+  check('the garage puts the bike away and rebuilds the car', Boolean(backInCar));
 
   check('no console errors at the end', errors.length === 0, errors.slice(0, 3).join(' | '));
 } catch (error) {

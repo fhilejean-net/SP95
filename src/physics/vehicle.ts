@@ -108,6 +108,12 @@ export interface VehicleTelemetry {
   lateralAccel: number;
   airborne: boolean;
   wheels: WheelTelemetry[];
+  /** Filled in by the bike; a car leaves these undefined. */
+  lean?: number;
+  pitch?: number;
+  wheelie?: boolean;
+  bavette?: boolean;
+  looped?: boolean;
 }
 
 export interface VehicleState {
@@ -139,6 +145,12 @@ export interface VehicleSpec {
   muRear: number;
   /** Slip angle (rad) at which the tires peak: wide for drift tires. */
   peakSlipAngle: number;
+  /**
+   * Grip multiplier on anything that is not asphalt. A gravel tire is worse on
+   * tarmac and much better in the dirt; without this, fitting the "tout-terrain"
+   * set simply lowered the friction everywhere and made the rally car useless.
+   */
+  looseGrip: number;
   springK: number;
   springC: number;
   arbFront: number;
@@ -159,6 +171,15 @@ export interface VehicleSpec {
   track: number;
   /** Collider half extents: across, up, along. */
   bodyHalf: { x: number; y: number; z: number };
+  /** Share of the drive torque sent to the front axle, 0..1. */
+  driveFront: number;
+  /**
+   * Traction control, 0..1. It caps the axle torque at the grip the driven
+   * tires actually have, which is what stops first gear from sitting on the
+   * limiter with the wheels in the air. 0 leaves the throttle entirely to the
+   * driver, 1 never lets the tires spin past their peak.
+   */
+  tractionControl: number;
 }
 
 export const STOCK_SPEC: VehicleSpec = {
@@ -174,6 +195,7 @@ export const STOCK_SPEC: VehicleSpec = {
   muFront: 1.24,
   muRear: 1.2,
   peakSlipAngle: 0.135,
+  looseGrip: 1,
   springK: 34000,
   springC: 3800,
   arbFront: 14000,
@@ -187,14 +209,44 @@ export const STOCK_SPEC: VehicleSpec = {
   wheelbase: 2.62,
   track: 1.712,
   bodyHalf: { x: 0.88, y: 0.42, z: 2.05 },
+  driveFront: 0,
+  tractionControl: 0.5,
 };
+
+/**
+ * The chassis box is a shell for walls, buildings and other cars, not a floor
+ * pan. It used to collide with the terrain, and that was the "invisible wall":
+ * at speed the nose dips into the ground on a crest, and a box resolving that
+ * penetration against a trimesh kills every bit of speed in a single tick. The
+ * wheels carry the car -- they are raycasts, not bodies -- so the body only has
+ * to collide with the ground once the car is on its side or its roof.
+ *
+ * Collision groups: bit 0 is the ground, bit 1 everything else. Membership is
+ * the high half, the filter the low half.
+ */
+export const GROUP_GROUND = 0x0001;
+export const GROUP_WORLD = 0x0002;
+const CHASSIS_UPRIGHT = (GROUP_WORLD << 16) | GROUP_WORLD;
+const CHASSIS_ROLLED = (GROUP_WORLD << 16) | (GROUP_WORLD | GROUP_GROUND);
+/** Above ~53° of roll the body is what lands, not the tires. */
+const ROLLED_UP_DOT = 0.6;
+/**
+ * Lifting the shell also buys clearance over kerbs, and makes the collision box
+ * match the body a driver sees rather than the floor pan.
+ */
+const CHASSIS_LIFT = 0.12;
 
 const MIN_LENGTH = 0.06;
 /** First-stage bump stop: firm, but it lets the body settle instead of jamming. */
 const BUMP_K = 90000;
 /** Second stage, only reached in a real impact. */
 const BUMP_K_HARD = 1_600_000;
-/** Reflected engine inertia, multiplied by the squared total gear ratio. */
+/**
+ * Reflected engine inertia, multiplied by the squared total gear ratio. It is
+ * carried by the rear axle: a flywheel that keeps the back end from snapping
+ * round the instant it loses grip, and the torque the tires have to fight when
+ * they spin up.
+ */
 const ENGINE_INERTIA = 0.22;
 
 export class Vehicle {
@@ -218,10 +270,19 @@ export class Vehicle {
   /** Ground under the car, for telemetry and audio. */
   surface: SurfaceGrip = ASPHALT;
   private flippedTimer = 0;
+  private rolled = false;
   private prevSpeed = 0;
   /** Signed longitudinal acceleration estimate, m/s². */
   accelLong = 0;
   accelLat = 0;
+  /** What the traction control let through this tick, Nm. */
+  driveTorque = 0;
+  /**
+   * Master switch for the assist. Off leaves the throttle entirely to the
+   * driver, which is the only way to hold a drift: a per-wheel cap keeps
+   * pulling the rear back under the car the moment it spins up.
+   */
+  tcsEnabled = true;
 
   constructor(
     world: RAPIER.World,
@@ -272,7 +333,8 @@ export class Vehicle {
 
     this.collider = world.createCollider(
       RAPIER.ColliderDesc.cuboid(spec.bodyHalf.x, spec.bodyHalf.y, spec.bodyHalf.z)
-        .setTranslation(0, 0.02, 0)
+        .setTranslation(0, 0.02 + CHASSIS_LIFT, 0)
+        .setCollisionGroups(CHASSIS_UPRIGHT)
         .setMassProperties(
           spec.mass,
           { x: 0, y: -0.12, z: 0 },
@@ -283,8 +345,9 @@ export class Vehicle {
           },
           { x: 0, y: 0, z: 0, w: 1 },
         )
-        .setFriction(0.45)
-        .setRestitution(0.12),
+        .setFriction(0.05)
+        .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
+        .setRestitution(0),
       this.body,
     );
 
@@ -404,24 +467,64 @@ export class Vehicle {
     this.steerAngle += clamp(target - this.steerAngle, -rate * dt, rate * dt);
 
     // --- Drivetrain ---------------------------------------------------------
-    const rearOmega = (this.wheels[2].omega + this.wheels[3].omega) * 0.5;
+    const driveFront = clamp(this.spec.driveFront, 0, 1);
+    // The gearbox reads the driven wheels, weighted by the torque split: an
+    // all-wheel-drive car sees all four, a rear-drive car only the back axle.
+    let drivenOmega = 0;
+    let drivenWeight = 0;
+    for (const w of this.wheels) {
+      const share = w.front ? driveFront : 1 - driveFront;
+      drivenOmega += w.omega * share;
+      drivenWeight += share;
+    }
+    drivenOmega /= Math.max(drivenWeight, 1e-3);
     const groundSpeed = Math.hypot(vLong, vLat);
     const drive = this.drivetrain.update(
       dt,
-      rearOmega,
+      drivenOmega,
       input.throttle,
       input.brake,
       vLong,
       groundSpeed,
     );
-    const driveTorquePerWheel = drive.axleTorque * 0.5;
+
+    // --- Traction control ---------------------------------------------------
+    // One wheel at a time, not one axle at a time. With an open differential
+    // the unloaded inside wheel is always the first to light up, and a single
+    // spinning tire takes the whole axle's lateral grip with it: that is why an
+    // all-wheel-drive car used to plow through a corner while the front inside
+    // tire was at twice its slip peak. Capping each wheel against its own
+    // contact patch leaves the other three driving and steering.
+    const tc = this.tcsEnabled ? clamp(this.spec.tractionControl, 0, 1) : 0;
+    // Only the handbrake turns the assist off. It used to cut out once the car
+    // was sliding more than 20°, and that was exactly backwards on gravel: the
+    // first hint of angle let all four wheels light up, the front tires lost
+    // the lateral grip that was holding the line, and the slide fed itself.
+    const tcActive = tc > 0 && !input.handbrake;
+    // Allowed wheelspin grows as the assist is turned down. It does *not* grow
+    // with the slide angle: letting the wheels spin harder once the car is
+    // already sideways takes lateral grip off the rear and feeds the spin.
+    const targetSlip = 0.11 + (1 - tc) * 0.22;
+    this.driveTorque = 0;
     // In reverse the brake pedal is the reverse throttle, so the throttle pedal
     // is what slows the car down on its way back to first gear.
     const serviceBrake = this.drivetrain.gear === -1 ? input.throttle : input.brake;
     const totalRatio = Math.abs(this.drivetrain.ratio) * this.drivetrain.config.finalDrive;
-    const rearInertia = drive.shifting
-      ? this.wheelInertia
-      : this.wheelInertia + ENGINE_INERTIA * totalRatio * totalRatio;
+    // The front axle is coupled by a clutch pack, not a spool: it carries its
+    // own wheel inertia and a fraction of the engine's, so it spins up quickly
+    // instead of dragging against the car through a 15:1 first gear.
+    // Only a locked clutch drags the flywheel around with the wheels. Through
+    // first gear the reflected inertia is worth about a tonne of extra mass, so
+    // charging it to the wheels during a launch was what made every car feel
+    // gutless below 40 km/h.
+    const reflected = drive.shifting
+      ? 0
+      : ENGINE_INERTIA * totalRatio * totalRatio * (1 - drive.clutchSlip);
+    // The flywheel is shared by both wheels of an axle: charging the whole
+    // reflected inertia to each wheel doubled the rotating mass the car had to
+    // drag, which is why first gear still felt flat after the launch fix.
+    const frontInertia = this.wheelInertia + reflected * driveFront * 0.5;
+    const rearInertia = this.wheelInertia + reflected * (1 - driveFront) * 0.5;
 
     // --- Wheels -------------------------------------------------------------
     const impulses: { impulse: Vec3; point: Vec3 }[] = [];
@@ -494,16 +597,46 @@ export class Vehicle {
 
       const alpha = slipAngleFromVelocity(cvLong, cvLat);
       const ground = this.surfaceAt(contactPoint.x, contactPoint.z);
-      const mu = (wheel.front ? this.spec.muFront : this.spec.muRear) * ground.grip;
+      const loose = ground.kind !== 'asphalte';
+      const mu =
+        (wheel.front ? this.spec.muFront : this.spec.muRear) *
+        ground.grip *
+        (loose ? this.spec.looseGrip : 1);
       const peakAngle = this.spec.peakSlipAngle * ground.peak;
       wheel.slipAngle = alpha;
       wheel.load = springForce;
       totalLoad += springForce;
 
+      // How much of the engine's torque this corner can actually put down. The
+      // cap is the force the tire makes at the target slip, so it moves with
+      // the load transfer instead of assuming a static quarter of the weight.
+      const share = wheel.front ? driveFront : 1 - driveFront;
+      let wheelDrive = 0;
+      if (share > 0.01) {
+        wheelDrive = drive.axleTorque * share * 0.5;
+        if (tcActive) {
+          const atTarget = tireForces({
+            kappa: targetSlip,
+            alpha: 0,
+            fz: springForce,
+            mu,
+            peakAngle,
+          });
+          const cap = Math.abs(atTarget.fx) * wheel.radius * 1.05;
+          wheelDrive = clamp(wheelDrive, -cap, cap);
+          // Proportional trim above the target: spinning harder gets less
+          // torque, but never none, so the wheel keeps pulling instead of
+          // gripping, spinning and gripping again every few ticks.
+          const over = Math.abs(wheel.slipRatio) - targetSlip;
+          if (over > 0) wheelDrive *= clamp(1 - over * 6, 0.25, 1);
+        }
+        this.driveTorque += wheelDrive;
+      }
+
       let forces;
-      if (wheel.front) {
-        // The un-driven front axle is modelled as free rolling: this avoids the
-        // stiff wheel-spin limit cycle at speed. Braking is a slip target so the
+      if (share <= 0.01) {
+        // The un-driven axle is modelled as free rolling: this avoids the stiff
+        // wheel-spin limit cycle at speed. Braking is a slip target so the
         // combined-slip ellipse still takes lateral grip away under braking.
         wheel.omega = cvLong / wheel.radius;
         // The slip target has to follow the direction of travel: a fixed negative
@@ -519,23 +652,25 @@ export class Vehicle {
         const kappa = slipRatioFromWheelSpeed(wheel.omega, wheel.radius, cvLong);
         wheel.slipRatio = kappa;
         forces = tireForces({ kappa, alpha, fz: springForce, mu, peakAngle });
-        // ABS: back off the rear brakes when the wheel starts locking, the way
-        // a road-going sports car does. The handbrake bypasses it on purpose.
+        // ABS: back off the brakes when the wheel starts locking, the way a
+        // road-going sports car does. The handbrake bypasses it on purpose, and
+        // only the rear axle has one.
         const absFactor =
           serviceBrake > 0.15 && Math.abs(kappa) > 0.14 && Math.abs(cvLong) > 2 ? 0.3 : 1;
         const brakeTorque =
-          serviceBrake * this.spec.brakeTorque * absFactor + (input.handbrake ? 2200 : 0);
+          serviceBrake * this.spec.brakeTorque * absFactor +
+          (input.handbrake && !wheel.front ? 1800 : 0);
         this.integrateWheelSpin(
           wheel,
           dt,
-          driveTorquePerWheel,
+          wheelDrive,
           brakeTorque,
           cvLong,
           alpha,
           springForce,
           mu,
           peakAngle,
-          rearInertia,
+          wheel.front ? frontInertia : rearInertia,
         );
       }
 
@@ -619,6 +754,13 @@ export class Vehicle {
     // --- Upside-down recovery ----------------------------------------------
     const upDot = dot(up, vec3(0, 1, 0));
     this.flippedTimer = upDot < 0.25 ? this.flippedTimer + dt : 0;
+    // On its side or its roof the tires cannot hold anything up, so the shell
+    // takes the ground back. Upright, the wheels are the only contact.
+    const rolled = upDot < ROLLED_UP_DOT;
+    if (rolled !== this.rolled) {
+      this.rolled = rolled;
+      this.collider.setCollisionGroups(rolled ? CHASSIS_ROLLED : CHASSIS_UPRIGHT);
+    }
   }
 
   /**

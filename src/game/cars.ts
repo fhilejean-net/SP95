@@ -61,6 +61,9 @@ export const CARS: CarDef[] = [
       wheelbase: 2.749,
       track: 1.709,
       bodyHalf: { x: 1, y: 0.45, z: 2.2 },
+      // Haldex-style: mostly rear, but the front axle pulls too.
+      driveFront: 0.4,
+      tractionControl: 0.78,
     },
   },
   {
@@ -99,6 +102,8 @@ export const CARS: CarDef[] = [
       // node pivots: the RX-7's wheels are authored with an outboard pivot.
       track: 1.495,
       bodyHalf: { x: 0.9, y: 0.42, z: 2.05 },
+      driveFront: 0,
+      tractionControl: 0.45,
     },
   },
   {
@@ -135,6 +140,10 @@ export const CARS: CarDef[] = [
       wheelbase: 2.59,
       track: 1.735,
       bodyHalf: { x: 0.95, y: 0.5, z: 1.95 },
+      // A Rally2 car is four-wheel drive: sending all that torque to the back
+      // axle was what turned a launch into a burnout.
+      driveFront: 0.5,
+      tractionControl: 0.9,
     },
   },
 ];

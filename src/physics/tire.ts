@@ -22,7 +22,14 @@ export interface TireCurve {
 export const KAPPA_PEAK = 0.11;
 export const ALPHA_PEAK = 0.135;
 
-const COMBINED_CURVE: TireCurve = { B: 10, C: 1.5, E: 0.97 };
+/**
+ * B is the slip stiffness. At 10 the tire was effectively bolted to the road:
+ * a 1 % slip ratio already made 80 % of its peak force, so a wheel that turned
+ * a fraction slow dragged the car like a brake and the whole model felt like it
+ * ran on rails until it snapped. A real tire builds force over its whole slip
+ * range, so the peak here is reached near the normalized slip of 1.
+ */
+const COMBINED_CURVE: TireCurve = { B: 2, C: 1.5, E: 0 };
 
 /** Returns a force coefficient in [0, ~1], peaking at x = 1. */
 export function magicFormula(x: number, curve: TireCurve = COMBINED_CURVE): number {
@@ -103,10 +110,17 @@ export function tireForces(input: TireInput): TireOutput {
 
   const maxForce = loadSensitivity(mu, fz) * fz;
   const force = maxForce * magicFormula(rho);
+  // Share the force between the two axes. A plain sx/sy split gave the lateral
+  // direction no more than its share of the slip, so 30 % wheelspin took 70 %
+  // of the rear's cornering grip and the car turned a static-lock throttle
+  // input into a donut. A real tire keeps cornering while it spins; the
+  // lateral axis is widened to reflect that.
+  const lateral = sy * 1.4;
+  const share = Math.hypot(sx, lateral) || 1;
 
   return {
-    fx: (force * sx) / rho,
-    fy: (-force * sy) / rho,
+    fx: (force * sx) / share,
+    fy: (-force * lateral) / share,
     slip: rho,
     sx,
     sy,

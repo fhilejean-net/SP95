@@ -5,7 +5,7 @@ export interface Controls {
   handbrake: boolean;
 }
 
-type Action = 'reset' | 'pause' | 'mute' | 'help';
+type Action = 'reset' | 'pause' | 'mute' | 'help' | 'tcs' | 'wheelie';
 
 const DEADZONE = 0.09;
 
@@ -42,6 +42,8 @@ export class InputManager {
         if (e.code === 'Escape' || e.code === 'KeyP') this.pendingActions.add('pause');
         if (e.code === 'KeyM') this.pendingActions.add('mute');
         if (e.code === 'KeyH') this.pendingActions.add('help');
+        if (e.code === 'KeyT') this.pendingActions.add('tcs');
+        if (e.code === 'KeyE') this.pendingActions.add('wheelie');
       }
       this.keys.add(e.code);
     });

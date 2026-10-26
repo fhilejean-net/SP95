@@ -27,6 +27,17 @@ export class Hud {
   private driftPanel = el('drift-panel');
   private driftPoints = el('drift-points');
   private driftMult = el('drift-mult');
+  private driftWrap = el('drift-total-wrap');
+  private stuntWrap = el('stunt-total-wrap');
+  private stuntPanel = el('stunt-panel');
+  private stuntTotal = el('stunt-total');
+  private stuntPoints = el('stunt-points');
+  private stuntMult = el('stunt-mult');
+  private stuntLabel = el('stunt-label');
+  private stuntAngle = el('stunt-angle');
+  private tcsChip = el('tcs-chip');
+  private wheelieChip = el('wheelie-chip');
+  private hint = el('hint');
   private speedValue = el('speed-value');
   private gearValue = el('gear');
   private rpmFill = el('rpm-fill');
@@ -181,6 +192,53 @@ export class Hud {
     this.driftPanel.classList.toggle('active', active || pending > 10);
     this.driftPoints.textContent = String(Math.round(pending));
     this.driftMult.textContent = `×${multiplier}`;
+  }
+
+  /**
+   * Swaps the whole scoring language: a car banks drifts, a bike banks
+   * wheelies, and the two panels never show at once.
+   */
+  setVehicle(kind: 'car' | 'bike'): void {
+    const bike = kind === 'bike';
+    this.driftWrap.classList.toggle('hidden', bike);
+    this.stuntWrap.classList.toggle('hidden', !bike);
+    this.driftPanel.classList.toggle('hidden', bike);
+    this.stuntPanel.classList.toggle('hidden', !bike);
+    this.tcsChip.classList.toggle('hidden', bike);
+    this.wheelieChip.classList.toggle('hidden', !bike);
+    this.hint.textContent = bike
+      ? 'E wheelie · frein pour reposer l’avant · ZQSD conduire · Souris caméra · Échap pause'
+      : 'ZQSD conduire · Espace frein à main · T antipatinage · Souris caméra · Échap pause';
+    // On a bike the handbrake button has nothing to pull: it becomes the
+    // one-touch wheelie, right where the thumb already is.
+    const touch = document.getElementById('touch-handbrake');
+    if (touch) touch.textContent = bike ? 'WHEELIE' : 'DRIFT';
+  }
+
+  updateStunt(
+    pending: number,
+    total: number,
+    multiplier: number,
+    active: boolean,
+    deep: boolean,
+    angleDeg: number,
+  ): void {
+    this.stuntTotal.textContent = String(Math.round(total));
+    this.stuntPanel.classList.toggle('active', active || pending > 10);
+    this.stuntPoints.textContent = String(Math.round(pending));
+    this.stuntMult.textContent = `×${multiplier}`;
+    this.stuntLabel.textContent = deep ? 'BAVETTE' : 'WHEELIE';
+    this.stuntLabel.classList.toggle('bavette', deep);
+    this.stuntAngle.textContent = `${Math.round(angleDeg)}°`;
+  }
+
+  /** The assist is on unless the driver turned it off: the chip shows both. */
+  setTcs(enabled: boolean): void {
+    this.tcsChip.classList.toggle('off', !enabled);
+    this.tcsChip.classList.toggle('on', enabled);
+    this.tcsChip.title = enabled
+      ? 'Antipatinage actif — T ou le menu pause pour le couper'
+      : 'Antipatinage coupé — T pour le remettre';
   }
 
   updateRace(snapshot: RaceSnapshot | null): void {

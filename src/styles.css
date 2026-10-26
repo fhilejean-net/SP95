@@ -311,7 +311,8 @@ button.primary {
   color: var(--accent);
 }
 
-#drift-total-wrap {
+#drift-total-wrap,
+#stunt-total-wrap {
   margin-left: auto;
   padding: 9px 14px;
   border-radius: 999px;
@@ -326,7 +327,12 @@ button.primary {
   color: var(--accent);
 }
 
-#drift-panel {
+#stunt-total-wrap {
+  color: #ff8b3d;
+}
+
+#drift-panel,
+#stunt-panel {
   position: absolute;
   left: 50%;
   bottom: 128px;
@@ -336,8 +342,30 @@ button.primary {
   transition: opacity 0.2s ease;
 }
 
-#drift-panel.active {
+#drift-panel.active,
+#stunt-panel.active {
   opacity: 1;
+}
+
+#stunt-label {
+  font-size: 10px;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: #ff8b3d;
+  margin-top: 2px;
+}
+
+#stunt-label.bavette {
+  color: #fff;
+  text-shadow: 0 0 18px rgba(255, 140, 40, 0.9);
+}
+
+#stunt-angle {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
 }
 
 .drift-main {
@@ -468,6 +496,64 @@ button.primary {
   text-transform: uppercase;
 }
 
+#tcs-chip {
+  display: inline-block;
+  margin-top: 9px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(242, 163, 60, 0.45);
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  opacity: 0.9;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+
+#tcs-chip:hover {
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+#tcs-chip.off {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--muted);
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+#wheelie-chip {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 138, 61, 0.55);
+  background: rgba(255, 120, 35, 0.12);
+  color: #ff9a55;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s, transform 0.08s, border-color 0.15s;
+}
+
+#wheelie-chip:hover {
+  border-color: #ff9a55;
+  background: rgba(255, 120, 35, 0.2);
+}
+
+#wheelie-chip:active {
+  transform: scale(0.97);
+  background: rgba(255, 120, 35, 0.32);
+}
+
 #rpm-readout.redline #rpm-value {
   color: #ff6a4d;
 }
@@ -535,7 +621,8 @@ body.touch #hint {
   display: none;
 }
 
-body.touch #drift-panel {
+body.touch #drift-panel,
+body.touch #stunt-panel {
   bottom: 190px;
 }
 
@@ -625,7 +712,8 @@ body.touch #drift-panel {
     right: 14px;
   }
 
-  #drift-total-wrap {
+  #drift-total-wrap,
+  #stunt-total-wrap {
     display: none;
   }
 
@@ -1038,5 +1126,40 @@ body.touch #drift-panel {
 
   .garage-stats {
     gap: 12px;
+  }
+}
+
+/* Short viewports: eight menu entries plus the control legend used to push the
+   legend below the fold at 800 px. Tighten the card rather than hide anything. */
+@media (max-height: 880px) and (min-width: 640px) {
+  .menu-card {
+    padding: 22px 30px;
+  }
+
+  .logo {
+    font-size: clamp(50px, 9vw, 78px);
+  }
+
+  .tagline {
+    margin: 10px 0 16px;
+    font-size: 13px;
+  }
+
+  .menu-actions {
+    gap: 7px;
+  }
+
+  .menu-actions button {
+    padding: 12px 16px;
+    font-size: 13px;
+  }
+
+  .menu-best {
+    margin: 14px 0 2px;
+  }
+
+  .controls-grid {
+    margin-top: 14px;
+    padding-top: 14px;
   }
 }

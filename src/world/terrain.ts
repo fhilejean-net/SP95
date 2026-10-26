@@ -14,6 +14,10 @@ import {
   heightAt,
 } from './layout.ts';
 import type { EnvironmentMaterials } from '../render/materials.ts';
+import { GROUP_GROUND } from '../physics/vehicle.ts';
+
+/** Static ground: the tires cast into it, the chassis shell ignores it. */
+const GROUND_GROUP = (GROUP_GROUND << 16) | 0xffff;
 
 /**
  * The terrain is flattened to just under each road's own level, so this lift is
@@ -43,10 +47,14 @@ export function buildTerrain(scene: THREE.Scene, world: RAPIER.World, mats: Envi
   const indices: number[] = [];
   const half = size / 2;
 
+  // These are multipliers on the photo texture, not the colour of the ground:
+  // the old olive values were dark enough to swallow every blade of grass in
+  // the albedo, so the landscape read as flat plastic. Near-white tints keep
+  // the photograph visible and only shift its hue (dry grass, bare rock).
   const color = new THREE.Color();
-  const grass = new THREE.Color(0x7f8c5c);
-  const dry = new THREE.Color(0x918b60);
-  const rock = new THREE.Color(0x807b73);
+  const grass = new THREE.Color(0xd9e0bc);
+  const dry = new THREE.Color(0xe2d2a6);
+  const rock = new THREE.Color(0xa8a49c);
 
   for (let iz = 0; iz < count; iz++) {
     for (let ix = 0; ix < count; ix++) {
@@ -64,9 +72,9 @@ export function buildTerrain(scene: THREE.Scene, world: RAPIER.World, mats: Envi
       const slope = Math.abs(heightAt(x + step, z) - y) + Math.abs(heightAt(x, z + step) - y);
       const t = Math.min(1, Math.max(0, (y - 12) / 45));
       const s = Math.min(1, slope / 2.2);
-      color.copy(grass).lerp(dry, Math.min(1, t * 0.9 + s * 0.4));
-      color.lerp(rock, s * 0.75);
-      const noise = 0.94 + 0.12 * Math.sin(x * 0.37) * Math.cos(z * 0.31);
+      color.copy(grass).lerp(dry, Math.min(1, t * 0.7 + s * 0.25));
+      color.lerp(rock, s * 0.55);
+      const noise = 0.96 + 0.08 * Math.sin(x * 0.37) * Math.cos(z * 0.31);
       colors[i * 3] = color.r * noise;
       colors[i * 3 + 1] = color.g * noise;
       colors[i * 3 + 2] = color.b * noise;
@@ -100,7 +108,8 @@ export function buildTerrain(scene: THREE.Scene, world: RAPIER.World, mats: Envi
   world.createCollider(
     RAPIER.ColliderDesc.trimesh(new Float32Array(positions), new Uint32Array(indices))
       .setFriction(0.95)
-      .setRestitution(0.02),
+      .setRestitution(0.02)
+      .setCollisionGroups(GROUND_GROUP),
     body,
   );
 
@@ -144,9 +153,15 @@ function ribbonGeometry(
   const closed = options.closed ?? false;
 
   for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n];
-    const next = points[(i + 1) % n];
-    const tangent = new THREE.Vector3().subVectors(next, prev).normalize();
+    // Only a closed ribbon wraps around. Wrapping an open one took the tangent
+    // of its last point from the first, which mirrored the right vector and
+    // twisted the final quad into a bow-tie: a culled triangle, and a black
+    // sliver of terrain showing through at every dead end.
+    const prev = closed ? points[(i - 1 + n) % n] : points[Math.max(0, i - 1)];
+    const next = closed ? points[(i + 1) % n] : points[Math.min(n - 1, i + 1)];
+    const tangent = new THREE.Vector3().subVectors(next, prev);
+    if (tangent.lengthSq() < 1e-9) tangent.set(0, 0, 1);
+    tangent.normalize();
     tangents.push(tangent);
   }
 
@@ -191,6 +206,9 @@ export interface RoadEnd {
   z: number;
   y: number;
   radius: number;
+  /** Unit vector pointing out of the street, past the turning circle. */
+  dx: number;
+  dz: number;
 }
 
 /**
@@ -201,7 +219,20 @@ export function roadEnds(): RoadEnd[] {
   const ends: RoadEnd[] = [];
   for (const road of SAMPLED_ROADS) {
     if (road.def.closed || road.def.surface === 'dirt') continue;
-    for (const p of [road.points[0], road.points[road.points.length - 1]]) {
+    const first = road.points[0];
+    const second = road.points[1];
+    const last = road.points[road.points.length - 1];
+    const beforeLast = road.points[road.points.length - 2];
+    // `out` is measured from the street towards its end, so houses can line
+    // the run-up to the turning circle.
+    const candidates = [
+      { p: first, out: { x: first.x - second.x, z: first.z - second.z } },
+      { p: last, out: { x: last.x - beforeLast.x, z: last.z - beforeLast.z } },
+    ];
+    for (const { p, out } of candidates) {
+      const length = Math.hypot(out.x, out.z) || 1;
+      const dx = out.x / length;
+      const dz = out.z / length;
       let junction = false;
       for (const other of SAMPLED_ROADS) {
         if (other === road) continue;
@@ -215,7 +246,7 @@ export function roadEnds(): RoadEnd[] {
         if (junction) break;
       }
       if (junction) continue;
-      ends.push({ x: p.x, z: p.z, y: p.y, radius: road.def.width * 0.62 + 3 });
+      ends.push({ x: p.x, z: p.z, y: p.y, radius: road.def.width * 0.62 + 3, dx, dz });
     }
   }
   return ends;
@@ -387,13 +418,15 @@ export function buildArenaPads(world: RAPIER.World): void {
   world.createCollider(
     RAPIER.ColliderDesc.cylinder(HALF, SUMMIT.radius)
       .setTranslation(SUMMIT.cx, SUMMIT.y + 0.04 - HALF, SUMMIT.cz)
-      .setFriction(0.98),
+      .setFriction(0.98)
+      .setCollisionGroups(GROUND_GROUP),
     body,
   );
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(DRIFT_PAD.halfX, HALF, DRIFT_PAD.halfZ)
       .setTranslation(DRIFT_PAD.cx, DRIFT_PAD.y + 0.022 - HALF, DRIFT_PAD.cz)
-      .setFriction(0.98),
+      .setFriction(0.98)
+      .setCollisionGroups(GROUND_GROUP),
     body,
   );
 }

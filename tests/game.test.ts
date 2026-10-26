@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
 import { DriftScore } from '../src/game/drift.ts';
+import { StuntScore } from '../src/game/stunt.ts';
 import { Race } from '../src/game/race.ts';
 
 test('drift score grows with speed and slip, then banks', () => {
@@ -37,6 +38,42 @@ test('drift score ignores slow driving and loses the combo on a crash', () => {
   assert.ok(crash.lost);
   assert.equal(drift.pending, 0);
   assert.equal(drift.total, 0);
+});
+
+test('wheelies bank points, and a bavette pays a bonus', () => {
+  const stunt = new StuntScore();
+  let banked = 0;
+  for (let i = 0; i < 180; i++) {
+    const event = stunt.update(1 / 60, 1.05, 22, true, false);
+    banked += event.banked;
+  }
+  assert.ok(stunt.pending > 250, `pending ${stunt.pending.toFixed(0)}`);
+  assert.ok(stunt.deep, '57° should count as a bavette');
+  assert.ok(stunt.multiplier > 1, `multiplier ${stunt.multiplier}`);
+  assert.ok(stunt.active);
+
+  for (let i = 0; i < 60; i++) {
+    const event = stunt.update(1 / 60, 0.02, 22, true, false);
+    banked += event.banked;
+  }
+  assert.ok(banked > 250, `banked ${banked}`);
+  assert.equal(stunt.pending, 0);
+  assert.equal(stunt.total, banked);
+  assert.equal(stunt.multiplier, 1);
+});
+
+test('a crash loses the wheelie, and slow riding scores nothing', () => {
+  const stunt = new StuntScore();
+  for (let i = 0; i < 150; i++) stunt.update(1 / 60, 0.8, 18, true, false);
+  assert.ok(stunt.pending > 100, `pending ${stunt.pending.toFixed(0)}`);
+  const crash = stunt.update(1 / 60, 0.8, 18, true, true);
+  assert.ok(crash.lost);
+  assert.equal(stunt.pending, 0);
+  assert.equal(stunt.total, 0);
+
+  stunt.reset();
+  for (let i = 0; i < 120; i++) stunt.update(1 / 60, 0.5, 1.5, true, false);
+  assert.equal(stunt.pending, 0, 'a walking-pace wheelie should not score');
 });
 
 function makeCheckpoints(): THREE.Vector3[] {

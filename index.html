@@ -25,13 +25,14 @@
       <div class="menu-card">
         <p class="eyebrow">Simulation de conduite</p>
         <h1 class="logo">SP95</h1>
-        <p class="tagline">Aventador · RX-7 · i20 Rally2 — routes ouvertes</p>
+        <p class="tagline">Aventador · RX-7 · i20 Rally2 · Supermotard — routes ouvertes</p>
         <div class="menu-actions">
           <button id="btn-free" class="primary">Conduite libre</button>
           <button id="btn-race">Course · 2 tours</button>
           <button id="btn-col">Col · route de montagne</button>
           <button id="btn-rally">Rallye · piste en terre</button>
           <button id="btn-sommet">Sommet · aire de drift</button>
+          <button id="btn-moto">Moto · supermotard stunt</button>
           <button id="btn-garage">Atelier · préparation</button>
           <button id="btn-sound">Son · mixage</button>
         </div>
@@ -40,6 +41,8 @@
           <span>ZQSD / Flèches</span><span>Conduire</span>
           <span>Espace</span><span>Frein à main</span>
           <span>Souris (glisser)</span><span>Caméra</span>
+          <span>T</span><span>Antipatinage on / off</span>
+          <span>E</span><span>Wheelie (moto)</span>
           <span>R</span><span>Réapparaître</span>
           <span>M</span><span>Couper le son</span>
           <span>Échap</span><span>Pause</span>
@@ -60,6 +63,10 @@
           <span class="label">Score drift</span>
           <span id="drift-total">0</span>
         </div>
+        <div id="stunt-total-wrap" class="hidden">
+          <span class="label">Score stunt</span>
+          <span id="stunt-total">0</span>
+        </div>
       </div>
 
       <div id="drift-panel">
@@ -68,6 +75,15 @@
           <span id="drift-mult">×1</span>
         </div>
         <div id="drift-label">DÉRAPAGE</div>
+      </div>
+
+      <div id="stunt-panel" class="hidden">
+        <div class="drift-main">
+          <span id="stunt-points">0</span>
+          <span id="stunt-mult">×1</span>
+        </div>
+        <div id="stunt-label">WHEELIE</div>
+        <div id="stunt-angle">0°</div>
       </div>
 
       <div id="speedo">
@@ -84,12 +100,14 @@
           <span id="rpm-unit">tr/min</span>
           <span id="rpm-max">/ 7 300</span>
         </div>
+        <button id="tcs-chip" class="on" type="button">TCS</button>
+        <button id="wheelie-chip" class="hidden" type="button">WHEELIE</button>
       </div>
 
       <canvas id="minimap" width="190" height="190"></canvas>
 
       <div id="message"></div>
-      <div id="hint">ZQSD conduire · Espace frein à main · Souris caméra · Échap menu</div>
+      <div id="hint">ZQSD conduire · Espace frein à main · T antipatinage · Souris caméra · Échap pause</div>
 
       <div id="touch-controls">
         <div id="touch-steer"><div id="touch-steer-knob"></div></div>
@@ -107,6 +125,8 @@
         <h2 class="logo small">SP95</h2>
         <div class="menu-actions">
           <button id="btn-resume" class="primary">Reprendre</button>
+          <button id="btn-pause-tcs">Antipatinage · Actif</button>
+          <button id="btn-pause-moto">Moto · supermotard stunt</button>
           <button id="btn-pause-free">Conduite libre</button>
           <button id="btn-pause-race">Course · 2 tours</button>
           <button id="btn-pause-col">Col · route de montagne</button>

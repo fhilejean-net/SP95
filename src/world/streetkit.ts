@@ -13,6 +13,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { ROADS, SAMPLED_ROADS, heightAt, type RoadDef, type SampledRoad } from './layout.ts';
+import type { EnvironmentMaterials } from '../render/materials.ts';
 
 // BASE_URL keeps the kit resolvable both at the dev root and under /SP95/ on
 // GitHub Pages.
@@ -539,6 +540,7 @@ async function loadTemplate(loader: GLTFLoader, model: KitModel): Promise<Templa
 export async function buildStreetKit(
   scene: THREE.Scene,
   world: RAPIER.World,
+  mats: EnvironmentMaterials,
 ): Promise<StreetKitSummary> {
   const loader = new GLTFLoader();
   const templates = new Map<KitModel, Template>();
@@ -582,6 +584,41 @@ export async function buildStreetKit(
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
     scene.add(mesh);
+  }
+
+  // --- Lamp heads ---------------------------------------------------------
+  // The kit's lamps are all post: give each one a lit head where its arm ends,
+  // so the streets have a warm line of light instead of bare poles.
+  const heads: { x: number; y: number; z: number }[] = [];
+  for (const item of items) {
+    if (item.model !== 'light-square' && item.model !== 'light-curved') continue;
+    // Head offset in model units: the arm runs along local -Z.
+    const headY = item.model === 'light-square' ? 0.57 : 0.635;
+    const headZ = item.model === 'light-square' ? -0.19 : -0.185;
+    heads.push({
+      x: item.x + Math.sin(item.yaw) * headZ * item.sz,
+      y: item.y + headY * item.sy,
+      z: item.z + Math.cos(item.yaw) * headZ * item.sz,
+    });
+  }
+  if (heads.length > 0) {
+    const glow = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(0.28, 8, 6),
+      mats.lampGlow,
+      heads.length,
+    );
+    glow.name = 'streetkit-lamp-heads';
+    for (let i = 0; i < heads.length; i++) {
+      const head = heads[i];
+      position.set(head.x, head.y, head.z);
+      quaternion.identity();
+      scale.set(1, 1, 1);
+      matrix.compose(position, quaternion, scale);
+      glow.setMatrixAt(i, matrix);
+    }
+    glow.instanceMatrix.needsUpdate = true;
+    glow.computeBoundingSphere();
+    scene.add(glow);
   }
 
   let colliders = 0;

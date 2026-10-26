@@ -136,10 +136,11 @@ const SUSPENSION = [
 ];
 
 const TIRES = [
-  { muFront: 1.24, muRear: 1.2, peakSlipAngle: 0.135, radius: 0.34 },
-  { muFront: 1.5, muRear: 1.45, peakSlipAngle: 0.12, radius: 0.335 },
-  { muFront: 1.3, muRear: 1.05, peakSlipAngle: 0.19, radius: 0.335 },
-  { muFront: 1.05, muRear: 1.02, peakSlipAngle: 0.16, radius: 0.38 },
+  { muFront: 1.24, muRear: 1.2, peakSlipAngle: 0.135, radius: 0.34, looseGrip: 1 },
+  { muFront: 1.5, muRear: 1.45, peakSlipAngle: 0.12, radius: 0.335, looseGrip: 0.92 },
+  { muFront: 1.3, muRear: 1.05, peakSlipAngle: 0.19, radius: 0.335, looseGrip: 1 },
+  // Tall sidewalls, open tread: the only set that actually gains grip on dirt.
+  { muFront: 1.18, muRear: 1.14, peakSlipAngle: 0.2, radius: 0.38, looseGrip: 1.45 },
 ];
 
 const STEERING = [
@@ -185,6 +186,7 @@ export function resolveSpec(setup: Setup, base: VehicleSpec = STOCK_SPEC): Vehic
     muFront: base.muFront * (tires.muFront / grip.muFront),
     muRear: base.muRear * (tires.muRear / grip.muRear),
     peakSlipAngle: base.peakSlipAngle * (tires.peakSlipAngle / grip.peakSlipAngle),
+    looseGrip: tires.looseGrip,
     maxSteer: base.maxSteer * (steering.maxSteer / lock.maxSteer),
     steerRate: base.steerRate * (steering.steerRate / lock.steerRate),
     brakeTorque: base.brakeTorque * (mass / base.mass),

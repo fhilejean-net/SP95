@@ -43,6 +43,7 @@ export class ChaseCamera {
     zoom: number,
     terrainHeight: (x: number, z: number) => number,
     clearance?: ClearanceProbe,
+    vehicle: 'car' | 'bike' = 'car',
   ): void {
     if (!this.initialized) {
       this.snap(position, forward, terrainHeight(position.x, position.z));
@@ -51,8 +52,11 @@ export class ChaseCamera {
 
     const yaw = Math.atan2(-forward.x, -forward.z) + orbitYaw;
     const behind = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
-    const distance = 6.2 + Math.min(2.6, speed * 0.035) + zoom;
-    const height = 1.85 + Math.min(1.1, speed * 0.012) + orbitPitch * 4.5;
+    // A bike is smaller and its rider's head sits where a car's roof would: the
+    // car framing left it looking like a toy in the middle of the road.
+    const bike = vehicle === 'bike';
+    const distance = (bike ? 4.3 : 6.2) + Math.min(bike ? 1.3 : 2.6, speed * 0.035) + zoom;
+    const height = (bike ? 1.35 : 1.85) + Math.min(1.1, speed * 0.012) + orbitPitch * 4.5;
 
     this.desired.copy(position).addScaledVector(behind, distance);
     this.desired.y = position.y + height;
@@ -77,9 +81,9 @@ export class ChaseCamera {
       }
     }
 
-    const lookAhead = 6 + Math.min(12, speed * 0.16);
+    const lookAhead = (bike ? 7 : 6) + Math.min(12, speed * 0.16);
     this.lookTarget.copy(position).addScaledVector(forward, lookAhead);
-    this.lookTarget.y = position.y + 1.05;
+    this.lookTarget.y = position.y + (bike ? 0.85 : 1.05);
     const lookAlpha = 1 - Math.exp(-dt * 11);
     this.look.lerp(this.lookTarget, lookAlpha);
 

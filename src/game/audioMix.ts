@@ -48,7 +48,7 @@ export const DEFAULT_MIX: SoundMix = {
   engine: 0.95,
   intake: 0.6,
   exhaust: 0.8,
-  turbo: 0.45,
+  turbo: 0.4,
   tyres: 0.5,
   gravel: 0.55,
   wind: 0.45,

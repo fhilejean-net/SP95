@@ -46,25 +46,32 @@ export function createAsphaltTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-export function createGrassTexture(): THREE.CanvasTexture {
-  const { canvas, ctx } = makeCanvas(256, 256);
-  const rand = seededRandom(19);
-  ctx.fillStyle = '#6b7a4d';
-  ctx.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 12000; i++) {
-    const r = 74 + rand() * 40;
-    const g = 88 + rand() * 42;
-    const b = 52 + rand() * 30;
-    ctx.fillStyle = `rgba(${r},${g},${b},${0.25 + rand() * 0.5})`;
-    const x = rand() * 256;
-    const y = rand() * 256;
-    ctx.fillRect(x, y, 1 + rand() * 3, 1 + rand() * 2);
-  }
-  const tex = new THREE.CanvasTexture(canvas);
+/** A photo-scanned ground material, tiled over the whole landscape. */
+function loadGroundTexture(
+  path: string,
+  repeat: number,
+  srgb: boolean,
+): THREE.Texture {
+  const base = import.meta.env.BASE_URL ?? '/';
+  const tex = new THREE.TextureLoader().load(base + path);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   tex.anisotropy = 8;
+  tex.repeat.set(repeat, repeat);
   return tex;
+}
+
+/** Grass, with the normal and roughness maps that came with it. */
+export function createGrassTextures(repeat: number): {
+  map: THREE.Texture;
+  normalMap: THREE.Texture;
+  roughnessMap: THREE.Texture;
+} {
+  return {
+    map: loadGroundTexture('textures/grass/albedo.jpg', repeat, true),
+    normalMap: loadGroundTexture('textures/grass/normal.jpg', repeat, false),
+    roughnessMap: loadGroundTexture('textures/grass/roughness.jpg', repeat, false),
+  };
 }
 
 export function createConcreteTexture(): THREE.CanvasTexture {
@@ -118,15 +125,29 @@ export function createGravelTexture(): THREE.CanvasTexture {
 
 export interface FacadeTexture {
   map: THREE.CanvasTexture;
+  /** Same layout, black except the windows that are lit. */
+  emissiveMap: THREE.CanvasTexture;
   repeatX: number;
   repeatY: number;
 }
 
-/** Window-grid facade. `floors` rows of windows, warm stone or brick wall. */
-export function createFacadeTexture(wall: string, floors: number, cols: number): FacadeTexture {
+/**
+ * Window-grid facade. `floors` rows of windows, warm stone or brick wall.
+ * A share of the panes burn warm: that is the only "lighting" the buildings
+ * need, and it is what makes the streets read as inhabited from a distance.
+ */
+export function createFacadeTexture(
+  wall: string,
+  floors: number,
+  cols: number,
+  litRatio = 0.26,
+): FacadeTexture {
   const W = 256;
   const H = 256;
   const { canvas, ctx } = makeCanvas(W, H);
+  const glow = makeCanvas(W, H);
+  glow.ctx.fillStyle = '#000000';
+  glow.ctx.fillRect(0, 0, W, H);
   const rand = seededRandom(wall.charCodeAt(1) * 97 + floors * 13);
   ctx.fillStyle = wall;
   ctx.fillRect(0, 0, W, H);
@@ -146,8 +167,15 @@ export function createFacadeTexture(wall: string, floors: number, cols: number):
       const shade = 30 + rand() * 40;
       ctx.fillStyle = `rgb(${shade + 8},${shade + 16},${shade + 26})`;
       ctx.fillRect(x, y, winW, winH);
-      // A few lit / reflective panes.
-      if (rand() > 0.72) {
+      const lit = rand() < litRatio;
+      if (lit) {
+        // Warm interior, brighter at the top of the pane.
+        const warm = 0.55 + rand() * 0.35;
+        ctx.fillStyle = `rgba(255,${Math.round(180 + rand() * 40)},${Math.round(110 + rand() * 50)},${warm})`;
+        ctx.fillRect(x, y, winW, winH);
+        glow.ctx.fillStyle = `rgba(255,${Math.round(178 + rand() * 50)},${Math.round(96 + rand() * 60)},${warm})`;
+        glow.ctx.fillRect(x, y, winW, winH);
+      } else if (rand() > 0.72) {
         ctx.fillStyle = 'rgba(210,225,240,0.35)';
         ctx.fillRect(x + 2, y + 2, winW * 0.45, winH - 4);
       }
@@ -162,7 +190,10 @@ export function createFacadeTexture(wall: string, floors: number, cols: number):
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = 4;
-  return { map: tex, repeatX: 1, repeatY: 1 };
+  const emissive = new THREE.CanvasTexture(glow.canvas);
+  emissive.colorSpace = THREE.SRGBColorSpace;
+  emissive.wrapS = emissive.wrapT = THREE.RepeatWrapping;
+  return { map: tex, emissiveMap: emissive, repeatX: 1, repeatY: 1 };
 }
 
 export interface EnvironmentMaterials {
@@ -177,7 +208,12 @@ export interface EnvironmentMaterials {
   buildingLow: THREE.MeshStandardMaterial;
   buildingMid: THREE.MeshStandardMaterial;
   buildingTall: THREE.MeshStandardMaterial;
+  house: THREE.MeshStandardMaterial;
   roof: THREE.MeshStandardMaterial;
+  roofTile: THREE.MeshStandardMaterial;
+  shop: THREE.MeshStandardMaterial;
+  sign: THREE.MeshStandardMaterial;
+  lampGlow: THREE.MeshBasicMaterial;
   foliage: THREE.MeshStandardMaterial;
   trunk: THREE.MeshStandardMaterial;
   barrier: THREE.MeshStandardMaterial;
@@ -190,10 +226,9 @@ export interface EnvironmentMaterials {
 export function createEnvironmentMaterials(): EnvironmentMaterials {
   const asphalt = createAsphaltTexture();
   asphalt.repeat.set(1, 1);
-  const grass = createGrassTexture();
-  // ~5 m per tile: much finer than the old 14 m, which smeared into a wash
-  // right under the car.
-  grass.repeat.set(380, 380);
+  // ~6 m per tile: fine enough to read as grass under the car, big enough that
+  // the blades still resolve a few dozen metres away.
+  const grass = createGrassTextures(320);
   const gravelTex = createGravelTexture();
   gravelTex.repeat.set(1, 1);
   const concreteTex = createConcreteTexture();
@@ -202,6 +237,8 @@ export function createEnvironmentMaterials(): EnvironmentMaterials {
   const low = createFacadeTexture('#b9a58c', 4, 3);
   const mid = createFacadeTexture('#a8897a', 7, 4);
   const tall = createFacadeTexture('#8d99a6', 12, 5);
+  const house = createFacadeTexture('#c8b49b', 2, 2, 0.34);
+  const shop = createFacadeTexture('#b0a394', 1, 3, 0.55);
 
   const checkerCanvas = makeCanvas(128, 32);
   for (let x = 0; x < 8; x++) {
@@ -271,15 +308,60 @@ export function createEnvironmentMaterials(): EnvironmentMaterials {
       polygonOffsetUnits: -3,
     }),
     terrain: new THREE.MeshStandardMaterial({
-      map: grass,
+      map: grass.map,
+      normalMap: grass.normalMap,
+      normalScale: new THREE.Vector2(0.7, 0.7),
+      roughnessMap: grass.roughnessMap,
       vertexColors: true,
       roughness: 0.97,
       metalness: 0,
     }),
-    buildingLow: new THREE.MeshStandardMaterial({ map: low.map, roughness: 0.82, vertexColors: false }),
-    buildingMid: new THREE.MeshStandardMaterial({ map: mid.map, roughness: 0.8 }),
-    buildingTall: new THREE.MeshStandardMaterial({ map: tall.map, roughness: 0.55, metalness: 0.25 }),
+    buildingLow: new THREE.MeshStandardMaterial({
+      map: low.map,
+      emissive: 0xffffff,
+      emissiveMap: low.emissiveMap,
+      emissiveIntensity: 0.5,
+      roughness: 0.82,
+      vertexColors: false,
+    }),
+    buildingMid: new THREE.MeshStandardMaterial({
+      map: mid.map,
+      emissive: 0xffffff,
+      emissiveMap: mid.emissiveMap,
+      emissiveIntensity: 0.5,
+      roughness: 0.8,
+    }),
+    buildingTall: new THREE.MeshStandardMaterial({
+      map: tall.map,
+      emissive: 0xffffff,
+      emissiveMap: tall.emissiveMap,
+      emissiveIntensity: 0.45,
+      roughness: 0.55,
+      metalness: 0.25,
+    }),
+    house: new THREE.MeshStandardMaterial({
+      map: house.map,
+      emissive: 0xffffff,
+      emissiveMap: house.emissiveMap,
+      emissiveIntensity: 0.65,
+      roughness: 0.9,
+    }),
+    shop: new THREE.MeshStandardMaterial({
+      map: shop.map,
+      emissive: 0xffffff,
+      emissiveMap: shop.emissiveMap,
+      emissiveIntensity: 0.8,
+      roughness: 0.8,
+    }),
+    sign: new THREE.MeshStandardMaterial({
+      color: 0x241012,
+      emissive: 0xff7a3c,
+      emissiveIntensity: 1.1,
+      roughness: 0.5,
+    }),
+    lampGlow: new THREE.MeshBasicMaterial({ color: 0xffe2b0 }),
     roof: new THREE.MeshStandardMaterial({ color: 0x4a4a4e, roughness: 0.95 }),
+    roofTile: new THREE.MeshStandardMaterial({ color: 0x8c4a37, roughness: 0.92, flatShading: true }),
     foliage: new THREE.MeshStandardMaterial({ color: 0x3f5a34, roughness: 1, flatShading: true }),
     trunk: new THREE.MeshStandardMaterial({ color: 0x4b3a2a, roughness: 1 }),
     barrier: new THREE.MeshStandardMaterial({ color: 0xcfd2d6, roughness: 0.6, metalness: 0.4 }),

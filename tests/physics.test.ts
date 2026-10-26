@@ -15,7 +15,15 @@ import {
 } from '../src/world/layout.ts';
 import { roadEnds } from '../src/world/terrain.ts';
 import { Drivetrain, torqueAtRpm } from '../src/physics/drivetrain.ts';
-import { Vehicle, NEUTRAL_INPUT, STOCK_SPEC, type VehicleInput } from '../src/physics/vehicle.ts';
+import {
+  GROUP_GROUND,
+  Vehicle,
+  NEUTRAL_INPUT,
+  STOCK_SPEC,
+  type VehicleInput,
+  type VehicleSpec,
+} from '../src/physics/vehicle.ts';
+import { CARS } from '../src/game/cars.ts';
 import { DEFAULT_SETUP, resolveSpec, type Setup } from '../src/game/tuning.ts';
 
 const TICK = 1 / 120;
@@ -373,21 +381,21 @@ test('the car climbs a 15% gradient from a standstill', async () => {
   assert.ok(car.position.z < start.z - 15, 'car did not make progress up the hill');
 });
 
-test('a spinning rear axle keeps the gearbox in its gear, even sideways', () => {
+test('a spinning rear axle does not shift the box mid-slide', () => {
   const box = new Drivetrain();
-  // 25 m/s at the tire, chassis crawling at 2 m/s through a deep slide: the old
-  // logic saw "slower than 2.2 m/s" and dropped to first, pinning the limiter.
-  for (let i = 0; i < 120; i++) box.update(TICK, 25 / 0.34, 1, 0, 2);
-  assert.equal(box.gear, 2, 'the gearbox fell back to first mid-slide');
-  assert.ok(box.rpm < box.config.redlineRpm, 'engine pinned on the limiter in the wrong gear');
+  // A drift: the rear tires run at 25 m/s while the chassis is doing 15 m/s.
+  // Shifting on the wheel speed read that as a 90 km/h car and climbed to
+  // fourth, dropping the engine out of its torque and killing the slide.
+  for (let i = 0; i < 240; i++) box.update(TICK, 25 / 0.34, 1, 0, 15);
+  assert.equal(box.gear, 1, `the box climbed to gear ${box.gear} on wheelspin`);
+  assert.ok(box.rpm > 5000, `engine should be spinning with the wheels (${box.rpm.toFixed(0)} rpm)`);
 });
 
-test('the gearbox upshifts off the wheels, not off the chassis speed', () => {
+test('a spinning axle at a standstill does not shift the box', () => {
   const box = new Drivetrain();
-  // Wheels turning as if the car were doing 90 km/h while it is actually doing
-  // 15: still a legitimate upshift, and exactly what low-speed drifting needs.
-  for (let i = 0; i < 240; i++) box.update(TICK, 25 / 0.34, 1, 0, 4.2);
-  assert.ok(box.gear > 1, `still in first at ${box.rpm.toFixed(0)} rpm`);
+  // Wheels at 90 km/h, chassis at a standstill: no road speed, no upshift.
+  for (let i = 0; i < 240; i++) box.update(TICK, 25 / 0.34, 1, 0, 0, 0);
+  assert.equal(box.gear, 1, `the box climbed to gear ${box.gear} at a standstill`);
 });
 
 test('the rev limiter bounces instead of cutting torque to a crawl', () => {
@@ -545,4 +553,242 @@ test('a stationary burnout stays in first instead of climbing the box', () => {
   // not, so there is nothing to upshift for.
   for (let i = 0; i < 240; i++) box.update(TICK, 30 / 0.34, 1, 0, 0.1, 0.1);
   assert.equal(box.gear, 1, `gearbox climbed to ${box.gear} on the spot`);
+});
+
+test('the chassis no longer catches the ground over a crest at speed', async () => {
+  await RAPIER.init();
+  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  world.timestep = TICK;
+  // A road with a crest, laid out like the terrain: a triangle mesh in the
+  // ground collision group, so only the tires and a rolled car touch it.
+  const crest = (x: number) =>
+    x > -40 && x < 240 ? 0.42 * Math.max(0, Math.cos((x - 20) / 14)) ** 2 : 0;
+  const step = 1.5;
+  const cols = Math.ceil(420 / step);
+  const rows = 12;
+  const positions: number[] = [];
+  const indices: number[] = [];
+  for (let i = 0; i <= cols; i++) {
+    const x = -60 + i * step;
+    const y = crest(x);
+    for (let j = 0; j <= rows; j++) positions.push(x, y, -30 + j * 5);
+  }
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      const a = i * (rows + 1) + j;
+      const b = a + 1;
+      const c = a + rows + 1;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  world.createCollider(
+    RAPIER.ColliderDesc.trimesh(new Float32Array(positions), new Uint32Array(indices))
+      .setFriction(0.95)
+      .setCollisionGroups((GROUP_GROUND << 16) | 0xffff),
+    ground,
+  );
+
+  for (const def of CARS) {
+    const spec = resolveSpec({ ...DEFAULT_SETUP, suspension: 3, tires: 3 }, def.spec);
+    const car = new Vehicle(world, { x: -40, y: 0.9, z: 0, heading: -Math.PI / 2 }, spec);
+    simulate(world, car, 1, NEUTRAL_INPUT);
+    car.body.setLinvel({ x: 46, y: 0, z: 0 }, true);
+
+    let previous = car.telemetryState.speedKmh;
+    let worstDrop = 0;
+    let worstX = 0;
+    for (let i = 0; i < 120 * 5; i++) {
+      car.step(TICK, { throttle: 0, brake: i > 30 ? 1 : 0, steer: 0, handbrake: false }, world);
+      world.step();
+      const kmh = car.telemetryState.speedKmh;
+      if (previous - kmh > worstDrop) {
+        worstDrop = previous - kmh;
+        worstX = car.position.x;
+      }
+      previous = kmh;
+      assert.ok(Number.isFinite(car.position.x), `${def.id} went NaN on the crest`);
+    }
+    // Braking from 165 km/h sheds about 0.4 km/h per tick. A belly strike with
+    // friction used to take 87 km/h out in a single tick.
+    assert.ok(
+      worstDrop < 3,
+      `${def.id} lost ${worstDrop.toFixed(1)} km/h in one tick at x=${worstX.toFixed(0)}`,
+    );
+  }
+});
+
+test('an all-wheel-drive launch on gravel puts the power down', async () => {
+  const gravel = { kind: 'terre', grip: 0.62, peak: 1.3, rolling: 2.6, roughness: 0.72 };
+  const launch = async (spec: VehicleSpec) => {
+    const world = await makeWorld();
+    const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0, surfaceAt: () => gravel }, spec);
+    simulate(world, car, 1, NEUTRAL_INPUT);
+    let worstSlip = 0;
+    let spinning = 0;
+    for (let i = 0; i < 120 * 6; i++) {
+      car.step(TICK, { throttle: 1, brake: 0, steer: 0, handbrake: false }, world);
+      world.step();
+      for (const w of car.telemetryState.wheels) {
+        if (w.forceLong === 0 && !w.contact) continue;
+        worstSlip = Math.max(worstSlip, Math.abs(w.slipRatio));
+      }
+      if (car.telemetryState.wheels.some((w) => Math.abs(w.slipRatio) > 0.35)) spinning++;
+    }
+    return {
+      kmh: car.telemetryState.speedKmh,
+      worstSlip,
+      spinSeconds: spinning * TICK,
+    };
+  };
+
+  const i20 = CARS.find((c) => c.id === 'i20n')!;
+  const rally = resolveSpec({ ...DEFAULT_SETUP, suspension: 3, tires: 3 }, i20.spec);
+  const legacy = { ...rally, driveFront: 0, tractionControl: 0 };
+  const driven = await launch(rally);
+  const spinning = await launch(legacy);
+
+  // The rear-drive, no-assist rally car is the car that could not climb out of
+  // its own wheelspin at 5 km/h.
+  assert.ok(spinning.worstSlip > 1.5, `the old setup only reached ${spinning.worstSlip.toFixed(1)} slip`);
+  assert.ok(driven.worstSlip < 0.45, `driven wheels still slipping at ${driven.worstSlip.toFixed(2)}`);
+  assert.ok(driven.spinSeconds < 0.6, `spinning for ${driven.spinSeconds.toFixed(1)}s`);
+  assert.ok(driven.kmh > 55, `only ${driven.kmh.toFixed(0)} km/h after 6 s on gravel`);
+});
+
+test('the i20 N pulls away from a standstill without lighting up the tires', async () => {
+  const world = await makeWorld();
+  const i20 = CARS.find((c) => c.id === 'i20n')!;
+  const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 }, i20.spec);
+  simulate(world, car, 1, NEUTRAL_INPUT);
+  for (let i = 0; i < 120 * 4; i++) {
+    car.step(TICK, { throttle: 1, brake: 0, steer: 0, handbrake: false }, world);
+    world.step();
+  }
+  assert.ok(car.telemetryState.speedKmh > 65, `only ${car.telemetryState.speedKmh.toFixed(0)} km/h after 4 s`);
+  for (const w of car.telemetryState.wheels) {
+    assert.ok(Math.abs(w.slipRatio) < 0.35, `${w.name} slipping at ${w.slipRatio.toFixed(2)} on asphalt`);
+  }
+});
+
+test('every car pulls hard from a standstill', async () => {
+  const times: Record<string, number> = {};
+  for (const def of CARS) {
+    const world = await makeWorld();
+    const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 }, def.spec);
+    simulate(world, car, 1, NEUTRAL_INPUT);
+    let time = Infinity;
+    for (let i = 0; i < 120 * 12; i++) {
+      car.step(TICK, { throttle: 1, brake: 0, steer: 0, handbrake: false }, world);
+      world.step();
+      if (car.telemetryState.speedKmh >= 100 && time === Infinity) time = i * TICK;
+    }
+    times[def.id] = time;
+  }
+  // The slipping clutch used to drag the flywheel's reflected inertia through
+  // first gear, and every car felt gutless: the Aventador needed 5.5 s.
+  assert.ok(times.aventador < 4.6, `Aventador 0-100 in ${times.aventador.toFixed(1)}s`);
+  assert.ok(times.i20n < 6.5, `i20 N 0-100 in ${times.i20n.toFixed(1)}s`);
+  assert.ok(times.rx7 < 7.5, `RX-7 0-100 in ${times.rx7.toFixed(1)}s`);
+});
+
+test('the traction control can be switched off, and the rear tires then spin', async () => {
+  async function launch(tcs: boolean): Promise<number> {
+    const world = await makeWorld();
+    const rx7 = CARS.find((c) => c.id === 'rx7')!;
+    const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 }, rx7.spec);
+    car.tcsEnabled = tcs;
+    simulate(world, car, 1, NEUTRAL_INPUT);
+    let peak = 0;
+    for (let i = 0; i < 120 * 1.5; i++) {
+      car.step(TICK, { throttle: 1, brake: 0, steer: 0, handbrake: false }, world);
+      world.step();
+      for (const w of car.telemetryState.wheels) {
+        if (w.name.startsWith('R')) peak = Math.max(peak, Math.abs(w.slipRatio));
+      }
+    }
+    return peak;
+  }
+  const assisted = await launch(true);
+  const free = await launch(false);
+  assert.ok(free > assisted * 1.3, `off gave ${free.toFixed(2)} of slip, on ${assisted.toFixed(2)}`);
+});
+
+test('full throttle while turning drives the car forward instead of crabbing', async () => {
+  // The "crab": the unloaded inside front tire spun, the combined slip took the
+  // whole front axle's lateral grip, and the car slid diagonally at 5 km/h with
+  // the wheel turned. A player meets this at a junction, from a standstill.
+  const world = await makeWorld();
+  const aventador = CARS.find((c) => c.id === 'aventador')!;
+  const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 }, aventador.spec);
+  simulate(world, car, 1, NEUTRAL_INPUT);
+  const yawBefore = 2 * Math.atan2(car.rotation.y, car.rotation.w);
+  let maxFrontSpin = 0;
+  simulate(
+    world,
+    car,
+    3,
+    { throttle: 1, brake: 0, steer: 0.5, handbrake: false },
+    () => {
+      // FL and FR come first in the telemetry.
+      for (const w of car.telemetryState.wheels.slice(0, 2)) {
+        maxFrontSpin = Math.max(maxFrontSpin, Math.abs(w.slipRatio));
+      }
+    },
+  );
+  const yawAfter = 2 * Math.atan2(car.rotation.y, car.rotation.w);
+  const turned = Math.abs(((yawAfter - yawBefore) * 180) / Math.PI);
+  assert.ok(
+    car.telemetryState.speedKmh > 60,
+    `only ${car.telemetryState.speedKmh.toFixed(0)} km/h after 3 s: the car is crabbing`,
+  );
+  assert.ok(turned > 40, `the car only rotated ${turned.toFixed(0)}° with the wheel turned`);
+  assert.ok(maxFrontSpin < 0.5, `a front tire spun at ${maxFrontSpin.toFixed(2)}`);
+});
+
+test('the rally car steers on gravel at speed instead of plowing', async () => {
+  const gravel = { kind: 'terre', grip: 0.62, peak: 1.3, rolling: 2.6, roughness: 0.72 };
+  const world = await makeWorld();
+  const i20 = CARS.find((c) => c.id === 'i20n')!;
+  const spec = resolveSpec({ ...DEFAULT_SETUP, suspension: 3, tires: 3 }, i20.spec);
+  const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0, surfaceAt: () => gravel }, spec);
+  simulate(world, car, 1, NEUTRAL_INPUT);
+  simulate(world, car, 3, { throttle: 1, brake: 0, steer: 0, handbrake: false });
+  const entry = car.telemetryState.speedKmh;
+
+  let peakAngle = 0;
+  let minFront = Infinity;
+  simulate(
+    world,
+    car,
+    4,
+    { throttle: 1, brake: 0, steer: 0.5, handbrake: false },
+    () => {
+      peakAngle = Math.max(peakAngle, Math.abs(car.telemetryState.driftAngleDeg));
+      for (const w of car.telemetryState.wheels.slice(0, 2)) {
+        minFront = Math.min(minFront, w.forceLat);
+      }
+    },
+  );
+  assert.ok(entry > 40, `entry speed ${entry.toFixed(0)} km/h`);
+  assert.ok(
+    car.telemetryState.speedKmh > 55,
+    `the car fell to ${car.telemetryState.speedKmh.toFixed(0)} km/h in the corner`,
+  );
+  assert.ok(peakAngle < 45, `the car slid to ${peakAngle.toFixed(0)}° instead of turning`);
+  assert.ok(minFront > -300, `a front tire pushed back at ${minFront.toFixed(0)} N`);
+});
+
+test('the all-terrain tires are the ones that grip in the dirt', () => {
+  const i20 = CARS.find((c) => c.id === 'i20n')!;
+  const road = resolveSpec({ ...DEFAULT_SETUP, tires: 0 }, i20.spec);
+  const rally = resolveSpec({ ...DEFAULT_SETUP, tires: 3 }, i20.spec);
+  const loose = { kind: 'terre', grip: 0.62, peak: 1.3, rolling: 2.6, roughness: 0.72 };
+  const effective = (spec: typeof road) => spec.muRear * loose.grip * spec.looseGrip;
+  assert.ok(rally.looseGrip > road.looseGrip, 'the rally set has no grip bonus in the dirt');
+  assert.ok(
+    effective(rally) > effective(road) * 1.15,
+    `rally ${effective(rally).toFixed(2)} vs road ${effective(road).toFixed(2)}`,
+  );
 });

@@ -17,6 +17,8 @@ export interface DrivetrainConfig {
   peakTorqueRpm: number;
   /** Driven wheel radius, m: turns the wheel speed into a road speed. */
   wheelRadius: number;
+  /** Bikes are not reversed on the engine: leave the box out of reverse. */
+  allowReverse?: boolean;
 }
 
 export const SPORT_DRIVETRAIN: DrivetrainConfig = {
@@ -54,6 +56,12 @@ export interface DrivetrainOutput {
   shifting: boolean;
   /** True on the fuel-cut half of a rev limiter cycle, for the exhaust bang. */
   limiter: boolean;
+  /**
+   * 0 when the clutch is locked, 1 when it is fully slipping. The engine's
+   * inertia is only carried by the wheels once the clutch bites; before that
+   * the flywheel is spinning on its own side of the friction disc.
+   */
+  clutchSlip: number;
 }
 
 export class Drivetrain {
@@ -104,16 +112,20 @@ export class Drivetrain {
     const cfg = this.config;
     this.shiftTimer = Math.max(0, this.shiftTimer - dt);
     this.gearTimer += dt;
-    // What the gearbox actually sees: the road speed implied by the driven
-    // wheels. In a drift the rear axle runs far faster than the body, and a
-    // gearbox has no idea the car is sideways -- deciding shifts on the chassis
-    // speed left the car pinned on the limiter in first while it slid.
-    const wheelSpeed = Math.abs(rearOmega) * cfg.wheelRadius;
+    // What the gearbox shifts on: the road speed of the chassis, the way a real
+    // box reads its output shaft, not the driven wheels. Using the wheels was a
+    // trap: a spinning rear tyre during a launch or a drift reads double the
+    // real speed, so the box jumped to fourth mid-slide and dropped the engine
+    // out of its torque. A drift then bled every km/h it had and hooked up.
+    // A stationary burnout is still protected: the chassis speed is zero, so
+    // nothing upshifts.
 
     // Reverse is a gear you engage at a standstill, like holding the pedal on an
     // automatic: it never engages while the car is still rolling.
     if (this.gear > 0) {
-      if (Math.abs(speedMs) < 0.9 && brake > 0.35 && throttle < 0.12) {
+      if (cfg.allowReverse === false) {
+        this.reverseHold = 0;
+      } else if (Math.abs(speedMs) < 0.9 && brake > 0.35 && throttle < 0.12) {
         this.reverseHold += dt;
         if (this.reverseHold > 0.35) {
           this.gear = -1;
@@ -135,7 +147,7 @@ export class Drivetrain {
       }
     }
 
-    if (this.gear > 1 && wheelSpeed < 1.2 && Math.abs(speedMs) < 1.2) {
+    if (this.gear > 1 && Math.abs(speedMs) < 1.2) {
       // Rolling to a stop: fall back to first, no shift delay needed.
       this.gear = 1;
       this.gearTimer = 0;
@@ -143,30 +155,44 @@ export class Drivetrain {
 
     const gearRatio = this.ratio;
     const wheelRpm = (Math.abs(rearOmega) * 60) / (2 * Math.PI);
-    let rpm = wheelRpm * Math.abs(gearRatio) * cfg.finalDrive;
+    const gearedRpm = wheelRpm * Math.abs(gearRatio) * cfg.finalDrive;
+    let rpm = gearedRpm;
 
     // Slipping clutch: from a standstill the driver keeps the engine near its
     // torque peak while the clutch slips, and the bite closes progressively as
     // road speed builds. Without this the engine falls back to idle after a few
     // metres and the launch has no torque.
+    // A launch clutch holds the engine near its torque peak and lets the car
+    // catch up: the slip only closes around 55 km/h, which is first gear. The
+    // old curve dropped the engine back to 2 000 rpm by 20 km/h, right where a
+    // turbo four makes nothing, so every car felt flat off the line.
     const pedal = this.gear === -1 ? brake : throttle;
-    const slip = Math.max(0, 1 - Math.abs(speedMs) / 9);
-    const launchRpm = cfg.idleRpm + pedal * 2900 * slip;
+    const slip = Math.max(0, 1 - Math.abs(speedMs) / 16);
+    const launchRpm = cfg.idleRpm + pedal * (cfg.peakTorqueRpm - cfg.idleRpm) * slip;
     rpm = Math.max(rpm, launchRpm);
     rpm = Math.min(cfg.redlineRpm + 120, rpm);
+    // How far the engine is revving above what the wheels are doing: a slipping
+    // clutch decouples the flywheel, so the wheels must not have to drag its
+    // reflected inertia through first gear while the car pulls away.
+    const clutchSlip = Math.min(1, Math.max(0, (launchRpm - gearedRpm) / 900));
 
     if (this.shiftTimer <= 0 && this.gear > 0 && this.gearTimer > MIN_GEAR_TIME) {
-      // The driven axle is turning, so the car is moving even if the chassis is
-      // sliding and its longitudinal speed reads close to zero.
-      const rolling = wheelSpeed > 2.5 && groundSpeed > 1.5;
-      if (rolling && rpm > cfg.upshiftRpm && this.gear < cfg.ratios.length) {
+      const rolling = groundSpeed > 2.5;
+      // What the engine would turn at this road speed in this gear. Shifting on
+      // the driven-wheel rpm let a spinning rear tyre -- a launch, a burnout, a
+      // drift -- tell the box the car was doing double its real speed, so it
+      // climbed to fourth mid-slide and dropped the engine out of its torque.
+      const roadRpm =
+        (groundSpeed * 60 * Math.abs(gearRatio) * cfg.finalDrive) /
+        (2 * Math.PI * cfg.wheelRadius);
+      if (rolling && roadRpm > cfg.upshiftRpm && this.gear < cfg.ratios.length) {
         this.gear += 1;
         this.shiftTimer = 0.16;
         this.gearTimer = 0;
       } else if (
         rolling &&
         this.gear > 1 &&
-        (rpm < cfg.downshiftRpm || (throttle > 0.75 && rpm < 2400))
+        (roadRpm < cfg.downshiftRpm || (throttle > 0.75 && roadRpm < 2400))
       ) {
         this.gear -= 1;
         this.shiftTimer = 0.14;
@@ -206,6 +232,7 @@ export class Drivetrain {
       gear: this.gear,
       shifting,
       limiter: limiterCut,
+      clutchSlip,
     };
   }
 }
