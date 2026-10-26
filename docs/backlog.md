@@ -18,10 +18,11 @@ commit hash so the history stays readable.
   *Done when:* turning the bar on the spot moves the lines with it, verified by screenshot.
   *blocked:* les durites n'existent pas comme maillages séparés : elles sont fondues dans des groupes anonymes du cadre (mesuré sur moto.glb : aucune maille fine et longue près de l'axe de direction, seulement des pads de guidon et des stickers). Découper par triangles à l'aveugle percerait la colonne de direction ; ajouter des durites procédurales laisserait les anciennes immobiles en double. Trois options pour l'utilisateur : accepter le double, tenter la découpe par triangles avec risque sur le cadre, ou laisser tel quel.
 
-- [ ] **Forest shadows** — `S`. Tree shadows are off in `?fx=low` and the groves look pasted on.
+- [x] ~~**Forest shadows**~~ — `S`. Tree shadows are off in `?fx=low` and the groves look pasted on.
   Enable shadow casting on the nearest instanced tree meshes only (distance-gated), measure the
   draw-call delta in `window.__sp95.debug`.
   *Done when:* `drawCalls` rises by less than 5 and the grove edge reads as grounded.
+  *Cycle 3:* `0afe31d` — flaques de contact conformées au terrain, +2 draw calls (62 → 64) mesurés en fx=low
 
 - [ ] **Per-vehicle camera framing** — `S`. The five points of view use fixed metre offsets; the
   bike cockpit sits a little high. Derive the anchors from the vehicle bounding box.
