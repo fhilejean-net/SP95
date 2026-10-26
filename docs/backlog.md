@@ -27,6 +27,7 @@ commit hash so the history stays readable.
 - [ ] **Per-vehicle camera framing** — `S`. The five points of view use fixed metre offsets; the
   bike cockpit sits a little high. Derive the anchors from the vehicle bounding box.
   *Done when:* the cockpit view on the bike shows the bar and the front fender, not the sky.
+  *blocked:* cadrage cockpit non vérifiable ici : le rendu de contrôle tourne à ~1 fps (SwiftShader), donc chaque capture montre la frame précédente du changement de POV, et deux runs ont été tués avant d'obtenir une image stable. Piste mesurée à reprendre : la barre est à 1,12 m de haut et 0,33 m devant l'origine ; un œil à 0,55 m derrière et 0,30 m au-dessus d'elle demande ~8° de piqué pour tenir guidon et garde-boue dans le champ — à juger sur une vraie machine.
 
 - [ ] **Bike presets in the HUD** — `S`. The workshop has Série/Stunt/Enduro/Piste but the HUD
   never says which is active. Show the preset name next to the stunt score.
