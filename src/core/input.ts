@@ -5,7 +5,7 @@ export interface Controls {
   handbrake: boolean;
 }
 
-type Action = 'reset' | 'pause' | 'mute' | 'help' | 'tcs' | 'wheelie' | 'camera';
+type Action = 'reset' | 'pause' | 'mute' | 'help' | 'tcs' | 'wheelie' | 'camera' | 'wet';
 
 const DEADZONE = 0.09;
 
@@ -44,6 +44,7 @@ export class InputManager {
         if (e.code === 'KeyH') this.pendingActions.add('help');
         if (e.code === 'KeyT') this.pendingActions.add('tcs');
         if (e.code === 'KeyC') this.pendingActions.add('camera');
+        if (e.code === 'KeyG') this.pendingActions.add('wet');
         // A supermotard has no handbrake lever, so the space bar is the clutch
         // dump on the bike. On four wheels it stays the handbrake.
         if (e.code === 'Space') this.pendingActions.add('wheelie');

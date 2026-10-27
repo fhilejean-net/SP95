@@ -701,8 +701,31 @@ export const SURFACES: Record<SurfaceKind, SurfaceInfo> = {
   herbe: { kind: 'herbe', grip: 0.47, peak: 1.45, rolling: 3.8, roughness: 1 },
 };
 
-/** Which surface a wheel is rolling on. Sharp edges, no grid blurring. */
+/** Route mouillée : état global, désactivé par défaut (sec). */
+let wetRoad = false;
+/** Facteur de grip sur toute surface quand la route est mouillée. */
+export const WET_GRIP = 0.7;
+
+export function isWetRoad(): boolean {
+  return wetRoad;
+}
+
+export function setWetRoad(wet: boolean): void {
+  wetRoad = wet;
+}
+
+/** Le spray arrière ne sort que d'un pneu au contact, en mouvement, sur route mouillée. */
+export function sprayActive(speed: number, contact: boolean): boolean {
+  return wetRoad && contact && speed > 1.5;
+}
+
+/** Which surface a wheel is rolling on, wet or dry. Sharp edges, no grid blurring. */
 export function surfaceAt(x: number, z: number): SurfaceInfo {
+  const info = drySurfaceAt(x, z);
+  return wetRoad ? { ...info, grip: info.grip * WET_GRIP } : info;
+}
+
+function drySurfaceAt(x: number, z: number): SurfaceInfo {
   const engineered = nearestGraded(x, z);
   if (engineered && engineered.dist <= engineered.width * 0.5 + 0.4) {
     return engineered.road.dirt ? SURFACES.terre : SURFACES.asphalte;

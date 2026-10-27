@@ -34,8 +34,9 @@ commit hash so the history stays readable.
   *Done when:* switching preset changes the label without a reload.
   *Cycle 5:* `5c62c62` — libellé du preset dans le HUD, vérifié de Série à Stunt sans rechargement, 56 tests
 
-- [ ] **Wet-weather riding** — `M`. Add a selectable wet-road condition using per-surface grip scaling; visibly darken asphalt and emit restrained rear-tire spray while moving. Keep dry handling unchanged and avoid adding new external assets.
+- [x] ~~**Wet-weather riding**~~ — `G` (`M` est déjà le mute). Add a selectable wet-road condition using per-surface grip scaling; visibly darken asphalt and emit restrained rear-tire spray while moving. Keep dry handling unchanged and avoid adding new external assets.
   *Done when:* focused tests prove wet grip is lower than dry grip for asphalt and loose surfaces, the default remains dry, and the spray activates only for a moving vehicle on a wet surface; `npm test` and `npx tsc --noEmit` pass.
+  *Cycle 6:* touche `G` (bascule route sèche/mouillée, flash HUD), grip ×0,7 sur toute surface, asphalte assombri, spray arrière sur roue au contact en mouvement ; 2 tests ajoutés, `tsc` ok, 58/58 tests
 
 - [ ] **Per-vehicle sound presets** — `S`. Keep the existing sound-mix controls, but remember and restore separate channel levels for car and bike while preserving the master level.
   *Done when:* a focused test shows car and bike channel mixes restore independently across vehicle switches and master volume remains unchanged; `npm test` and `npx tsc --noEmit` pass.

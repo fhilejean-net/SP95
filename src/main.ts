@@ -19,6 +19,9 @@ import {
   SUMMIT_START,
   buildRaceCheckpoints,
   surfaceAt,
+  isWetRoad,
+  setWetRoad,
+  sprayActive,
 } from './world/layout.ts';
 import {
   buildArenaPads,
@@ -55,6 +58,10 @@ import { Garage } from './game/garage.ts';
 import { loadSetup, resolveSpec, saveSetup, type Setup } from './game/tuning.ts';
 
 const FIXED = 1 / 120;
+
+/** Asphalte sec / mouillé : le mouillé fonce la chaussée (touche G). */
+const DRY_ASPHALT_COLOR = 0x8f9096;
+const WET_ASPHALT_COLOR = 0x5a5c63;
 
 type FreeSpawn = 'city' | 'col' | 'rally' | 'summit';
 
@@ -951,7 +958,8 @@ async function boot(): Promise<void> {
       for (let i = 0; i < telemetry.wheels.length; i++) {
         const wheel = telemetry.wheels[i];
         const slip = Math.hypot(wheel.slipRatio * 1.15, wheel.slipAngle);
-        if (!wheel.contact || slip < 0.2) {
+        const spray = sprayActive(telemetry.speed, wheel.contact) && wheel.name.startsWith('R');
+        if (!spray && (!wheel.contact || slip < 0.2)) {
           smokeDebt[i] = 0;
           continue;
         }
@@ -1112,6 +1120,13 @@ async function boot(): Promise<void> {
     }
     if (input.consume('mute')) audio.setMuted(!audio.isMuted);
     if (input.consume('tcs') && mode !== 'menu' && !ridingBike) setTcs(!tcsEnabled);
+    if (input.consume('wet') && mode !== 'menu') {
+      setWetRoad(!isWetRoad());
+      const wet = isWetRoad();
+      materials.asphalt.color.setHex(wet ? WET_ASPHALT_COLOR : DRY_ASPHALT_COLOR);
+      materials.asphaltPad.color.setHex(wet ? 0x5f6066 : 0x808086);
+      hud.flash(wet ? 'Route mouillée' : 'Route sèche', { duration: 900 });
+    }
     if (input.consume('camera') && mode !== 'menu') {
       hud.flash(cameraModeLabel(chase.nextMode()), { duration: 900 });
     }

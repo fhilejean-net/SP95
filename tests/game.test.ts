@@ -5,6 +5,36 @@ import { DriftScore } from '../src/game/drift.ts';
 import { StuntScore } from '../src/game/stunt.ts';
 import { Race } from '../src/game/race.ts';
 import { BIKE_DEFAULT_SETUP, bikePresetLabel } from '../src/game/bikeTuning.ts';
+import { SURFACES, WET_GRIP, isWetRoad, setWetRoad, sprayActive, surfaceAt } from '../src/world/layout.ts';
+
+test('wet road lowers grip on every surface, stays dry by default', () => {
+  assert.equal(isWetRoad(), false);
+  const dry = surfaceAt(0, 0);
+  setWetRoad(true);
+  try {
+    assert.equal(isWetRoad(), true);
+    const wetAsphalt = SURFACES.asphalte.grip * WET_GRIP;
+    const wetLoose = SURFACES.terre.grip * WET_GRIP;
+    assert.ok(wetAsphalt < SURFACES.asphalte.grip);
+    assert.ok(wetLoose < SURFACES.terre.grip);
+    assert.ok(surfaceAt(0, 0).grip <= dry.grip);
+  } finally {
+    setWetRoad(false);
+  }
+});
+
+test('rear spray only on a moving wheel in contact on a wet road', () => {
+  setWetRoad(false);
+  assert.equal(sprayActive(10, true), false);
+  setWetRoad(true);
+  try {
+    assert.equal(sprayActive(10, true), true);
+    assert.equal(sprayActive(10, false), false);
+    assert.equal(sprayActive(0.5, true), false);
+  } finally {
+    setWetRoad(false);
+  }
+});
 
 test('drift score grows with speed and slip, then banks', () => {
   const drift = new DriftScore();
