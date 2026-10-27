@@ -104,6 +104,14 @@ type FreeSpawn = 'city' | 'col' | 'rally' | 'summit' | 'circuit';
 const MAP = MAP_ID;
 const SUZUKA_MAP = MAP === 'suzuka';
 
+/**
+ * Cadence visée, en images par seconde. Le jeu rendait à la fréquence de
+ * l'écran — 165 images par seconde pour la même image sur un écran 165 Hz — et
+ * faisait chauffer les machines. À 60 la conduite ne change pas ; `?fps=120`
+ * (ou `?fps=0`, qui rend la main à l'écran) choisit autre chose.
+ */
+const FRAME_TARGET = readFrameTarget();
+
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const loading = document.getElementById('loading') as HTMLDivElement;
 const loadingText = document.getElementById('loading-text') as HTMLParagraphElement;
@@ -144,6 +152,14 @@ function makeRenderer(lowFx: boolean): THREE.WebGLRenderer {
 
 function forwardFromHeading(heading: number): THREE.Vector3 {
   return new THREE.Vector3(-Math.sin(heading), 0, -Math.cos(heading));
+}
+
+/** Cadence demandée dans l'URL : 60 par défaut, 0 pour suivre l'écran. */
+function readFrameTarget(): number {
+  const raw = new URLSearchParams(window.location.search).get('fps');
+  if (raw === null) return 60;
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) && value > 0 ? Math.min(240, value) : 0;
 }
 
 function readBestLap(): number | null {
@@ -312,11 +328,27 @@ async function boot(): Promise<void> {
   // Drop the car in at its ride height: spawning higher makes it land on the
   // bump stops and bounce before the player can drive. Taller tires lift it.
   const rideHeightFor = (s: VehicleSpec) => s.rideHeight + s.wheelRadius - 0.12 + 0.04;
+  /**
+   * Cote du sol sous un point, mesurée au rayon depuis le dessus de la carte.
+   * L'estimateur par cases se trompe d'un mètre sur la dalle du circuit : une
+   * voiture née sous l'asphalte n'a aucun contact — les rayons des roues partent
+   * sous la surface — elle traverse le collider et tombe sous la piste.
+   */
+  function dropHeightAt(x: number, z: number): number {
+    const estimate = groundAt(x, z);
+    // Trois mètres au-dessus de l'estimation : assez pour rattraper son erreur
+    // d'un mètre, trop court pour accrocher le tablier d'un croisement ou un
+    // toit de tribune au passage.
+    const from = estimate + 3;
+    const ray = new RAPIER.Ray({ x, y: from, z }, { x: 0, y: -1, z: 0 });
+    const hit = world.castRay(ray, 8, true);
+    return hit ? from - hit.timeOfImpact : estimate;
+  }
   /** Où la voiture attend : la ligne des stands sur le circuit, la rue en ville. */
   const startPose = circuit
     ? { x: circuit.spawn.x, z: circuit.spawn.z, heading: circuit.spawn.heading }
     : { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading };
-  const spawnY = groundAt(startPose.x, startPose.z) + rideHeightFor(spec);
+  const spawnY = dropHeightAt(startPose.x, startPose.z) + rideHeightFor(spec);
   let carVehicle: Vehicle = new Vehicle(
     world,
     { x: startPose.x, y: spawnY, z: startPose.z, heading: startPose.heading, surfaceAt },
@@ -373,7 +405,7 @@ async function boot(): Promise<void> {
   applyVehicleMix();
   const drift = new DriftScore();
   const stunt = new StuntScore();
-  const governor = new QualityGovernor(renderer, renderer.getPixelRatio());
+  const governor = new QualityGovernor(renderer, renderer.getPixelRatio(), sky.sun);
 
   let mode: GameMode = 'menu';
   let freeSpawn: FreeSpawn = 'city';
@@ -439,6 +471,9 @@ async function boot(): Promise<void> {
   /** Water thrown up by the rear tire: brighter and bluer than tire smoke. */
   const SMOKE_SPRAY = new THREE.Color(0xd6e4ee);
   const carVelocity = new THREE.Vector3();
+  /** Scratches de l'image : réutilisés, jamais alloués dans la boucle. */
+  const lightPos = new THREE.Vector3();
+  const visualQuat = new THREE.Quaternion();
 
   const carPosition = new THREE.Vector3(startPose.x, spawnY, startPose.z);
   const carForward = forwardFromHeading(startPose.heading);
@@ -1320,6 +1355,10 @@ async function boot(): Promise<void> {
     vehicle.setVelocity(pose.vx ?? 0, pose.vy ?? 0, pose.vz ?? 0);
   }
 
+  /** Période des cadrans et de la mini-carte, en secondes. */
+  const HUD_INTERVAL = 1 / 12;
+  let hudClock = 0;
+
   function updateVisuals(dt: number): void {
     if (replay) {
       const pose = samplePoses(replay.poses, replay.elapsed);
@@ -1336,9 +1375,8 @@ async function boot(): Promise<void> {
     const telemetry = vehicle.telemetryState;
     const state = vehicle.state;
     carPosition.set(state.position.x, state.position.y, state.position.z);
-    carForward.set(0, 0, -1).applyQuaternion(
-      new THREE.Quaternion(state.rotation.x, state.rotation.y, state.rotation.z, state.rotation.w),
-    );
+    visualQuat.set(state.rotation.x, state.rotation.y, state.rotation.z, state.rotation.w);
+    carForward.set(0, 0, -1).applyQuaternion(visualQuat);
 
     if (ridingBike && bike && bikeVisual) {
       bikeVisual.group.position.set(state.position.x, state.position.y, state.position.z);
@@ -1483,7 +1521,7 @@ async function boot(): Promise<void> {
       }
     }
 
-    const lightPos = carPosition.clone().addScaledVector(sky.sunDirection, 260);
+    lightPos.copy(carPosition).addScaledVector(sky.sunDirection, 260);
     sky.sun.position.copy(lightPos);
     sky.sun.target.position.copy(carPosition);
     sky.sun.target.updateMatrixWorld();
@@ -1580,6 +1618,12 @@ async function boot(): Promise<void> {
     smokeFx.update(dt, pixelsPerMeter);
     sparkFx.update(dt, pixelsPerMeter);
 
+    // Les cadrans changent douze fois par seconde, pas soixante : le temps du
+    // processeur revient à la conduite.
+    hudClock += dt;
+    if (hudClock < HUD_INTERVAL) return;
+    hudClock = 0;
+
     const redline = ridingBike ? bikeSpec.redlineRpm : spec.redlineRpm;
     hud.updateSpeed(telemetry.speedKmh, telemetry.gear, telemetry.rpm, redline);
     if (ridingBike) {
@@ -1609,6 +1653,9 @@ async function boot(): Promise<void> {
     }
   }
 
+  /** Instant de la dernière image calculée (voir FRAME_TARGET). */
+  let lastRender = 0;
+
   function render(): void {
     renderer.info.reset();
     renderer.render(scene, camera);
@@ -1616,6 +1663,10 @@ async function boot(): Promise<void> {
 
   function frame(now: number): void {
     requestAnimationFrame(frame);
+    // Les battements d'écran plus rapprochés que la cible sont sautés : le temps
+    // avance jusqu'à l'image suivante, la physique ne s'en aperçoit pas.
+    if (FRAME_TARGET > 0 && now - lastRender < 1000 / FRAME_TARGET - 0.5) return;
+    lastRender = now;
     const rawDt = Math.max(0.0001, (now - lastFrame) / 1000);
     const dt = Math.min(0.05, rawDt);
     lastFrame = now;

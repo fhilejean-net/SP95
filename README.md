@@ -15,6 +15,8 @@ npm run dev
 
 Sur une machine modeste, ajouter `?fx=low` à l'URL : ombres et post-traitement sont désactivés, la résolution interne baisse.
 
+La cadence est plafonnée à **60 images par seconde** : au-delà, l'écran recevait la même image beaucoup plus souvent et la carte graphique chauffait pour rien. `?fps=120` choisit une autre cible, `?fps=0` rend la main à l'écran (144 Hz et plus). Quand la machine n'y arrive pas, le moteur baisse la qualité par paliers — résolution interne, puis carte d'ombres à 1024², puis ombres coupées — au lieu de saccader.
+
 ## Contrôles
 
 | Action | Clavier | Manette | Tactile |
