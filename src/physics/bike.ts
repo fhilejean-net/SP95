@@ -352,6 +352,11 @@ export class Bike {
     }
   }
 
+  /** Restores a recorded velocity, e.g. when a rewind is released. */
+  setVelocity(x: number, y: number, z: number): void {
+    this.body.setLinvel({ x, y, z }, true);
+  }
+
   step(dt: number, input: VehicleInput, world: RAPIER.World): void {
     const q = this.rotation;
     const pos = this.position;

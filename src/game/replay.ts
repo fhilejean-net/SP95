@@ -15,6 +15,10 @@ export interface PoseSample {
   qy: number;
   qz: number;
   qw: number;
+  /** Velocity at that instant, so a rewind can hand the car back at speed. */
+  vx?: number;
+  vy?: number;
+  vz?: number;
 }
 
 export interface ReplayPose extends PoseSample {
@@ -125,6 +129,9 @@ export function samplePoses(poses: ReplayPose[], elapsed: number): ReplayPose | 
     x: lerp(a.x, b.x, k),
     y: lerp(a.y, b.y, k),
     z: lerp(a.z, b.z, k),
+    vx: lerp(a.vx ?? 0, b.vx ?? 0, k),
+    vy: lerp(a.vy ?? 0, b.vy ?? 0, k),
+    vz: lerp(a.vz ?? 0, b.vz ?? 0, k),
     ...blendQuat(a, b, k),
     t: elapsed,
   };

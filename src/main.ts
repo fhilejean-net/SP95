@@ -69,9 +69,9 @@ const FIXED = 1 / 120;
 
 /** Asphalte sec / mouillé : le mouillé fonce la chaussée (touche G). */
 const DRY_ASPHALT_COLOR = 0x8f9096;
-const WET_ASPHALT_COLOR = 0x363b43;
+const WET_ASPHALT_COLOR = 0x6b7178;
 const DRY_PAD_COLOR = 0x808086;
-const WET_PAD_COLOR = 0x30353c;
+const WET_PAD_COLOR = 0x63696f;
 
 type FreeSpawn = 'city' | 'col' | 'rally' | 'summit';
 
@@ -171,6 +171,8 @@ async function boot(): Promise<void> {
 
   await setLoading(0.74, 'Mobilier urbain…');
   const streetKit = await buildStreetKit(scene, world, materials);
+  /** Dry colour of each street-kit road tile, so the wet tint can be undone. */
+  const streetKitDryColors = new Map<THREE.MeshStandardMaterial, THREE.Color>();
 
   await setLoading(0.8, 'Plantation des arbres…');
   const vegetation = await buildVegetation(scene, world, lowFx, sky.sunDirection);
@@ -256,6 +258,9 @@ async function boot(): Promise<void> {
   /** Held rewind: the same poses, walked backwards until the key is released. */
   let rewind: { poses: ReplayPose[]; elapsed: number } | null = null;
   let rewindHeld = false;
+  /** Absolute angle the replay camera holds, in world space. */
+  let replayCamYaw = 0;
+  let replayCamOrbit = 0;
   const replayQuat = new THREE.Quaternion();
   /** Seconds of history travelled per real second while rewinding. */
   const REWIND_RATE = 1.7;
@@ -648,12 +653,26 @@ async function boot(): Promise<void> {
    * and hidden with the same switch.
    */
   function applyWetLook(wet: boolean): void {
+    // Darker and glossier, but not metallic: this scene has no environment map,
+    // so a high metalness would simply turn the road black.
     materials.asphalt.color.setHex(wet ? WET_ASPHALT_COLOR : DRY_ASPHALT_COLOR);
-    materials.asphalt.roughness = wet ? 0.16 : 0.92;
-    materials.asphalt.metalness = wet ? 0.34 : 0.02;
+    materials.asphalt.roughness = wet ? 0.34 : 0.92;
+    materials.asphalt.metalness = wet ? 0.03 : 0.02;
     materials.asphaltPad.color.setHex(wet ? WET_PAD_COLOR : DRY_PAD_COLOR);
-    materials.asphaltPad.roughness = wet ? 0.2 : 0.88;
-    materials.asphaltPad.metalness = wet ? 0.3 : 0.02;
+    materials.asphaltPad.roughness = wet ? 0.36 : 0.88;
+    materials.asphaltPad.metalness = wet ? 0.03 : 0.02;
+    // Zebra crossings are their own street-kit tiles: tint them with the road
+    // or they stay dry-bright on a soaked street.
+    for (const material of streetKit.roadMaterials) {
+      let dry = streetKitDryColors.get(material);
+      if (!dry) {
+        dry = material.color.clone();
+        streetKitDryColors.set(material, dry);
+      }
+      material.color.copy(dry);
+      if (wet) material.color.multiplyScalar(0.62);
+      material.roughness = wet ? 0.4 : 0.82;
+    }
     puddles.setVisible(wet);
   }
 
@@ -843,6 +862,9 @@ async function boot(): Promise<void> {
         qy: pose.rotation.y,
         qz: pose.rotation.z,
         qw: pose.rotation.w,
+        vx: pose.velocity.x,
+        vy: pose.velocity.y,
+        vz: pose.velocity.z,
       },
       performance.now() / 1000,
     );
@@ -953,7 +975,11 @@ async function boot(): Promise<void> {
       return;
     }
     replay = { poses, elapsed: 0, bike: ridingBike };
-    hud.flash('Replay · V pour sortir', { accent: true, duration: 1500 });
+    // The camera starts where the car was looking, then keeps that world angle:
+    // it must not swing round with the recorded car while the player aims it.
+    replayCamYaw = Math.atan2(-carForward.x, -carForward.z);
+    replayCamOrbit = input.orbitYaw;
+    hud.flash('Replay · souris ou Q/E pour tourner', { accent: true, duration: 1500 });
   }
 
   function stopReplay(): void {
@@ -991,10 +1017,15 @@ async function boot(): Promise<void> {
 
   function endRewind(): void {
     if (!rewind) return;
+    const pose = samplePoses(rewind.poses, rewind.elapsed);
     // The rewind ate the poses ahead of the cursor: recording continues there.
     replayMemory.truncate(rewind.elapsed, performance.now() / 1000);
     rewind = null;
     accumulator = 0;
+    if (!pose) return;
+    // Hand the car back at the speed it actually carried at that instant,
+    // instead of dropping it to a standstill.
+    vehicle.setVelocity(pose.vx ?? 0, pose.vy ?? 0, pose.vz ?? 0);
   }
 
   function updateVisuals(dt: number): void {
@@ -1188,7 +1219,9 @@ async function boot(): Promise<void> {
       // Free orbit around the replayed car: the mouse chooses any angle round
       // it and the wheel sets the distance, without the chase lag or the
       // auto-return that would fight the player mid-shot.
-      const yaw = Math.atan2(-carForward.x, -carForward.z) + input.orbitYaw;
+      const turn = (input.isDown('KeyE') ? 1 : 0) - (input.isDown('KeyQ') ? 1 : 0);
+      replayCamYaw += turn * dt * 1.5;
+      const yaw = replayCamYaw + (input.orbitYaw - replayCamOrbit);
       const pitch = Math.max(-0.05, 0.24 + input.orbitPitch);
       const distance = Math.max(2.2, 6.2 + input.zoom * 1.6);
       const horizontal = Math.cos(pitch) * distance;

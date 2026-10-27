@@ -79,6 +79,8 @@ export interface StreetKitSummary {
   models: number;
   instances: number;
   colliders: number;
+  /** Tile materials that carry road surface (crossings), for the wet tint. */
+  roadMaterials: THREE.MeshStandardMaterial[];
 }
 
 interface Template {
@@ -642,5 +644,10 @@ export async function buildStreetKit(
     colliders++;
   }
 
-  return { models: templates.size, instances: items.length, colliders };
+  const roadMaterials: THREE.MeshStandardMaterial[] = [];
+  for (const [model, template] of templates) {
+    if (model.includes('road')) roadMaterials.push(template.material);
+  }
+
+  return { models: templates.size, instances: items.length, colliders, roadMaterials };
 }

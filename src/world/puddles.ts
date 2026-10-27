@@ -85,12 +85,14 @@ export function buildPuddles(scene: THREE.Scene): PuddleField {
 
   const geometry = new THREE.CircleGeometry(1, 16);
   geometry.rotateX(-Math.PI / 2);
+  // No environment map in this scene: a metallic puddle would render black.
+  // A pale, glossy dielectric instead catches the sun and reads as water.
   const material = new THREE.MeshStandardMaterial({
-    color: 0x101820,
-    roughness: 0.06,
-    metalness: 0.75,
+    color: 0xa9bdcf,
+    roughness: 0.05,
+    metalness: 0,
     transparent: true,
-    opacity: 0.62,
+    opacity: 0.48,
     depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: -3,

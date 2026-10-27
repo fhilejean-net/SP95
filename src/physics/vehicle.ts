@@ -435,6 +435,11 @@ export class Vehicle {
     this.flippedTimer = 0;
   }
 
+  /** Restores a recorded velocity, e.g. when a rewind is released. */
+  setVelocity(x: number, y: number, z: number): void {
+    this.body.setLinvel({ x, y, z }, true);
+  }
+
   /** Called once per fixed physics tick. */
   step(dt: number, input: VehicleInput, world: RAPIER.World): void {
     const q = this.rotation;

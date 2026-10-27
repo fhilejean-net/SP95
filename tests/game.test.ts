@@ -37,6 +37,17 @@ test('the replay records at its own cadence and hands out copies', () => {
   assert.equal(buffer.duration, 0);
 });
 
+test('playback carries the recorded velocity, so a rewind resumes at speed', () => {
+  const buffer = new ReplayBuffer(10, 0.1);
+  buffer.record({ ...pose(0), vx: 20, vy: 0, vz: 2 }, 0);
+  buffer.record({ ...pose(10), vx: 20, vy: 0, vz: 2 }, 1);
+  const mid = samplePoses(buffer.snapshot(), 0.5);
+  assert.ok(mid);
+  assert.ok(Math.abs((mid.vx ?? 0) - 20) < 1e-9, `vx=${mid.vx}`);
+  assert.ok(Math.abs((mid.vz ?? 0) - 2) < 1e-9, `vz=${mid.vz}`);
+  assert.equal(mid.x, 5);
+});
+
 test('puddles are planned on the tarmac, deterministically', () => {
   const spots = planPuddles(40);
   assert.ok(spots.length > 0 && spots.length <= 40, `count=${spots.length}`);
