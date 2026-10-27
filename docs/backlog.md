@@ -41,6 +41,13 @@ commit hash so the history stays readable.
 - [ ] **Per-vehicle sound presets** — `S`. Keep the existing sound-mix controls, but remember and restore separate channel levels for car and bike while preserving the master level.
   *Done when:* a focused test shows car and bike channel mixes restore independently across vehicle switches and master volume remains unchanged; `npm test` and `npx tsc --noEmit` pass.
 
+- [ ] **Wet surface lookups allocate in the physics hot path** — `S`. Since cycle 6,
+  `surfaceAt` clones the dry surface object on every call once the road is wet, and both vehicle
+  steps ask it for each wheel contact at 120 Hz (~480 objects/s). Build the wet variants of
+  `SURFACES` once at module load and return those references instead.
+  *Done when:* a focused test asserts `surfaceAt` returns the same object for two calls at one
+  point while wet, the wet grip values are unchanged, and `npm test` / `npx tsc --noEmit` pass.
+
 - [ ] **Recent stunt replay** — `M`. Record a short rolling window of the player's recent vehicle poses and expose replay playback with a free camera, without recording the entire session or changing live scoring.
   *Done when:* a focused test verifies bounded recording and playback of the recorded poses, and a manual dev-server check confirms replay can be started and exited without affecting live vehicle state or score.
 
