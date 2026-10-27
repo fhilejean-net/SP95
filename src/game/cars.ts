@@ -14,12 +14,6 @@ export interface CarDef {
   model: string;
   /** Y rotation that brings the model's nose to -Z, the game's forward. */
   yaw: number;
-  /**
-   * Wheel node names in the GLB, in FL, FR, RL, RR order. Omitted when the model
-   * names them in a way no one wants to type: `carModel.ts` then finds the four
-   * wheels itself, by name where it can, by shape where it must.
-   */
-  wheels?: [string, string, string, string];
   /** One line of provenance, shown in the picker. */
   origin?: string;
   spec: VehicleSpec;
@@ -44,12 +38,6 @@ export const CARS: CarDef[] = [
     detail: 'V12 6,5 L · 690 Nm · intégrale',
     model: 'models/vehicles/aventador.glb',
     yaw: Math.PI,
-    wheels: [
-      'Lamborghini_Aventador_Wheel_FL',
-      'Lamborghini_Aventador_Wheel_FR',
-      'Lamborghini_Aventador_Wheel_RL',
-      'Lamborghini_Aventador_Wheel_RR',
-    ],
     spec: {
       ...STOCK_SPEC,
       name: 'Aventador',
@@ -88,7 +76,6 @@ export const CARS: CarDef[] = [
     detail: '13B birotor turbo · 300 Nm · propulsion',
     model: 'models/vehicles/rx7.glb',
     yaw: Math.PI,
-    wheels: ['FL_WHEEL', 'FR_WHEEL', 'RL_WHEEL', 'RR_WHEEL'],
     spec: {
       ...STOCK_SPEC,
       name: 'RX-7',
@@ -128,7 +115,6 @@ export const CARS: CarDef[] = [
     detail: '1,6 L turbo · 420 Nm · châssis rallye',
     model: 'models/vehicles/i20n.glb',
     yaw: 0,
-    wheels: ['FL_WHEEL', 'FR_WHEEL', 'RL_WHEEL', 'RR_WHEEL'],
     spec: {
       ...STOCK_SPEC,
       name: 'i20 N',
@@ -323,8 +309,6 @@ export const CARS: CarDef[] = [
     detail: '1,6 L turbo · 370 Nm · GR-Four',
     model: 'models/vehicles/yaris/2021_toyota_gr_yaris.glb',
     yaw: Math.PI,
-    // Quatre groupes de roue nommés par l'atelier qui a monté le modèle.
-    wheels: ['3DWheel Front L_35', '3DWheel Front R_38', '3DWheel Rear L_41', '3DWheel Rear R_44'],
     spec: {
       ...STOCK_SPEC,
       name: 'GR Yaris',
@@ -363,7 +347,6 @@ export const CARS: CarDef[] = [
     origin: 'ABT 2022',
     model: 'models/vehicles/RS7/2022_abt_audi_rs7-r.glb',
     yaw: Math.PI,
-    wheels: ['3DWheel Front L', '3DWheel Front R', '3DWheel Rear L', '3DWheel Rear R'],
     spec: {
       ...STOCK_SPEC,
       name: 'RS7 ABT',
