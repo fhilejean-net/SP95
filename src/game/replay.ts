@@ -73,6 +73,24 @@ export class ReplayBuffer {
     return this.poses.map((pose) => ({ ...pose }));
   }
 
+  /**
+   * Keeps the poses up to `elapsed` and continues the timeline from there.
+   * Called when a rewind ends: the poses the player rewound past belong to a
+   * future that never happened, so recording resumes at that instant instead
+   * of leaving a gap in the history.
+   */
+  truncate(elapsed: number, now: number): void {
+    this.poses = this.poses.filter((pose) => pose.t <= elapsed);
+    const last = this.poses[this.poses.length - 1];
+    if (!last) {
+      this.reset();
+      return;
+    }
+    this.origin = now - last.t;
+    // The next record must not be rejected just because time stood still.
+    this.lastRecorded = now - this.interval;
+  }
+
   reset(): void {
     this.poses = [];
     this.origin = Number.NaN;

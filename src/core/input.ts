@@ -20,6 +20,12 @@ export class InputManager {
   orbitYaw = 0;
   orbitPitch = 0;
   orbitActive = false;
+  /**
+   * Replay camera: the orbit keeps the angle the player chose instead of
+   * swinging back behind the car, and may go all the way round.
+   */
+  orbitLock = false;
+  orbitMax = 2.6;
   private orbitIdle = 99;
   private lastPointer = { x: 0, y: 0 };
   zoom = 0;
@@ -67,7 +73,7 @@ export class InputManager {
       const dx = e.clientX - this.lastPointer.x;
       const dy = e.clientY - this.lastPointer.y;
       this.lastPointer = { x: e.clientX, y: e.clientY };
-      this.orbitYaw = Math.max(-2.6, Math.min(2.6, this.orbitYaw - dx * 0.006));
+      this.orbitYaw = Math.max(-this.orbitMax, Math.min(this.orbitMax, this.orbitYaw - dx * 0.006));
       this.orbitPitch = Math.max(-0.45, Math.min(0.9, this.orbitPitch + dy * 0.004));
       this.orbitIdle = 0;
     });
@@ -184,6 +190,11 @@ export class InputManager {
     return 0;
   }
 
+  /** Raw key state, for controls that act while the key is held. */
+  isDown(code: string): boolean {
+    return this.keys.has(code);
+  }
+
   update(dt: number): Controls {
     const pad = this.gamepadIndex !== null ? (navigator.getGamepads()[this.gamepadIndex] ?? null) : null;
     if (!pad) {
@@ -226,7 +237,7 @@ export class InputManager {
       this.keys.has('Space') || this.touchHandbrake || (activePad?.buttons[0]?.pressed ?? false);
 
     this.orbitIdle += dt;
-    if (!this.orbitActive && this.orbitIdle > 1.6) {
+    if (!this.orbitLock && !this.orbitActive && this.orbitIdle > 1.6) {
       const decay = Math.exp(-dt * 2.2);
       this.orbitYaw *= decay;
       this.orbitPitch *= decay;

@@ -33,6 +33,7 @@ import {
 } from './world/terrain.ts';
 import { NEIGHBOURHOODS, buildCity, syncProps } from './world/city.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
+import { buildPuddles } from './world/puddles.ts';
 import { buildVegetation, type VegetationSummary } from './world/vegetation.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
 import { createSky } from './render/sky.ts';
@@ -68,7 +69,9 @@ const FIXED = 1 / 120;
 
 /** Asphalte sec / mouillé : le mouillé fonce la chaussée (touche G). */
 const DRY_ASPHALT_COLOR = 0x8f9096;
-const WET_ASPHALT_COLOR = 0x5a5c63;
+const WET_ASPHALT_COLOR = 0x363b43;
+const DRY_PAD_COLOR = 0x808086;
+const WET_PAD_COLOR = 0x30353c;
 
 type FreeSpawn = 'city' | 'col' | 'rally' | 'summit';
 
@@ -161,6 +164,7 @@ async function boot(): Promise<void> {
   buildRoads(scene, materials);
   buildGradedRoads(scene, materials);
   buildArenaPads(world);
+  const puddles = buildPuddles(scene);
 
   await setLoading(0.68, 'Construction de la ville…');
   const props = buildCity(scene, world, materials);
@@ -249,7 +253,12 @@ async function boot(): Promise<void> {
   /** Last seconds of poses, and the replay currently playing them back. */
   const replayMemory = new ReplayBuffer();
   let replay: { poses: ReplayPose[]; elapsed: number; bike: boolean } | null = null;
+  /** Held rewind: the same poses, walked backwards until the key is released. */
+  let rewind: { poses: ReplayPose[]; elapsed: number } | null = null;
+  let rewindHeld = false;
   const replayQuat = new THREE.Quaternion();
+  /** Seconds of history travelled per real second while rewinding. */
+  const REWIND_RATE = 1.7;
   let gravelTimer = 0;
   /** Inspection camera, set from the debug hook: no effect unless used. */
   let freeCamera: { pos: THREE.Vector3; target: THREE.Vector3 } | null = null;
@@ -270,6 +279,8 @@ async function boot(): Promise<void> {
   const smokeTint = new THREE.Color();
   const SMOKE_WHITE = new THREE.Color(0xe4e4e6);
   const SMOKE_DUST = new THREE.Color(0xc7ad86);
+  /** Water thrown up by the rear tire: brighter and bluer than tire smoke. */
+  const SMOKE_SPRAY = new THREE.Color(0xd6e4ee);
   const carVelocity = new THREE.Vector3();
 
   const carPosition = new THREE.Vector3(SPAWN.x, spawnY, SPAWN.z);
@@ -631,6 +642,21 @@ async function boot(): Promise<void> {
     });
   }
 
+  /**
+   * Wet tarmac: much darker, and glossy enough to catch the sun. The puddles
+   * are the part that reads as water from the driving seat, so they are shown
+   * and hidden with the same switch.
+   */
+  function applyWetLook(wet: boolean): void {
+    materials.asphalt.color.setHex(wet ? WET_ASPHALT_COLOR : DRY_ASPHALT_COLOR);
+    materials.asphalt.roughness = wet ? 0.16 : 0.92;
+    materials.asphalt.metalness = wet ? 0.34 : 0.02;
+    materials.asphaltPad.color.setHex(wet ? WET_PAD_COLOR : DRY_PAD_COLOR);
+    materials.asphaltPad.roughness = wet ? 0.2 : 0.88;
+    materials.asphaltPad.metalness = wet ? 0.3 : 0.02;
+    puddles.setVisible(wet);
+  }
+
   /** Restores the balance the player left for the vehicle they are now on. */
   function applyVehicleMix(): void {
     const mix = mixForVehicle(vehicleMixes, ridingBike ? 'bike' : 'car');
@@ -933,7 +959,42 @@ async function boot(): Promise<void> {
   function stopReplay(): void {
     if (!replay) return;
     replay = null;
+    // Hand the chase camera back its normal range.
+    input.orbitMax = 2.6;
+    input.orbitYaw = Math.max(-2.6, Math.min(2.6, input.orbitYaw));
     hud.flash('Replay terminé', { duration: 700 });
+  }
+
+  /**
+   * Rewind: the car walks back along the poses it actually drove, body and
+   * all. The simulation is frozen meanwhile, so nothing moves but the clock.
+   */
+  function startRewind(): void {
+    if (replay || rewind) return;
+    const poses = replayMemory.snapshot();
+    if (poses.length < 2) return;
+    rewind = { poses, elapsed: poses[poses.length - 1].t };
+    hud.flash('Rewind', { accent: true, duration: 900 });
+  }
+
+  function stepRewind(dt: number): void {
+    if (!rewind) return;
+    rewind.elapsed = Math.max(0, rewind.elapsed - dt * REWIND_RATE);
+    const pose = samplePoses(rewind.poses, rewind.elapsed);
+    if (!pose) return;
+    replayQuat.set(pose.qx, pose.qy, pose.qz, pose.qw);
+    carForward.set(0, 0, -1).applyQuaternion(replayQuat);
+    // Heading only: the chassis is a yaw body, and respawn also clears the
+    // velocities so the car does not shoot off when the key is released.
+    vehicle.respawn(pose.x, pose.y, pose.z, Math.atan2(-carForward.x, -carForward.z));
+  }
+
+  function endRewind(): void {
+    if (!rewind) return;
+    // The rewind ate the poses ahead of the cursor: recording continues there.
+    replayMemory.truncate(rewind.elapsed, performance.now() / 1000);
+    rewind = null;
+    accumulator = 0;
   }
 
   function updateVisuals(dt: number): void {
@@ -1030,7 +1091,7 @@ async function boot(): Promise<void> {
     // only honest signal that the tires are spinning up or sliding: straight
     // line driving never emits, and a burnout at walking pace still will.
     carVelocity.set(state.velocity.x, state.velocity.y, state.velocity.z);
-    if (mode !== 'menu' && !paused && telemetry.speed > 1.5) {
+    if (mode !== 'menu' && !paused && !rewind && telemetry.speed > 1.5) {
       for (let i = 0; i < telemetry.wheels.length; i++) {
         const wheel = telemetry.wheels[i];
         const slip = Math.hypot(wheel.slipRatio * 1.15, wheel.slipAngle);
@@ -1041,12 +1102,15 @@ async function boot(): Promise<void> {
         }
         const load = Math.min(1, wheel.load / 5200);
         const bite = Math.min(1, (slip - 0.2) / 0.6);
-        smokeDebt[i] += dt * (16 + 100 * Math.pow(bite, 1.4)) * (0.4 + load * 0.6);
+        // Standing water sprays even when the tire grips, so its rate does not
+        // depend on slip the way tire smoke does.
+        const rate = spray ? 46 : 16 + 100 * Math.pow(bite, 1.4);
+        smokeDebt[i] += dt * rate * (0.4 + load * 0.6);
         while (smokeDebt[i] >= 1) {
           smokeDebt[i] -= 1;
           const surface = surfaceAt(wheel.worldPosition.x, wheel.worldPosition.z).kind;
-          smokeTint.copy(surface === 'asphalte' ? SMOKE_WHITE : SMOKE_DUST);
-          const intensity = Math.min(1, 0.35 + slip * 1.1);
+          smokeTint.copy(spray ? SMOKE_SPRAY : surface === 'asphalte' ? SMOKE_WHITE : SMOKE_DUST);
+          const intensity = spray ? 0.6 : Math.min(1, 0.35 + slip * 1.1);
           smokeFx.emit(
             wheel.worldPosition.x + (Math.random() - 0.5) * 0.34,
             wheel.worldPosition.y - wheel.suspensionLength + 0.05,
@@ -1119,6 +1183,23 @@ async function boot(): Promise<void> {
       camera.position.copy(freeCamera.pos);
       camera.lookAt(freeCamera.target);
       camera.fov = 55;
+      camera.updateProjectionMatrix();
+    } else if (replay) {
+      // Free orbit around the replayed car: the mouse chooses any angle round
+      // it and the wheel sets the distance, without the chase lag or the
+      // auto-return that would fight the player mid-shot.
+      const yaw = Math.atan2(-carForward.x, -carForward.z) + input.orbitYaw;
+      const pitch = Math.max(-0.05, 0.24 + input.orbitPitch);
+      const distance = Math.max(2.2, 6.2 + input.zoom * 1.6);
+      const horizontal = Math.cos(pitch) * distance;
+      const ground = terrain.sample(carPosition.x, carPosition.z);
+      camera.position.set(
+        carPosition.x + Math.sin(yaw) * horizontal,
+        Math.max(ground + 0.5, carPosition.y + Math.sin(pitch) * distance + 0.55),
+        carPosition.z + Math.cos(yaw) * horizontal,
+      );
+      camera.lookAt(carPosition.x, carPosition.y + 0.7, carPosition.z);
+      camera.fov += (58 - camera.fov) * Math.min(1, dt * 6);
       camera.updateProjectionMatrix();
     } else {
       chase.update(
@@ -1198,10 +1279,8 @@ async function boot(): Promise<void> {
     if (input.consume('tcs') && mode !== 'menu' && !ridingBike) setTcs(!tcsEnabled);
     if (input.consume('wet') && mode !== 'menu') {
       setWetRoad(!isWetRoad());
-      const wet = isWetRoad();
-      materials.asphalt.color.setHex(wet ? WET_ASPHALT_COLOR : DRY_ASPHALT_COLOR);
-      materials.asphaltPad.color.setHex(wet ? 0x5f6066 : 0x808086);
-      hud.flash(wet ? 'Route mouillée' : 'Route sèche', { duration: 900 });
+      applyWetLook(isWetRoad());
+      hud.flash(isWetRoad() ? 'Route mouillée' : 'Route sèche', { duration: 900 });
     }
     if (input.consume('camera') && mode !== 'menu') {
       hud.flash(cameraModeLabel(chase.nextMode()), { duration: 900 });
@@ -1212,6 +1291,15 @@ async function boot(): Promise<void> {
     if (mode !== 'menu' && input.consume('replay')) {
       toggleReplay();
     }
+
+    // Rewind is a held key, not a toggle: it stops exactly where it is let go.
+    const wantsRewind =
+      mode !== 'menu' && !paused && !replay && input.isDown('KeyX');
+    if (wantsRewind && !rewindHeld) startRewind();
+    if (!wantsRewind && rewindHeld) endRewind();
+    rewindHeld = wantsRewind;
+    input.orbitLock = Boolean(replay);
+    input.orbitMax = replay ? Math.PI : 2.6;
     if (!replay && mode !== 'menu' && !paused && input.consume('reset')) {
       respawn();
     }
@@ -1221,6 +1309,8 @@ async function boot(): Promise<void> {
         replay.elapsed += dt;
         if (replay.elapsed >= replay.poses[replay.poses.length - 1].t) stopReplay();
       }
+    } else if (rewind) {
+      if (!paused) stepRewind(dt);
     } else if (mode !== 'menu' && !paused) {
       simulate(dt, controls);
     }

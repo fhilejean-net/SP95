@@ -7,6 +7,7 @@ import { Race } from '../src/game/race.ts';
 import { BIKE_DEFAULT_SETUP, bikePresetLabel } from '../src/game/bikeTuning.ts';
 import { SURFACES, WET_GRIP, isWetRoad, setWetRoad, sprayActive, surfaceAt } from '../src/world/layout.ts';
 import { ReplayBuffer, samplePoses } from '../src/game/replay.ts';
+import { planPuddles } from '../src/world/puddles.ts';
 
 const pose = (x: number) => ({ x, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 });
 
@@ -34,6 +35,30 @@ test('the replay records at its own cadence and hands out copies', () => {
   buffer.reset();
   assert.equal(buffer.frames, 0);
   assert.equal(buffer.duration, 0);
+});
+
+test('puddles are planned on the tarmac, deterministically', () => {
+  const spots = planPuddles(40);
+  assert.ok(spots.length > 0 && spots.length <= 40, `count=${spots.length}`);
+  for (const spot of spots) {
+    assert.equal(surfaceAt(spot.x, spot.z).kind, 'asphalte', `${spot.x},${spot.z}`);
+    assert.ok(spot.sx > 0.4 && spot.sz > 0.3);
+  }
+  // Same seed, same puddles: screenshots stay comparable between runs.
+  assert.deepEqual(planPuddles(40), spots);
+});
+
+test('a rewind truncates the memory and recording continues from there', () => {
+  const buffer = new ReplayBuffer(50, 0.1);
+  for (let i = 0; i < 10; i++) buffer.record(pose(i), i * 0.5);
+  const cut = buffer.snapshot()[3].t;
+  buffer.truncate(cut, 100);
+  assert.equal(buffer.frames, 4);
+  // The next frame must not be dropped just because time stood still.
+  assert.equal(buffer.record(pose(99), 100.05), true);
+  const after = buffer.snapshot();
+  assert.equal(after[4].x, 99);
+  assert.ok(Math.abs(after[4].t - (cut + 0.05)) < 1e-9, `t=${after[4].t}`);
 });
 
 test('playback interpolates between poses and clamps the ends', () => {
