@@ -12,13 +12,13 @@ modifie pas le bloc d'état à la main.
 - `status: blocked` → deux échecs sur la même cause : s'arrêter et le dire à l'utilisateur.
 
 <!-- state:start -->
-status: running
-task: Wet surface lookups allocate in the physics hot path
+status: idle
+task: —
 cycle: 8
-started: 2026-10-27T06:50:58Z
-heartbeat: 2026-10-27T06:50:58Z
-commit: 52f3df4
-owner: session-12215
+started: —
+heartbeat: 2026-10-27T06:51:39Z
+commit: 303f4c1
+owner: session-12850
 <!-- state:end -->
 
 ## Journal
@@ -32,3 +32,4 @@ owner: session-12215
 | 5 | 2026-10-26 | Bike presets in the HUD | `5c62c62` | libellé du preset dans le HUD, vérifié de Série à Stunt sans rechargement, 56 tests |
 | 6 | 2026-10-27 | Wet-weather riding | `7ef586b` | route mouillée G, spray arrière, asphalte assombri, 2 tests ; tsc ok, 58/58 |
 | 7 | 2026-10-27 | Per-vehicle sound presets | `52f3df4` | presets de mix voiture/moto, maître partagé, migration de l'ancien mix ; 2 tests, tsc ok, 60/60, build ok |
+| 8 | 2026-10-27 | Wet surface lookups allocate in the physics hot path | `303f4c1` | table WET_SURFACES précalculée, grip inchangé, test d'identité ; tsc ok, 61/61 |

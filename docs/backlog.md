@@ -42,12 +42,13 @@ commit hash so the history stays readable.
   *Done when:* a focused test shows car and bike channel mixes restore independently across vehicle switches and master volume remains unchanged; `npm test` and `npx tsc --noEmit` pass.
   *Cycle 7:* `52f3df4` — presets de mix voiture/moto, maître partagé, migration de l'ancien mix ; 2 tests, tsc ok, 60/60, build ok
 
-- [ ] **Wet surface lookups allocate in the physics hot path** — `S`. Since cycle 6,
+- [x] ~~**Wet surface lookups allocate in the physics hot path**~~ — `S`. Since cycle 6,
   `surfaceAt` clones the dry surface object on every call once the road is wet, and both vehicle
   steps ask it for each wheel contact at 120 Hz (~480 objects/s). Build the wet variants of
   `SURFACES` once at module load and return those references instead.
   *Done when:* a focused test asserts `surfaceAt` returns the same object for two calls at one
   point while wet, the wet grip values are unchanged, and `npm test` / `npx tsc --noEmit` pass.
+  *Cycle 8:* `303f4c1` — table WET_SURFACES précalculée, grip inchangé, test d'identité ; tsc ok, 61/61
 
 - [ ] **Recent stunt replay** — `M`. Record a short rolling window of the player's recent vehicle poses and expose replay playback with a free camera, without recording the entire session or changing live scoring.
   *Done when:* a focused test verifies bounded recording and playback of the recorded poses, and a manual dev-server check confirms replay can be started and exited without affecting live vehicle state or score.
