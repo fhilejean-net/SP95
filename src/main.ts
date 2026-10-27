@@ -48,6 +48,7 @@ import { ChaseCamera, cameraModeLabel } from './core/camera.ts';
 import { InputManager } from './core/input.ts';
 import { Hud, type GameMode } from './game/hud.ts';
 import { DriftScore } from './game/drift.ts';
+import { ReplayBuffer, samplePoses, type ReplayPose } from './game/replay.ts';
 import { StuntScore } from './game/stunt.ts';
 import { BAVETTE_ANGLE } from './physics/wheelie.ts';
 import { Race } from './game/race.ts';
@@ -245,6 +246,10 @@ async function boot(): Promise<void> {
   let menuTime = 0;
   let lastSpeed = 0;
   let lastCrashTime = -10;
+  /** Last seconds of poses, and the replay currently playing them back. */
+  const replayMemory = new ReplayBuffer();
+  let replay: { poses: ReplayPose[]; elapsed: number; bike: boolean } | null = null;
+  const replayQuat = new THREE.Quaternion();
   let gravelTimer = 0;
   /** Inspection camera, set from the debug hook: no effect unless used. */
   let freeCamera: { pos: THREE.Vector3; target: THREE.Vector3 } | null = null;
@@ -800,6 +805,22 @@ async function boot(): Promise<void> {
     }
     if (steps >= 8) accumulator = 0;
 
+    // A rolling memory of poses for the replay. It never stores the physics
+    // state, so playing a replay back cannot feed the simulation.
+    const pose = vehicle.state;
+    replayMemory.record(
+      {
+        x: pose.position.x,
+        y: pose.position.y,
+        z: pose.position.z,
+        qx: pose.rotation.x,
+        qy: pose.rotation.y,
+        qz: pose.rotation.z,
+        qw: pose.rotation.w,
+      },
+      performance.now() / 1000,
+    );
+
     const telemetry = vehicle.telemetryState;
     const speed = telemetry.speed;
     const crash = lastSpeed - speed > 4.2 && lastSpeed > 9 && performance.now() / 1000 - lastCrashTime > 0.4;
@@ -890,7 +911,44 @@ async function boot(): Promise<void> {
     }
   }
 
+  /**
+   * Replays the recent poses. The simulation is frozen and scoring is not
+   * touched, so leaving the replay puts the player back exactly where the car
+   * actually is, score included.
+   */
+  function toggleReplay(): void {
+    if (replay) {
+      stopReplay();
+      return;
+    }
+    const poses = replayMemory.snapshot();
+    if (poses.length < 2 || poses[poses.length - 1].t < 0.4) {
+      hud.flash('Rien à rejouer encore', { duration: 900 });
+      return;
+    }
+    replay = { poses, elapsed: 0, bike: ridingBike };
+    hud.flash('Replay · V pour sortir', { accent: true, duration: 1500 });
+  }
+
+  function stopReplay(): void {
+    if (!replay) return;
+    replay = null;
+    hud.flash('Replay terminé', { duration: 700 });
+  }
+
   function updateVisuals(dt: number): void {
+    if (replay) {
+      const pose = samplePoses(replay.poses, replay.elapsed);
+      if (pose) {
+        replayQuat.set(pose.qx, pose.qy, pose.qz, pose.qw);
+        carPosition.set(pose.x, pose.y, pose.z);
+        carForward.set(0, 0, -1).applyQuaternion(replayQuat);
+        const group = replay.bike && bikeVisual ? bikeVisual.group : car.group;
+        group.position.copy(carPosition);
+        group.quaternion.copy(replayQuat);
+      }
+      return;
+    }
     const telemetry = vehicle.telemetryState;
     const state = vehicle.state;
     carPosition.set(state.position.x, state.position.y, state.position.z);
@@ -1151,11 +1209,19 @@ async function boot(): Promise<void> {
     if (mode !== 'menu' && !paused && ridingBike && input.consume('wheelie')) {
       triggerWheelie();
     }
-    if (mode !== 'menu' && !paused && input.consume('reset')) {
+    if (mode !== 'menu' && input.consume('replay')) {
+      toggleReplay();
+    }
+    if (!replay && mode !== 'menu' && !paused && input.consume('reset')) {
       respawn();
     }
 
-    if (mode !== 'menu' && !paused) {
+    if (replay) {
+      if (!paused) {
+        replay.elapsed += dt;
+        if (replay.elapsed >= replay.poses[replay.poses.length - 1].t) stopReplay();
+      }
+    } else if (mode !== 'menu' && !paused) {
       simulate(dt, controls);
     }
     updateVisuals(dt);

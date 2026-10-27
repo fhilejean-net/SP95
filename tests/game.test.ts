@@ -6,6 +6,51 @@ import { StuntScore } from '../src/game/stunt.ts';
 import { Race } from '../src/game/race.ts';
 import { BIKE_DEFAULT_SETUP, bikePresetLabel } from '../src/game/bikeTuning.ts';
 import { SURFACES, WET_GRIP, isWetRoad, setWetRoad, sprayActive, surfaceAt } from '../src/world/layout.ts';
+import { ReplayBuffer, samplePoses } from '../src/game/replay.ts';
+
+const pose = (x: number) => ({ x, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 });
+
+test('the replay memory keeps only the most recent poses', () => {
+  const buffer = new ReplayBuffer(10, 1);
+  for (let i = 0; i < 40; i++) buffer.record(pose(i), i);
+  assert.equal(buffer.frames, 10);
+  assert.equal(buffer.full, true);
+  const poses = buffer.snapshot();
+  assert.equal(poses[0].x, 30);
+  assert.equal(poses[poses.length - 1].x, 39);
+  // A long session costs what the capacity says, not what was driven.
+  assert.ok(buffer.duration <= 9, `duration=${buffer.duration}`);
+});
+
+test('the replay records at its own cadence and hands out copies', () => {
+  const buffer = new ReplayBuffer(100, 0.1);
+  assert.equal(buffer.record(pose(0), 0), true);
+  assert.equal(buffer.record(pose(1), 0.05), false);
+  assert.equal(buffer.record(pose(2), 0.1), true);
+  assert.equal(buffer.frames, 2);
+  const poses = buffer.snapshot();
+  poses[0].x = 999;
+  assert.equal(buffer.snapshot()[0].x, 0);
+  buffer.reset();
+  assert.equal(buffer.frames, 0);
+  assert.equal(buffer.duration, 0);
+});
+
+test('playback interpolates between poses and clamps the ends', () => {
+  assert.equal(samplePoses([], 1), null);
+  const poses = [
+    { ...pose(0), t: 0 },
+    { ...pose(10), t: 2, qy: 1, qw: 0 },
+  ];
+  const mid = samplePoses(poses, 1);
+  assert.ok(mid);
+  assert.equal(mid.x, 5);
+  // Half of a 180° yaw is 90°, on a unit quaternion.
+  assert.ok(Math.abs(mid.qy - Math.SQRT1_2) < 1e-6, `qy=${mid.qy}`);
+  assert.ok(Math.abs(Math.hypot(mid.qx, mid.qy, mid.qz, mid.qw) - 1) < 1e-9);
+  assert.equal(samplePoses(poses, -3)?.x, 0);
+  assert.equal(samplePoses(poses, 99)?.x, 10);
+});
 
 test('wet road lowers grip on every surface, stays dry by default', () => {
   assert.equal(isWetRoad(), false);
