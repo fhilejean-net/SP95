@@ -706,6 +706,17 @@ let wetRoad = false;
 /** Facteur de grip sur toute surface quand la route est mouillée. */
 export const WET_GRIP = 0.7;
 
+/**
+ * Variantes mouillées, calculées une fois. La physique demande la surface à
+ * chaque contact de roue (120 Hz × 4 roues) : elle doit recevoir une référence
+ * stable, jamais un objet neuf à chaque appel.
+ */
+const WET_SURFACES: Record<SurfaceKind, SurfaceInfo> = {
+  asphalte: { ...SURFACES.asphalte, grip: SURFACES.asphalte.grip * WET_GRIP },
+  terre: { ...SURFACES.terre, grip: SURFACES.terre.grip * WET_GRIP },
+  herbe: { ...SURFACES.herbe, grip: SURFACES.herbe.grip * WET_GRIP },
+};
+
 export function isWetRoad(): boolean {
   return wetRoad;
 }
@@ -722,7 +733,7 @@ export function sprayActive(speed: number, contact: boolean): boolean {
 /** Which surface a wheel is rolling on, wet or dry. Sharp edges, no grid blurring. */
 export function surfaceAt(x: number, z: number): SurfaceInfo {
   const info = drySurfaceAt(x, z);
-  return wetRoad ? { ...info, grip: info.grip * WET_GRIP } : info;
+  return wetRoad ? WET_SURFACES[info.kind] : info;
 }
 
 function drySurfaceAt(x: number, z: number): SurfaceInfo {

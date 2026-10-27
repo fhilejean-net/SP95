@@ -23,6 +23,21 @@ test('wet road lowers grip on every surface, stays dry by default', () => {
   }
 });
 
+test('wet surface lookups reuse one object instead of allocating', () => {
+  setWetRoad(true);
+  try {
+    const first = surfaceAt(0, 0);
+    const second = surfaceAt(0, 0);
+    // The physics asks for this per wheel contact at 120 Hz: same reference.
+    assert.equal(first, second);
+    assert.equal(first.grip, SURFACES[first.kind].grip * WET_GRIP);
+  } finally {
+    setWetRoad(false);
+  }
+  // Dry lookups keep pointing at the shared table too.
+  assert.equal(surfaceAt(0, 0), surfaceAt(0, 0));
+});
+
 test('rear spray only on a moving wheel in contact on a wet road', () => {
   setWetRoad(false);
   assert.equal(sprayActive(10, true), false);
