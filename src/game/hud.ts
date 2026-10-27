@@ -6,6 +6,7 @@ import {
   SAMPLED_ROADS,
   SUMMIT,
   WORLD_SIZE,
+  CIRCUIT,
 } from '../world/layout.ts';
 import { Race, type RaceSnapshot } from './race.ts';
 
@@ -73,6 +74,21 @@ export class Hud {
     const cy = this.mapCenter;
     const s = this.mapScale;
     ctx.clearRect(0, 0, this.minimapBase.width, this.minimapBase.height);
+
+    // Le circuit : son emprise, en pointill\u00e9s, pour qu'on sache o\u00f9 il se trouve.
+    const circuitHalfX = CIRCUIT.plateHalfX * CIRCUIT.scale;
+    const circuitHalfZ = CIRCUIT.plateHalfZ * CIRCUIT.scale;
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = 'rgba(226,232,240,0.55)';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(
+      cx + (CIRCUIT.cx - circuitHalfX) * s,
+      cy + (CIRCUIT.cz - circuitHalfZ) * s,
+      circuitHalfX * 2 * s,
+      circuitHalfZ * 2 * s,
+    );
+    ctx.restore();
 
     for (const road of SAMPLED_ROADS) {
       if (road.def.id === 'ring') continue;

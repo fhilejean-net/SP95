@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 
-export const WORLD_SIZE = 2000;
-export const TERRAIN_SEGMENTS = 300;
+// Le monde s'est élargi à l'est pour faire tenir le circuit de Suzuka : la
+// ceinture de montagnes du bord et la grille de terrain suivent la taille.
+export const WORLD_SIZE = 2250;
+export const TERRAIN_SEGMENTS = 338;
 
 export type SurfaceKind = 'asphalte' | 'terre' | 'herbe';
 
@@ -121,6 +123,50 @@ export const CITY = {
 };
 
 export const SPAWN = { x: -60, z: 62, heading: 0 };
+
+/**
+ * Le circuit (modèle Suzuka 2001) posé à l'est de la ceinture, dans les champs
+ * libres. Le modèle porte sa propre dalle de terrain : le terrain de jeu la
+ * suit, donc tout ce qui se pose au sol doit connaître son emprise.
+ */
+export const CIRCUIT = {
+  cx: 800,
+  cz: 0,
+  /** Rotation autour de Y, radians. */
+  yaw: 0,
+  /** Suzuka fait 1,6 km de long : à 0,45 la piste tient dans le monde. */
+  scale: 0.45,
+  /** Demi-emprise de la dalle du modèle, en unités du modèle (mètres). */
+  plateHalfX: 580,
+  plateHalfZ: 1094,
+  /**
+   * Hauteur du sol du circuit, posée par le module circuit avant la génération
+   * du terrain. Sans elle, le terrain naturel reste seul en place.
+   */
+  ground: null as ((x: number, z: number) => number | null) | null,
+  /** Revêtement sous la roue (asphalte de piste, bac à gravier, pelouse). */
+  surface: null as ((x: number, z: number) => SurfaceKind | null) | null,
+};
+
+/** Distance au bord de l'emprise du circuit, négative à l'intérieur. */
+export function circuitEdgeDistance(x: number, z: number): number {
+  const dx = x - CIRCUIT.cx;
+  const dz = z - CIRCUIT.cz;
+  const c = Math.cos(CIRCUIT.yaw);
+  const s = Math.sin(CIRCUIT.yaw);
+  // Rotation inverse : on ramène le point dans le repère du modèle.
+  const lx = dx * c - dz * s;
+  const lz = dx * s + dz * c;
+  const ex = Math.abs(lx) - CIRCUIT.plateHalfX * CIRCUIT.scale;
+  const ez = Math.abs(lz) - CIRCUIT.plateHalfZ * CIRCUIT.scale;
+  return Math.max(ex, ez);
+}
+
+/**
+ * Longueur de la pente qui raccorde la dalle du circuit au terrain : elle se
+ * construit hors de la dalle, dans le module circuit.
+ */
+export const CIRCUIT_FADE = 45;
 
 /** Race start sits on the widest, straightest part of the ring. */
 export const RACE_START_INDEX_FRACTION = 0.02;
@@ -303,7 +349,9 @@ export const DIRT_ROADS: RoadDef[] = [RALLY_LOOP, RALLY_LINK];
 
 function edgeRidge(x: number, z: number): number {
   const r = Math.max(Math.abs(x), Math.abs(z));
-  const t = smoothstep(640, 980, r);
+  // La ceinture suit la taille du monde : elle doit rester au bord, pas se
+  // retrouver au milieu maintenant que le monde s'est élargi à l'est.
+  const t = smoothstep(WORLD_SIZE * 0.32, WORLD_SIZE * 0.49, r);
   if (t <= 0) return 0;
   return t * (34 + 22 * Math.sin(x * 0.006) * Math.cos(z * 0.007));
 }
@@ -737,6 +785,10 @@ export function surfaceAt(x: number, z: number): SurfaceInfo {
 }
 
 function drySurfaceAt(x: number, z: number): SurfaceInfo {
+  // Le circuit a son propre revêtement : bac à gravier compris, il n'y a pas de
+  // rayon à tirer dans les cailloux pour savoir si la roue accroche.
+  const circuit = CIRCUIT.surface?.(x, z);
+  if (circuit) return SURFACES[circuit];
   const engineered = nearestGraded(x, z);
   if (engineered && engineered.dist <= engineered.width * 0.5 + 0.4) {
     return engineered.road.dirt ? SURFACES.terre : SURFACES.asphalte;
@@ -752,6 +804,19 @@ function drySurfaceAt(x: number, z: number): SurfaceInfo {
 
 /** Final terrain height: roads are flat to their own level, pads are level. */
 export function heightAt(x: number, z: number): number {
+  // La dalle du circuit porte son propre relief : elle s'impose là où elle
+  // existe. Son pourtour est déjà fondu dans le terrain par l'échantillonnage.
+  const circuitGround = CIRCUIT.ground?.(x, z);
+  if (circuitGround != null) return circuitGround;
+  return terrainBaseHeight(x, z);
+}
+
+/**
+ * Terrain de jeu sans le circuit : relief naturel, routes encaissées et aires
+ * planes. C'est aussi la cible du raccord de la dalle du circuit, qui a besoin
+ * de la hauteur définitive et pas du seul relief naturel.
+ */
+export function terrainBaseHeight(x: number, z: number): number {
   let h = naturalHeightAt(x, z);
 
   // The two arenas are levelled first: a road cut must be able to win over the

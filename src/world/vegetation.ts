@@ -6,6 +6,8 @@ import {
   DIRT_TRACKS,
   SAMPLED_ROADS,
   SUMMIT,
+  WORLD_SIZE,
+  circuitEdgeDistance,
   heightAt,
   padEdgeDistance,
   roadClearance,
@@ -410,7 +412,9 @@ export async function buildVegetation(
       z = Math.sin(angle) * radius;
     }
 
-    if (Math.abs(x) > 960 || Math.abs(z) > 960) continue;
+    if (Math.abs(x) > WORLD_SIZE / 2 - 30 || Math.abs(z) > WORLD_SIZE / 2 - 30) continue;
+    // Le parc du circuit a ses propres arbres : pas de forêt plantée dessus.
+    if (circuitEdgeDistance(x, z) < 0) continue;
     if (x > CITY.minX - 8 && x < CITY.maxX + 8 && z > CITY.minZ - 8 && z < CITY.maxZ + 8) continue;
     if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius + 9) continue;
     if (padEdgeDistance(x, z) < 9) continue;
@@ -518,7 +522,8 @@ export async function buildVegetation(
       z = -420 + Math.sin(angle) * radius;
     }
 
-    if (Math.abs(x) > 960 || Math.abs(z) > 960) continue;
+    if (Math.abs(x) > WORLD_SIZE / 2 - 30 || Math.abs(z) > WORLD_SIZE / 2 - 30) continue;
+    if (circuitEdgeDistance(x, z) < 0) continue;
     if (surfaceAt(x, z).kind !== 'herbe') continue;
     if (roadClearance(x, z) < 0.4) continue;
     const y = heightAt(x, z);

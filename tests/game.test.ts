@@ -5,7 +5,27 @@ import { DriftScore } from '../src/game/drift.ts';
 import { StuntScore } from '../src/game/stunt.ts';
 import { Race } from '../src/game/race.ts';
 import { BIKE_DEFAULT_SETUP, bikePresetLabel } from '../src/game/bikeTuning.ts';
-import { SURFACES, WET_GRIP, isWetRoad, setWetRoad, sprayActive, surfaceAt } from '../src/world/layout.ts';
+import { fadeGround } from '../src/world/circuit.ts';
+// Le circuit est posé par world/circuit.ts au chargement : ces tests vérifient
+// le contrat du layout (emprise, sol, revêtement), pas le chargement du GLB.
+import {
+  CIRCUIT,
+  CIRCUIT_FADE,
+  DIRT_TRACKS,
+  MOUNTAIN_ROADS,
+  SAMPLED_ROADS,
+  SPAWN,
+  SURFACES,
+  WET_GRIP,
+  WORLD_SIZE,
+  circuitEdgeDistance,
+  heightAt,
+  isWetRoad,
+  setWetRoad,
+  terrainBaseHeight,
+  sprayActive,
+  surfaceAt,
+} from '../src/world/layout.ts';
 import { ReplayBuffer, samplePoses } from '../src/game/replay.ts';
 import { planPuddles } from '../src/world/puddles.ts';
 
@@ -250,6 +270,71 @@ test('race formatTime prints minute:second.hundredths', () => {
   assert.equal(Race.formatTime(0), '0:00.00');
   assert.equal(Race.formatTime(61.239), '1:01.23');
   assert.equal(Race.formatTime(null), '—');
+});
+
+test('the circuit fits in the world, clear of every road', () => {
+  const halfX = CIRCUIT.plateHalfX * CIRCUIT.scale;
+  const halfZ = CIRCUIT.plateHalfZ * CIRCUIT.scale;
+  // L'emprise tient dans le monde, avec la pente qui la raccorde au terrain.
+  assert.ok(Math.abs(CIRCUIT.cx) + halfX + CIRCUIT_FADE < WORLD_SIZE / 2, 'emprise trop à l\u2019est');
+  assert.ok(Math.abs(CIRCUIT.cz) + halfZ + CIRCUIT_FADE < WORLD_SIZE / 2, 'emprise trop au nord ou au sud');
+  // Aucune route du jeu ne traverse la piste : une rue qui passe sous la dalle
+  // ressortirait à travers l'asphalte du circuit.
+  for (const road of [...SAMPLED_ROADS, ...MOUNTAIN_ROADS, ...DIRT_TRACKS]) {
+    for (const sample of road.samples) {
+      const edge = circuitEdgeDistance(sample.x, sample.z);
+      assert.ok(edge > 12, `${road.def.id} passe à ${edge.toFixed(1)} m de l'emprise`);
+    }
+  }
+  // Le centre de l'emprise est bien à l'intérieur, et loin du bord.
+  assert.ok(circuitEdgeDistance(CIRCUIT.cx, CIRCUIT.cz) < -100);
+});
+
+test('the circuit ground wins inside its footprint, the map is untouched outside', () => {
+  const saved = CIRCUIT.ground;
+  const inside = CIRCUIT.cx + (CIRCUIT.plateHalfX - 80) * CIRCUIT.scale;
+  try {
+    CIRCUIT.ground = (x, z) => (circuitEdgeDistance(x, z) < 0 ? 120 : null);
+    assert.equal(heightAt(CIRCUIT.cx, CIRCUIT.cz), 120);
+    assert.equal(heightAt(inside, CIRCUIT.cz), 120);
+
+    // Hors de la dalle, la hauteur de jeu n'est pas touchée du tout.
+    const edgeX = CIRCUIT.cx + CIRCUIT.plateHalfX * CIRCUIT.scale;
+    for (const x of [edgeX + 1, edgeX + 200, edgeX + 600]) {
+      assert.equal(heightAt(x, CIRCUIT.cz), terrainBaseHeight(x, CIRCUIT.cz));
+    }
+  } finally {
+    CIRCUIT.ground = saved;
+  }
+});
+
+test('the circuit slab fades into the ground instead of ending on a cliff', () => {
+  // Le bord de la dalle, puis le terrain à CIRCUIT_FADE mètres : entre les deux
+  // le talus descend sans se casser, et au-delà c'est le terrain qui gagne.
+  const plate = 40;
+  const base = 5;
+  assert.equal(fadeGround(plate, base, 0), plate);
+  assert.equal(fadeGround(plate, base, CIRCUIT_FADE), base);
+  assert.equal(fadeGround(plate, base, CIRCUIT_FADE * 4), base);
+  assert.ok(Math.abs(fadeGround(plate, base, CIRCUIT_FADE / 2) - (plate + base) / 2) < 1e-9);
+  let previous = plate;
+  for (let d = 0; d <= CIRCUIT_FADE; d += CIRCUIT_FADE / 12) {
+    const value = fadeGround(plate, base, d);
+    assert.ok(value <= previous + 1e-9, `le talus remonte à ${d} m`);
+    previous = value;
+  }
+});
+
+test('the wheels read the circuit surface where the model covers the ground', () => {
+  const saved = CIRCUIT.surface;
+  try {
+    CIRCUIT.surface = (x, z) => (circuitEdgeDistance(x, z) < 0 ? 'asphalte' : null);
+    assert.equal(surfaceAt(CIRCUIT.cx, CIRCUIT.cz).kind, 'asphalte');
+    // Hors emprise le circuit ne dit rien : la ville reste sur son bitume.
+    assert.equal(surfaceAt(SPAWN.x, SPAWN.z).kind, 'asphalte');
+  } finally {
+    CIRCUIT.surface = saved;
+  }
 });
 
 test('the HUD names the preset only while the setup matches it', () => {

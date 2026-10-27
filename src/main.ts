@@ -32,6 +32,7 @@ import {
   roadEnds,
 } from './world/terrain.ts';
 import { NEIGHBOURHOODS, buildCity, syncProps } from './world/city.ts';
+import { buildCircuit, circuitFloor } from './world/circuit.ts';
 import { BUILDINGS } from './world/buildings.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
 import { buildPuddles } from './world/puddles.ts';
@@ -74,7 +75,7 @@ const WET_ASPHALT_COLOR = 0x6b7178;
 const DRY_PAD_COLOR = 0x808086;
 const WET_PAD_COLOR = 0x63696f;
 
-type FreeSpawn = 'city' | 'col' | 'rally' | 'summit';
+type FreeSpawn = 'city' | 'col' | 'rally' | 'summit' | 'circuit';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const loading = document.getElementById('loading') as HTMLDivElement;
@@ -156,9 +157,20 @@ async function boot(): Promise<void> {
   const sky = createSky(scene, renderer);
   const materials = createEnvironmentMaterials();
 
-  await setLoading(0.3, 'Génération du terrain…');
+  await setLoading(0.24, 'Pose du circuit de Suzuka…');
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = FIXED;
+  // Le circuit doit être posé avant le terrain : sa dalle définit le sol de son
+  // emprise, et la grille de terrain se cale dessus.
+  const circuit = await buildCircuit(scene, world, {
+    anisotropy: renderer.capabilities.getMaxAnisotropy(),
+  });
+  console.log(
+    `Circuit de Suzuka : ${circuit.meshes} maillages, ${circuit.triangles} triangles, ` +
+      `chargé en ${circuit.loadMs} ms, collider en ${circuit.buildMs} ms`,
+  );
+
+  await setLoading(0.3, 'Génération du terrain…');
   const terrain = buildTerrain(scene, world, materials);
 
   await setLoading(0.52, 'Tracé des routes…');
@@ -325,7 +337,8 @@ async function boot(): Promise<void> {
   const updateMenuBest = () => refreshMenuBest();
 
   function setCarPose(x: number, z: number, heading: number): void {
-    const ground = terrain.sample(x, z);
+    // Sur la piste, la surface du circuit est au-dessus du terrain de jeu.
+    const ground = Math.max(terrain.sample(x, z), circuitFloor(x, z) ?? -Infinity);
     const height = ridingBike ? bikeSpec.cgHeight : rideHeightFor(spec);
     vehicle.respawn(x, ground + height, z, heading);
     // Let the springs settle so the tires sit on the ground immediately.
@@ -392,6 +405,11 @@ async function boot(): Promise<void> {
       drift.reset();
       lastSpeed = 0;
       hud.flash('Sommet', { duration: 1300 });
+    } else if (spawn === 'circuit') {
+      setCarPose(circuit.spawn.x, circuit.spawn.z, circuit.spawn.heading);
+      drift.reset();
+      lastSpeed = 0;
+      hud.flash('Circuit de Suzuka', { duration: 1600 });
     } else {
       spawnFree();
       hud.flash('Conduite libre', { duration: 1100 });
@@ -757,6 +775,9 @@ async function boot(): Promise<void> {
   document.getElementById('btn-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-pause-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-col')?.addEventListener('click', () => startMode('free', 'col'));
+  document
+    .getElementById('btn-circuit')
+    ?.addEventListener('click', () => startMode('free', 'circuit'));
   document.getElementById('btn-pause-col')?.addEventListener('click', () => startMode('free', 'col'));
   document.getElementById('btn-rally')?.addEventListener('click', () => startMode('free', 'rally'));
   document.getElementById('btn-pause-rally')?.addEventListener('click', () => startMode('free', 'rally'));
@@ -1530,6 +1551,7 @@ async function boot(): Promise<void> {
     startFree: () => startMode('free'),
     startRace: () => startMode('race'),
     startCol: () => startMode('free', 'col'),
+    startCircuit: () => startMode('free', 'circuit'),
     startRally: () => startMode('free', 'rally'),
     startSummit: () => startMode('free', 'summit'),
     teleport: (x: number, z: number, heading: number) => setCarPose(x, z, heading),
@@ -1612,6 +1634,7 @@ declare global {
       startFree: () => void;
       startRace: () => void;
       startCol: () => void;
+      startCircuit: () => void;
       startRally: () => void;
       startSummit: () => void;
       teleport: (x: number, z: number, heading: number) => void;
