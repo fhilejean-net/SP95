@@ -75,20 +75,25 @@ export class Hud {
     const s = this.mapScale;
     ctx.clearRect(0, 0, this.minimapBase.width, this.minimapBase.height);
 
-    // Le circuit : son emprise, en pointill\u00e9s, pour qu'on sache o\u00f9 il se trouve.
-    const circuitHalfX = CIRCUIT.plateHalfX * CIRCUIT.scale;
-    const circuitHalfZ = CIRCUIT.plateHalfZ * CIRCUIT.scale;
-    ctx.save();
-    ctx.setLineDash([3, 3]);
-    ctx.strokeStyle = 'rgba(226,232,240,0.55)';
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(
-      cx + (CIRCUIT.cx - circuitHalfX) * s,
-      cy + (CIRCUIT.cz - circuitHalfZ) * s,
-      circuitHalfX * 2 * s,
-      circuitHalfZ * 2 * s,
-    );
-    ctx.restore();
+    // La carte du circuit n'a que son emprise : sa dalle, en pointillés. Rien
+    // d'autre n'existe autour, la mini-carte de la ville ne doit pas s'y
+    // superposer (ses routes sont dans les données, pas dans ce monde-ci).
+    if (CIRCUIT.active) {
+      const circuitHalfX = CIRCUIT.plateHalfX * CIRCUIT.scale;
+      const circuitHalfZ = CIRCUIT.plateHalfZ * CIRCUIT.scale;
+      ctx.save();
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = 'rgba(226,232,240,0.55)';
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(
+        cx + (CIRCUIT.cx - circuitHalfX) * s,
+        cy + (CIRCUIT.cz - circuitHalfZ) * s,
+        circuitHalfX * 2 * s,
+        circuitHalfZ * 2 * s,
+      );
+      ctx.restore();
+      return;
+    }
 
     for (const road of SAMPLED_ROADS) {
       if (road.def.id === 'ring') continue;
@@ -173,10 +178,12 @@ export class Hud {
     ctx.fillRect(cx + RACE_START.x * s - 1.5, cy + RACE_START.z * s - 1.5, 3, 3);
   }
 
-  setMode(mode: GameMode): void {
+  /** `track` remplace le libellé du mode quand la carte n'est pas la ville. */
+  setMode(mode: GameMode, track?: string): void {
     this.racePanel.classList.toggle('hidden', mode !== 'race');
     this.modeBadge.textContent =
-      mode === 'race' ? 'Course · 2 tours' : mode === 'free' ? 'Conduite libre' : 'SP95';
+      track ??
+      (mode === 'race' ? 'Course · 2 tours' : mode === 'free' ? 'Conduite libre' : 'SP95');
   }
 
   updateSpeed(kmh: number, gear: number, rpm: number, redline: number): void {

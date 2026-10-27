@@ -32,10 +32,11 @@ import {
   roadEnds,
 } from './world/terrain.ts';
 import { NEIGHBOURHOODS, buildCity, syncProps } from './world/city.ts';
-import { buildCircuit, circuitFloor } from './world/circuit.ts';
+import { buildCircuit, circuitFloor, type CircuitHandles } from './world/circuit.ts';
+import { MAP_ID, mapUrl, type MapId } from './game/maps.ts';
 import { BUILDINGS } from './world/buildings.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
-import { buildPuddles } from './world/puddles.ts';
+import { buildPuddles, type PuddleField } from './world/puddles.ts';
 import { buildVegetation, type VegetationSummary } from './world/vegetation.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
 import { createSky } from './render/sky.ts';
@@ -76,6 +77,10 @@ const DRY_PAD_COLOR = 0x808086;
 const WET_PAD_COLOR = 0x63696f;
 
 type FreeSpawn = 'city' | 'col' | 'rally' | 'summit' | 'circuit';
+
+/** La carte de la session : la ville, ou le circuit seul sur la sienne. */
+const MAP = MAP_ID;
+const SUZUKA_MAP = MAP === 'suzuka';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const loading = document.getElementById('loading') as HTMLDivElement;
@@ -131,6 +136,12 @@ function readBestLap(): number | null {
 }
 
 function refreshMenuBest(): void {
+  // Sur la carte du circuit il n'y a pas de course à la ceinture : le meilleur
+  // tour affiché serait celui d'une autre carte.
+  if (SUZUKA_MAP) {
+    menuBest.textContent = 'Circuit de Suzuka — la piste 2001 sur sa propre carte.';
+    return;
+  }
   const best = readBestLap();
   menuBest.textContent =
     best === null ? 'Aucun temps enregistré — lance une course pour établir la référence.'
@@ -157,42 +168,62 @@ async function boot(): Promise<void> {
   const sky = createSky(scene, renderer);
   const materials = createEnvironmentMaterials();
 
-  await setLoading(0.24, 'Pose du circuit de Suzuka…');
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = FIXED;
+
   // Le circuit doit être posé avant le terrain : sa dalle définit le sol de son
-  // emprise, et la grille de terrain se cale dessus.
-  const circuit = await buildCircuit(scene, world, {
-    anisotropy: renderer.capabilities.getMaxAnisotropy(),
-  });
-  console.log(
-    `Circuit de Suzuka : ${circuit.meshes} maillages, ${circuit.triangles} triangles, ` +
-      `chargé en ${circuit.loadMs} ms, collider en ${circuit.buildMs} ms`,
-  );
+  // emprise, et la grille de terrain se cale dessus. Il n'existe que sur sa
+  // propre carte : la ville ne l'a plus du tout.
+  let circuit: CircuitHandles | null = null;
+  if (SUZUKA_MAP) {
+    await setLoading(0.26, 'Pose du circuit de Suzuka…');
+    circuit = await buildCircuit(scene, world, {
+      anisotropy: renderer.capabilities.getMaxAnisotropy(),
+    });
+    console.log(
+      `Circuit de Suzuka : ${circuit.meshes} maillages, ${circuit.triangles} triangles, ` +
+        `chargé en ${circuit.loadMs} ms, collider en ${circuit.buildMs} ms`,
+    );
+  }
 
-  await setLoading(0.3, 'Génération du terrain…');
+  await setLoading(SUZUKA_MAP ? 0.42 : 0.3, 'Génération du terrain…');
+  // Le terrain déborde du monde jouable et s'y redresse en barrière (voir
+  // layout.borderHeight) : on ne peut plus sortir de la carte.
   const terrain = buildTerrain(scene, world, materials);
+  /** Sol de jeu sous une roue : la dalle du circuit passe avant le terrain. */
+  const groundAt = (x: number, z: number) =>
+    Math.max(terrain.sample(x, z), circuitFloor(x, z) ?? -Infinity);
 
-  await setLoading(0.52, 'Tracé des routes…');
-  buildRoads(scene, materials);
-  buildGradedRoads(scene, materials);
-  buildArenaPads(world);
-  const puddles = buildPuddles(scene);
-
-  await setLoading(0.68, 'Construction de la ville…');
-  const props = await buildCity(scene, world, materials);
-
-  await setLoading(0.74, 'Mobilier urbain…');
-  const streetKit = await buildStreetKit(scene, world, materials);
+  // Ce que la carte de la ville a en plus : routes, ville, mobilier, arbres et
+  // circuit de la ceinture. Sur la carte du circuit, tout cela reste vide.
+  let puddles: PuddleField | null = null;
+  let props: Awaited<ReturnType<typeof buildCity>> = [];
+  let streetKit: StreetKitSummary = { models: 0, instances: 0, colliders: 0, roadMaterials: [] };
+  let vegetation: VegetationSummary = { trees: 0, grass: 0 };
+  let checkpoints: THREE.Vector3[] = [];
   /** Dry colour of each street-kit road tile, so the wet tint can be undone. */
   const streetKitDryColors = new Map<THREE.MeshStandardMaterial, THREE.Color>();
 
-  await setLoading(0.8, 'Plantation des arbres…');
-  const vegetation = await buildVegetation(scene, world, lowFx, sky.sunDirection);
+  if (!SUZUKA_MAP) {
+    await setLoading(0.52, 'Tracé des routes…');
+    buildRoads(scene, materials);
+    buildGradedRoads(scene, materials);
+    buildArenaPads(world);
+    puddles = buildPuddles(scene);
 
-  await setLoading(0.85, 'Installation du circuit…');
-  const checkpoints = buildRaceCheckpoints(12);
-  buildRaceGates(scene, materials, checkpoints);
+    await setLoading(0.68, 'Construction de la ville…');
+    props = await buildCity(scene, world, materials);
+
+    await setLoading(0.74, 'Mobilier urbain…');
+    streetKit = await buildStreetKit(scene, world, materials);
+
+    await setLoading(0.8, 'Plantation des arbres…');
+    vegetation = await buildVegetation(scene, world, lowFx, sky.sunDirection);
+
+    await setLoading(0.85, 'Installation du circuit…');
+    checkpoints = buildRaceCheckpoints(12);
+    buildRaceGates(scene, materials, checkpoints);
+  }
 
   await setLoading(0.88, 'Montage de la voiture…');
   let setup: Setup = loadSetup();
@@ -201,16 +232,20 @@ async function boot(): Promise<void> {
   // Drop the car in at its ride height: spawning higher makes it land on the
   // bump stops and bounce before the player can drive. Taller tires lift it.
   const rideHeightFor = (s: VehicleSpec) => s.rideHeight + s.wheelRadius - 0.12 + 0.04;
-  const spawnY = terrain.sample(SPAWN.x, SPAWN.z) + rideHeightFor(spec);
+  /** Où la voiture attend : la ligne des stands sur le circuit, la rue en ville. */
+  const startPose = circuit
+    ? { x: circuit.spawn.x, z: circuit.spawn.z, heading: circuit.spawn.heading }
+    : { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading };
+  const spawnY = groundAt(startPose.x, startPose.z) + rideHeightFor(spec);
   let carVehicle: Vehicle = new Vehicle(
     world,
-    { x: SPAWN.x, y: spawnY, z: SPAWN.z, heading: SPAWN.heading, surfaceAt },
+    { x: startPose.x, y: spawnY, z: startPose.z, heading: startPose.heading, surfaceAt },
     spec,
   );
   /** Whichever vehicle is being ridden right now. */
   let vehicle: Vehicle | Bike = carVehicle;
   /** Where the car stands while the bike is out; rebuilt in place by the garage. */
-  let carPose = { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading };
+  let carPose = { x: startPose.x, z: startPose.z, heading: startPose.heading };
   let bike: Bike | null = null;
   let bikeVisual: BikeVisual | null = null;
   let bikeSetup: BikeSetup = loadBikeSetup();
@@ -230,7 +265,7 @@ async function boot(): Promise<void> {
     console.warn('Modèle de voiture indisponible, voiture de secours.', error);
   }
   car.setWheelRadius(spec.wheelRadius);
-  car.group.position.set(SPAWN.x, spawnY, SPAWN.z);
+  car.group.position.set(startPose.x, spawnY, startPose.z);
   scene.add(car.group);
 
   const input = new InputManager(canvas);
@@ -301,14 +336,14 @@ async function boot(): Promise<void> {
   const SMOKE_SPRAY = new THREE.Color(0xd6e4ee);
   const carVelocity = new THREE.Vector3();
 
-  const carPosition = new THREE.Vector3(SPAWN.x, spawnY, SPAWN.z);
-  const carForward = forwardFromHeading(SPAWN.heading);
+  const carPosition = new THREE.Vector3(startPose.x, spawnY, startPose.z);
+  const carForward = forwardFromHeading(startPose.heading);
   /** Ground attitude under the bike, smoothed: the visual follows the hill. */
   const slopeState = { pitch: 0, roll: 0 };
   const slopeNormal = new THREE.Vector3();
   const localNormal = new THREE.Vector3();
   const bodyQuat = new THREE.Quaternion();
-  const cameraGround = (x: number, z: number) => terrain.sample(x, z);
+  const cameraGround = (x: number, z: number) => groundAt(x, z);
 
   /** How much of the car -> camera segment is free of walls and ground. */
   const cameraClearance = (from: THREE.Vector3, to: THREE.Vector3): number => {
@@ -338,7 +373,7 @@ async function boot(): Promise<void> {
 
   function setCarPose(x: number, z: number, heading: number): void {
     // Sur la piste, la surface du circuit est au-dessus du terrain de jeu.
-    const ground = Math.max(terrain.sample(x, z), circuitFloor(x, z) ?? -Infinity);
+    const ground = groundAt(x, z);
     const height = ridingBike ? bikeSpec.cgHeight : rideHeightFor(spec);
     vehicle.respawn(x, ground + height, z, heading);
     // Let the springs settle so the tires sit on the ground immediately.
@@ -361,7 +396,7 @@ async function boot(): Promise<void> {
   }
 
   function spawnFree(): void {
-    setCarPose(SPAWN.x, SPAWN.z, SPAWN.heading);
+    setCarPose(startPose.x, startPose.z, startPose.heading);
     drift.reset();
     lastSpeed = 0;
   }
@@ -370,13 +405,18 @@ async function boot(): Promise<void> {
     // A menu button keeps the focus when its overlay is hidden, and Space would
     // then re-click it instead of pulling the handbrake.
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    mode = next;
-    freeSpawn = spawn;
+    // Sur la carte du circuit il n'y a qu'une piste : les départs de la ville y
+    // retombent sur la ligne droite des stands, et la course sur la ceinture n'y
+    // existe pas.
+    const target: FreeSpawn = SUZUKA_MAP ? 'circuit' : spawn;
+    const wanted: GameMode = next === 'race' && SUZUKA_MAP ? 'free' : next;
+    mode = wanted;
+    freeSpawn = target;
     paused = false;
     menu.classList.add('hidden');
     pause.classList.add('hidden');
     hudElement.classList.remove('hidden');
-    hud.setMode(next);
+    hud.setMode(wanted, SUZUKA_MAP ? 'Circuit · Suzuka' : undefined);
     input.clear();
     audio.init();
     configureAudio();
@@ -384,29 +424,29 @@ async function boot(): Promise<void> {
     hud.hideMessage();
     hudElement.dataset.count = '';
 
-    if (next === 'race') {
+    if (wanted === 'race') {
       race = new Race(checkpoints);
       setCarPose(RACE_START.x, RACE_START.z, RACE_START.heading);
       drift.reset();
       lastSpeed = 0;
       hud.flash('Prêt ?', { accent: true, duration: 900 });
-    } else if (spawn === 'col') {
+    } else if (target === 'col') {
       setCarPose(COL_START.x, COL_START.z, COL_START.heading);
       drift.reset();
       lastSpeed = 0;
       hud.flash('Route du Col', { duration: 1300 });
-    } else if (spawn === 'rally') {
+    } else if (target === 'rally') {
       setCarPose(RALLY_START.x, RALLY_START.z, RALLY_START.heading);
       drift.reset();
       lastSpeed = 0;
       hud.flash('Piste rallye', { duration: 1300 });
-    } else if (spawn === 'summit') {
+    } else if (target === 'summit') {
       setCarPose(SUMMIT_START.x, SUMMIT_START.z, SUMMIT_START.heading);
       drift.reset();
       lastSpeed = 0;
       hud.flash('Sommet', { duration: 1300 });
-    } else if (spawn === 'circuit') {
-      setCarPose(circuit.spawn.x, circuit.spawn.z, circuit.spawn.heading);
+    } else if (target === 'circuit') {
+      setCarPose(startPose.x, startPose.z, startPose.heading);
       drift.reset();
       lastSpeed = 0;
       hud.flash('Circuit de Suzuka', { duration: 1600 });
@@ -459,7 +499,7 @@ async function boot(): Promise<void> {
       world,
       {
         x: pose.x,
-        y: terrain.sample(pose.x, pose.z) + rideHeightFor(spec) + 0.35,
+        y: groundAt(pose.x, pose.z) + rideHeightFor(spec) + 0.35,
         z: pose.z,
         heading: pose.heading,
         surfaceAt,
@@ -483,7 +523,7 @@ async function boot(): Promise<void> {
   /** Builds the supermotard the first time it is asked for. */
   function ensureBike(): Bike {
     if (bike) return bike;
-    const y = terrain.sample(SUMMIT_START.x, SUMMIT_START.z) + bikeSpec.cgHeight;
+    const y = groundAt(SUMMIT_START.x, SUMMIT_START.z) + bikeSpec.cgHeight;
     bike = new Bike(
       world,
       { x: SUMMIT_START.x, y, z: SUMMIT_START.z, heading: SUMMIT_START.heading, surfaceAt },
@@ -692,7 +732,7 @@ async function boot(): Promise<void> {
       if (wet) material.color.multiplyScalar(0.62);
       material.roughness = wet ? 0.4 : 0.82;
     }
-    puddles.setVisible(wet);
+    puddles?.setVisible(wet);
   }
 
   /** Restores the balance the player left for the vehicle they are now on. */
@@ -766,6 +806,30 @@ async function boot(): Promise<void> {
     soundReturn = null;
   }
 
+  /** Bascule de carte : un rechargement, la ville ne suit pas la piste. */
+  function openMap(id: MapId): void {
+    audio.init();
+    window.location.href = mapUrl(id, window.location.href);
+  }
+
+  /**
+   * Le menu de la carte du circuit ne propose que ce qui y existe : la piste,
+   * l'atelier, le son et le retour en ville. Les départs de la ville (course,
+   * col, rallye, sommet) sont masqués par la classe `map-suzuka`.
+   */
+  function applySuzukaMenu(): void {
+    document.body.classList.add('map-suzuka');
+    const labels: Record<string, string> = {
+      'btn-free': 'Piste · ligne des stands',
+      'btn-pause-free': 'Piste · ligne des stands',
+      'btn-circuit': 'Retour en ville',
+    };
+    for (const [id, label] of Object.entries(labels)) {
+      const button = document.getElementById(id);
+      if (button) button.textContent = label;
+    }
+  }
+
   document.getElementById('btn-free')?.addEventListener('click', () => startMode('free'));
   document.getElementById('btn-moto')?.addEventListener('click', () => void startBikeMode());
   document.getElementById('btn-pause-moto')?.addEventListener('click', () => void startBikeMode());
@@ -775,9 +839,10 @@ async function boot(): Promise<void> {
   document.getElementById('btn-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-pause-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-col')?.addEventListener('click', () => startMode('free', 'col'));
+  // Le circuit a sa propre carte : le bouton y bascule, et en revient.
   document
     .getElementById('btn-circuit')
-    ?.addEventListener('click', () => startMode('free', 'circuit'));
+    ?.addEventListener('click', () => openMap(SUZUKA_MAP ? 'ville' : 'suzuka'));
   document.getElementById('btn-pause-col')?.addEventListener('click', () => startMode('free', 'col'));
   document.getElementById('btn-rally')?.addEventListener('click', () => startMode('free', 'rally'));
   document.getElementById('btn-pause-rally')?.addEventListener('click', () => startMode('free', 'rally'));
@@ -819,7 +884,7 @@ async function boot(): Promise<void> {
     hud.setMode('menu');
     hud.hideMessage();
     drift.reset();
-    setCarPose(SPAWN.x, SPAWN.z, SPAWN.heading);
+    setCarPose(startPose.x, startPose.z, startPose.heading);
     updateMenuBest();
   });
 
@@ -847,7 +912,8 @@ async function boot(): Promise<void> {
   });
 
   refreshMenuBest();
-  setCarPose(SPAWN.x, SPAWN.z, SPAWN.heading);
+  setCarPose(startPose.x, startPose.z, startPose.heading);
+  if (SUZUKA_MAP) applySuzukaMenu();
   await setLoading(1, 'Prêt');
   await new Promise((resolve) => setTimeout(resolve, 220));
   loading.classList.add('done');
@@ -1187,7 +1253,7 @@ async function boot(): Promise<void> {
       const scraping = pitch > BAVETTE_ANGLE && Boolean(telemetry.wheels[1]?.contact) && telemetry.speed > 4;
       if (scraping) {
         bikeVisual.plateWorldPosition(platePoint);
-        const ground = terrain.sample(platePoint.x, platePoint.z);
+        const ground = groundAt(platePoint.x, platePoint.z);
         const strength = Math.min(1, (pitch - BAVETTE_ANGLE) / 0.3);
         sparkDebt += dt * (80 + strength * 220);
         while (sparkDebt >= 1) {
@@ -1223,13 +1289,13 @@ async function boot(): Promise<void> {
       menuTime += dt;
       const radius = 10.5;
       const angle = menuTime * 0.14 + 0.6;
-      const ground = terrain.sample(SPAWN.x, SPAWN.z);
+      const ground = groundAt(startPose.x, startPose.z);
       camera.position.set(
-        SPAWN.x + Math.cos(angle) * radius,
+        startPose.x + Math.cos(angle) * radius,
         ground + 3.4 + Math.sin(menuTime * 0.25) * 0.35,
-        SPAWN.z + Math.sin(angle) * radius,
+        startPose.z + Math.sin(angle) * radius,
       );
-      camera.lookAt(SPAWN.x, ground + 0.55, SPAWN.z);
+      camera.lookAt(startPose.x, ground + 0.55, startPose.z);
       camera.fov += (52 - camera.fov) * Math.min(1, dt * 2);
       camera.updateProjectionMatrix();
     } else if (freeCamera) {
@@ -1247,7 +1313,7 @@ async function boot(): Promise<void> {
       const pitch = Math.max(-0.05, 0.24 + input.orbitPitch);
       const distance = Math.max(2.2, 6.2 + input.zoom * 1.6);
       const horizontal = Math.cos(pitch) * distance;
-      const ground = terrain.sample(carPosition.x, carPosition.z);
+      const ground = groundAt(carPosition.x, carPosition.z);
       camera.position.set(
         carPosition.x + Math.sin(yaw) * horizontal,
         Math.max(ground + 0.5, carPosition.y + Math.sin(pitch) * distance + 0.55),
@@ -1380,6 +1446,8 @@ async function boot(): Promise<void> {
 
   window.__sp95 = {
     ready: true,
+    map: MAP,
+    openMap: (id: MapId) => openMap(id),
     get mode() {
       return mode;
     },
@@ -1551,7 +1619,9 @@ async function boot(): Promise<void> {
     startFree: () => startMode('free'),
     startRace: () => startMode('race'),
     startCol: () => startMode('free', 'col'),
-    startCircuit: () => startMode('free', 'circuit'),
+    // Le circuit vit sur sa carte : au clic on y bascule, au lieu de traverser
+    // la ville. Les scripts de capture ouvrent l'URL avec `?map=suzuka`.
+    startCircuit: () => (SUZUKA_MAP ? startMode('free', 'circuit') : openMap('suzuka')),
     startRally: () => startMode('free', 'rally'),
     startSummit: () => startMode('free', 'summit'),
     teleport: (x: number, z: number, heading: number) => setCarPose(x, z, heading),
@@ -1571,6 +1641,8 @@ declare global {
   interface Window {
     __sp95?: {
       ready: boolean;
+      readonly map: string;
+      openMap: (id: MapId) => void;
       readonly mode: GameMode;
       readonly paused: boolean;
       readonly speedKmh: number;

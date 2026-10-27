@@ -1,9 +1,58 @@
 import * as THREE from 'three';
+import { MAP_ID, type MapId } from '../game/maps.ts';
 
-// Le monde s'est élargi à l'est pour faire tenir le circuit de Suzuka : la
-// ceinture de montagnes du bord et la grille de terrain suivent la taille.
-export const WORLD_SIZE = 2250;
-export const TERRAIN_SEGMENTS = 338;
+/** La ville d'origine : 2 km de côté. */
+const VILLAGE_WORLD_SIZE = 2000;
+/** La carte du circuit est calée sur sa dalle : 1,7 km de côté. */
+const SUZUKA_WORLD_SIZE = 1700;
+
+/** Taille du monde de chaque carte. */
+export function worldSizeFor(map: MapId): number {
+  return map === 'suzuka' ? SUZUKA_WORLD_SIZE : VILLAGE_WORLD_SIZE;
+}
+
+/** ~6 m de maille sur la ville, ~5 m sur le circuit : sa dalle est plus fine. */
+export function terrainSegmentsFor(map: MapId): number {
+  return map === 'suzuka' ? 340 : 300;
+}
+
+export const WORLD_SIZE = worldSizeFor(MAP_ID);
+export const TERRAIN_SEGMENTS = terrainSegmentsFor(MAP_ID);
+
+/**
+ * Bande de terrain qui déborde du monde jouable, en mètres. La barrière du bord
+ * en a besoin : sans elle, le sol s'arrêterait net au bord de la grille.
+ */
+export const WORLD_BORDER = 80;
+/** Hauteur de la barrière au bord de la grille, en mètres. */
+export const WORLD_BORDER_HEIGHT = 95;
+/** Emprise de la grille de terrain : le monde jouable plus sa barrière. */
+export const TERRAIN_SPAN = WORLD_SIZE + WORLD_BORDER * 2;
+
+/**
+ * Barrière du bord du monde : nulle dans le monde jouable, puis une rampe à
+ * ~50° qui monte jusqu'au bord de la grille. Un mur-collider ne marche pas ici
+ * (mesuré en jeu : il ne retenait rien) : la coque ne collisionne qu'avec le
+ * groupe `WORLD`, et les roues lisent le sol au rayon sur le groupe `GROUND`.
+ * Cette barrière est le trimesh du terrain lui-même, donc de la vraie montée,
+ * et l'herbe n'a pas le grip pour la grimper.
+ */
+export function borderHeight(x: number, z: number): number {
+  const half = WORLD_SIZE / 2;
+  const r = Math.max(Math.abs(x), Math.abs(z));
+  if (r <= half) return 0;
+  return Math.min(1, (r - half) / WORLD_BORDER) * WORLD_BORDER_HEIGHT;
+}
+
+/**
+ * La carte de la ville : rues encaissées, col et piste rallye. La carte du
+ * circuit n'a rien de tout ça — sa seule route est la sienne.
+ */
+export function villageFeaturesOn(map: MapId): boolean {
+  return map === 'ville';
+}
+
+export const VILLAGE_MAP = villageFeaturesOn(MAP_ID);
 
 export type SurfaceKind = 'asphalte' | 'terre' | 'herbe';
 
@@ -124,32 +173,55 @@ export const CITY = {
 
 export const SPAWN = { x: -60, z: 62, heading: 0 };
 
-/**
- * Le circuit (modèle Suzuka 2001) posé à l'est de la ceinture, dans les champs
- * libres. Le modèle porte sa propre dalle de terrain : le terrain de jeu la
- * suit, donc tout ce qui se pose au sol doit connaître son emprise.
- */
-export const CIRCUIT = {
-  cx: 800,
-  cz: 0,
+/** Demi-emprise de la dalle du modèle Suzuka, en unités du modèle (mètres). */
+export const PLATE_HALF_X = 580;
+export const PLATE_HALF_Z = 1094;
+
+export interface CircuitPlacement {
+  /** Faux sur la carte de la ville : ni dalle, ni revêtement de piste. */
+  active: boolean;
+  cx: number;
+  cz: number;
   /** Rotation autour de Y, radians. */
-  yaw: 0,
-  /** Suzuka fait 1,6 km de long : à 0,45 la piste tient dans le monde. */
-  scale: 0.45,
-  /** Demi-emprise de la dalle du modèle, en unités du modèle (mètres). */
-  plateHalfX: 580,
-  plateHalfZ: 1094,
+  yaw: number;
+  scale: number;
+  plateHalfX: number;
+  plateHalfZ: number;
   /**
    * Hauteur du sol du circuit, posée par le module circuit avant la génération
    * du terrain. Sans elle, le terrain naturel reste seul en place.
    */
-  ground: null as ((x: number, z: number) => number | null) | null,
+  ground: ((x: number, z: number) => number | null) | null;
   /** Revêtement sous la roue (asphalte de piste, bac à gravier, pelouse). */
-  surface: null as ((x: number, z: number) => SurfaceKind | null) | null,
-};
+  surface: ((x: number, z: number) => SurfaceKind | null) | null;
+}
+
+/**
+ * Place du circuit sur chaque carte. La ville n'a plus le sien : le modèle a sa
+ * propre carte, centrée sur sa dalle, et à l'échelle de ce monde plus petit
+ * (0,7 au lieu de 0,45 — la piste y fait 1,1 km au lieu de 700 m).
+ */
+export function circuitPlacement(map: MapId): CircuitPlacement {
+  const suzuka = map === 'suzuka';
+  return {
+    active: suzuka,
+    cx: 0,
+    cz: 0,
+    yaw: 0,
+    scale: suzuka ? 0.7 : 0.45,
+    plateHalfX: suzuka ? PLATE_HALF_X : 0,
+    plateHalfZ: suzuka ? PLATE_HALF_Z : 0,
+    ground: null,
+    surface: null,
+  };
+}
+
+export const CIRCUIT: CircuitPlacement = circuitPlacement(MAP_ID);
 
 /** Distance au bord de l'emprise du circuit, négative à l'intérieur. */
 export function circuitEdgeDistance(x: number, z: number): number {
+  // La carte de la ville n'a pas de dalle : il n'y a rien à contourner.
+  if (!CIRCUIT.active) return Infinity;
   const dx = x - CIRCUIT.cx;
   const dz = z - CIRCUIT.cz;
   const c = Math.cos(CIRCUIT.yaw);
@@ -486,6 +558,9 @@ function segmentHit(
 /** Terrain as the mountain road finds it, before the road is cut into it. */
 export function naturalHeightAt(x: number, z: number): number {
   const base = baseHeight(x, z);
+  // La carte du circuit n'a ni route à longer, ni massif à contourner : son
+  // relief se réduit aux collines et à la ceinture de montagnes du bord.
+  if (!VILLAGE_MAP) return base + rollingHills(x, z) + edgeRidge(x, z);
   const road = nearestRoad(x, z);
   const corridor = Math.max(road.dist - road.width * 0.5, 0);
   // The border ridge and the rolling hills would otherwise cut through the
@@ -787,8 +862,11 @@ export function surfaceAt(x: number, z: number): SurfaceInfo {
 function drySurfaceAt(x: number, z: number): SurfaceInfo {
   // Le circuit a son propre revêtement : bac à gravier compris, il n'y a pas de
   // rayon à tirer dans les cailloux pour savoir si la roue accroche.
-  const circuit = CIRCUIT.surface?.(x, z);
+  const circuit = CIRCUIT.active ? CIRCUIT.surface?.(x, z) : null;
   if (circuit) return SURFACES[circuit];
+  // Sa carte n'a pas d'autre route : hors dalle, c'est l'herbe, où que la ville
+  // aurait posé son bitume.
+  if (!VILLAGE_MAP) return SURFACES.herbe;
   const engineered = nearestGraded(x, z);
   if (engineered && engineered.dist <= engineered.width * 0.5 + 0.4) {
     return engineered.road.dirt ? SURFACES.terre : SURFACES.asphalte;
@@ -806,9 +884,15 @@ function drySurfaceAt(x: number, z: number): SurfaceInfo {
 export function heightAt(x: number, z: number): number {
   // La dalle du circuit porte son propre relief : elle s'impose là où elle
   // existe. Son pourtour est déjà fondu dans le terrain par l'échantillonnage.
-  const circuitGround = CIRCUIT.ground?.(x, z);
-  if (circuitGround != null) return circuitGround;
-  return terrainBaseHeight(x, z);
+  // Une cote non finie est ignorée : un seul sommet cassé creuserait un trou
+  // dans la grille que le collider recopie.
+  const circuitGround = CIRCUIT.active ? CIRCUIT.ground?.(x, z) : null;
+  const base =
+    circuitGround != null && Number.isFinite(circuitGround)
+      ? circuitGround
+      : terrainBaseHeight(x, z);
+  // La barrière du bord s'ajoute à tout : elle est hors du monde jouable.
+  return base + borderHeight(x, z);
 }
 
 /**
@@ -817,6 +901,9 @@ export function heightAt(x: number, z: number): number {
  * de la hauteur définitive et pas du seul relief naturel.
  */
 export function terrainBaseHeight(x: number, z: number): number {
+  // La carte du circuit n'a ni rues encaissées, ni col, ni aire de drift : son
+  // seul relief artificiel est la dalle du modèle, posée plus haut par heightAt.
+  if (!VILLAGE_MAP) return naturalHeightAt(x, z);
   let h = naturalHeightAt(x, z);
 
   // The two arenas are levelled first: a road cut must be able to win over the

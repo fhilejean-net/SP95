@@ -6,30 +6,37 @@ import { StuntScore } from '../src/game/stunt.ts';
 import { Race } from '../src/game/race.ts';
 import { BIKE_DEFAULT_SETUP, bikePresetLabel } from '../src/game/bikeTuning.ts';
 import { fadeGround } from '../src/world/circuit.ts';
+import { MAP_ID, mapFromSearch, mapUrl } from '../src/game/maps.ts';
 // Le circuit est posé par world/circuit.ts au chargement : ces tests vérifient
-// le contrat du layout (emprise, sol, revêtement), pas le chargement du GLB.
+// le contrat des cartes (emprise, sol, revêtement), pas le chargement du GLB.
 import {
   CIRCUIT,
   CIRCUIT_FADE,
-  DIRT_TRACKS,
-  MOUNTAIN_ROADS,
-  SAMPLED_ROADS,
   SPAWN,
   SURFACES,
+  TERRAIN_SPAN,
   WET_GRIP,
   WORLD_SIZE,
+  borderHeight,
   circuitEdgeDistance,
+  circuitPlacement,
   heightAt,
   isWetRoad,
   setWetRoad,
   terrainBaseHeight,
+  terrainSegmentsFor,
   sprayActive,
   surfaceAt,
+  villageFeaturesOn,
+  worldSizeFor,
 } from '../src/world/layout.ts';
 import { ReplayBuffer, samplePoses } from '../src/game/replay.ts';
 import { planPuddles } from '../src/world/puddles.ts';
 
 const pose = (x: number) => ({ x, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 });
+
+/** Coin sud-ouest de la ville, là où le col s'arrête. */
+const MASSIF_CORNER = { x: -480, z: -420 };
 
 test('the replay memory keeps only the most recent poses', () => {
   const buffer = new ReplayBuffer(10, 1);
@@ -272,40 +279,83 @@ test('race formatTime prints minute:second.hundredths', () => {
   assert.equal(Race.formatTime(null), '—');
 });
 
-test('the circuit fits in the world, clear of every road', () => {
-  const halfX = CIRCUIT.plateHalfX * CIRCUIT.scale;
-  const halfZ = CIRCUIT.plateHalfZ * CIRCUIT.scale;
-  // L'emprise tient dans le monde, avec la pente qui la raccorde au terrain.
-  assert.ok(Math.abs(CIRCUIT.cx) + halfX + CIRCUIT_FADE < WORLD_SIZE / 2, 'emprise trop à l\u2019est');
-  assert.ok(Math.abs(CIRCUIT.cz) + halfZ + CIRCUIT_FADE < WORLD_SIZE / 2, 'emprise trop au nord ou au sud');
-  // Aucune route du jeu ne traverse la piste : une rue qui passe sous la dalle
-  // ressortirait à travers l'asphalte du circuit.
-  for (const road of [...SAMPLED_ROADS, ...MOUNTAIN_ROADS, ...DIRT_TRACKS]) {
-    for (const sample of road.samples) {
-      const edge = circuitEdgeDistance(sample.x, sample.z);
-      assert.ok(edge > 12, `${road.def.id} passe à ${edge.toFixed(1)} m de l'emprise`);
-    }
-  }
-  // Le centre de l'emprise est bien à l'intérieur, et loin du bord.
-  assert.ok(circuitEdgeDistance(CIRCUIT.cx, CIRCUIT.cz) < -100);
+test('the circuit lives on its own map, not in the city world', () => {
+  // La ville ne réserve plus rien pour la piste : ni dalle, ni emprise, ni
+  // revêtement, et ses rues n'ont plus rien à contourner.
+  const ville = circuitPlacement('ville');
+  assert.equal(ville.active, false);
+  assert.equal(ville.plateHalfX, 0);
+  assert.equal(villageFeaturesOn('ville'), true);
+  assert.equal(villageFeaturesOn('suzuka'), false);
+
+  // Le circuit a sa carte : sa dalle tient dans le monde, talus compris.
+  const suzuka = circuitPlacement('suzuka');
+  assert.ok(suzuka.active);
+  const halfX = suzuka.plateHalfX * suzuka.scale;
+  const halfZ = suzuka.plateHalfZ * suzuka.scale;
+  const size = worldSizeFor('suzuka');
+  assert.ok(Math.abs(suzuka.cx) + halfX + CIRCUIT_FADE < size / 2, 'emprise trop à l\u2019est');
+  assert.ok(Math.abs(suzuka.cz) + halfZ + CIRCUIT_FADE < size / 2, 'emprise trop au nord ou au sud');
+  // Plus petite que la ville, avec une maille de terrain plus fine (~5 m).
+  assert.ok(size < worldSizeFor('ville'));
+  assert.ok(size / terrainSegmentsFor('suzuka') < 6);
 });
 
-test('the circuit ground wins inside its footprint, the map is untouched outside', () => {
-  const saved = CIRCUIT.ground;
-  const inside = CIRCUIT.cx + (CIRCUIT.plateHalfX - 80) * CIRCUIT.scale;
-  try {
-    CIRCUIT.ground = (x, z) => (circuitEdgeDistance(x, z) < 0 ? 120 : null);
-    assert.equal(heightAt(CIRCUIT.cx, CIRCUIT.cz), 120);
-    assert.equal(heightAt(inside, CIRCUIT.cz), 120);
+test('the city map ignores the circuit slab and its surface', () => {
+  // Ces tests tournent sans URL : la carte par défaut est la ville.
+  assert.equal(MAP_ID, 'ville');
+  assert.equal(CIRCUIT.active, false);
+  // Il n'y a plus d'emprise à contourner : rien n'est exclu de la ville.
+  assert.equal(circuitEdgeDistance(0, 0), Infinity);
+  assert.equal(circuitEdgeDistance(MASSIF_CORNER.x, MASSIF_CORNER.z), Infinity);
 
-    // Hors de la dalle, la hauteur de jeu n'est pas touchée du tout.
-    const edgeX = CIRCUIT.cx + CIRCUIT.plateHalfX * CIRCUIT.scale;
-    for (const x of [edgeX + 1, edgeX + 200, edgeX + 600]) {
-      assert.equal(heightAt(x, CIRCUIT.cz), terrainBaseHeight(x, CIRCUIT.cz));
-    }
+  const savedGround = CIRCUIT.ground;
+  const savedSurface = CIRCUIT.surface;
+  try {
+    // Même posée de force, une dalle ne touche pas la hauteur de jeu...
+    CIRCUIT.ground = () => 120;
+    assert.equal(heightAt(0, 0), terrainBaseHeight(0, 0));
+    // ...ni un revêtement de piste la surface sous les roues.
+    CIRCUIT.surface = () => 'terre';
+    assert.equal(surfaceAt(SPAWN.x, SPAWN.z).kind, 'asphalte');
   } finally {
-    CIRCUIT.ground = saved;
+    CIRCUIT.ground = savedGround;
+    CIRCUIT.surface = savedSurface;
   }
+});
+
+test('the world ends on a rock ramp instead of a hole', () => {
+  const half = WORLD_SIZE / 2;
+  // Dans le monde jouable, la barrière ne touche rien.
+  for (const [x, z] of [[0, 0], [half - 1, 3], [-3, -(half - 1)]]) {
+    assert.equal(borderHeight(x, z), 0, `barrière en ${x},${z}`);
+  }
+  // Puis elle monte sans jamais redescendre, jusqu'au bord de la grille.
+  let previous = 0;
+  for (let r = half; r <= TERRAIN_SPAN / 2; r += 5) {
+    const h = borderHeight(0, r);
+    assert.ok(h >= previous, `la barrière redescend à ${r} m`);
+    previous = h;
+  }
+  assert.ok(borderHeight(0, TERRAIN_SPAN / 2) >= 90, `${borderHeight(0, TERRAIN_SPAN / 2)} m`);
+  // Et c'est le terrain de jeu lui-même qui la porte : c'est son trimesh qui
+  // arrête la voiture, pas un collider à part (voir le commentaire du module).
+  assert.ok(TERRAIN_SPAN > WORLD_SIZE);
+  assert.ok(heightAt(0, half + 40) > heightAt(0, half - 40) + 10);
+});
+
+test('the map is chosen in the URL, and the switch keeps the rest', () => {
+  assert.equal(mapFromSearch(''), 'ville');
+  assert.equal(mapFromSearch('?fx=low'), 'ville');
+  assert.equal(mapFromSearch('?map=inconnue'), 'ville');
+  assert.equal(mapFromSearch('?map=suzuka'), 'suzuka');
+
+  const href = 'https://sp95.test/?fx=low';
+  const suzuka = mapUrl('suzuka', href);
+  assert.equal(new URL(suzuka).searchParams.get('map'), 'suzuka');
+  // Le reste de l'URL suit : `?fx=low` ne se perd pas en changeant de carte.
+  assert.equal(new URL(suzuka).searchParams.get('fx'), 'low');
+  assert.equal(new URL(mapUrl('ville', suzuka)).searchParams.has('map'), false);
 });
 
 test('the circuit slab fades into the ground instead of ending on a cliff', () => {
@@ -325,16 +375,8 @@ test('the circuit slab fades into the ground instead of ending on a cliff', () =
   }
 });
 
-test('the wheels read the circuit surface where the model covers the ground', () => {
-  const saved = CIRCUIT.surface;
-  try {
-    CIRCUIT.surface = (x, z) => (circuitEdgeDistance(x, z) < 0 ? 'asphalte' : null);
-    assert.equal(surfaceAt(CIRCUIT.cx, CIRCUIT.cz).kind, 'asphalte');
-    // Hors emprise le circuit ne dit rien : la ville reste sur son bitume.
-    assert.equal(surfaceAt(SPAWN.x, SPAWN.z).kind, 'asphalte');
-  } finally {
-    CIRCUIT.surface = saved;
-  }
+test('the wheels still read the city asphalt', () => {
+  assert.equal(surfaceAt(SPAWN.x, SPAWN.z).kind, 'asphalte');
 });
 
 test('the HUD names the preset only while the setup matches it', () => {

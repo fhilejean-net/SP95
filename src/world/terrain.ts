@@ -10,6 +10,7 @@ import {
   SAMPLED_ROADS,
   SUMMIT,
   TERRAIN_SEGMENTS,
+  TERRAIN_SPAN,
   WORLD_SIZE,
   heightAt,
 } from './layout.ts';
@@ -37,7 +38,10 @@ export interface TerrainData {
 
 export function buildTerrain(scene: THREE.Scene, world: RAPIER.World, mats: EnvironmentMaterials): TerrainData {
   const segments = TERRAIN_SEGMENTS;
-  const size = WORLD_SIZE;
+  // La grille déborde du monde jouable : c'est sur cette bande que monte la
+  // barrière du bord (layout.borderHeight), donc du sol partout où on peut
+  // arriver — et pas de falaise au bord de la carte.
+  const size = TERRAIN_SPAN;
   const step = size / segments;
   const count = segments + 1;
   const heights = new Float32Array(count * count);
@@ -129,7 +133,8 @@ export function buildTerrain(scene: THREE.Scene, world: RAPIER.World, mats: Envi
     );
   };
 
-  return { heights, size, segments, sample };
+  // `size` reste la taille du monde jouable : la grille, elle, déborde.
+  return { heights, size: WORLD_SIZE, segments, sample };
 }
 
 interface RibbonOptions {

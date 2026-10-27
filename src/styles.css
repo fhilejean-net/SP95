@@ -178,6 +178,12 @@ body {
   gap: 10px;
 }
 
+/* La carte du circuit n'a ni course, ni col, ni rallye, ni sommet : leurs
+   départs se cachent au lieu de téléporter dans un décor qui n'existe pas. */
+body.map-suzuka .village-only {
+  display: none;
+}
+
 button {
   font: inherit;
   font-weight: 700;
