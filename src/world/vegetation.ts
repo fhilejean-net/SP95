@@ -307,9 +307,9 @@ export async function buildVegetation(
   sun: THREE.Vector3,
 ): Promise<VegetationSummary> {
   const [trees, birches, grass] = await Promise.all([
-    loader.loadAsync(`${MODEL_ROOT}models/cars/trees_low_poly.glb`),
-    loader.loadAsync(`${MODEL_ROOT}models/cars/birch_trees.glb`),
-    loader.loadAsync(`${MODEL_ROOT}models/cars/grass.glb`),
+    loader.loadAsync(`${MODEL_ROOT}models/vegetation/trees_low_poly.glb`),
+    loader.loadAsync(`${MODEL_ROOT}models/vegetation/birch_trees.glb`),
+    loader.loadAsync(`${MODEL_ROOT}models/vegetation/grass.glb`),
   ]);
 
   // Leaf cards are alpha-cut in the source; blending them would sort badly at

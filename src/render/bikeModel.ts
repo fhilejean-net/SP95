@@ -160,7 +160,7 @@ function boxOf(objects: THREE.Object3D[], yaw: THREE.Matrix4): THREE.Box3 {
 
 export async function loadBikeVisual(spec: BikeSpec): Promise<BikeVisual> {
   const [gltf, riderModel] = await Promise.all([
-    loader.loadAsync(`${MODEL_ROOT}models/cars/moto.glb`),
+    loader.loadAsync(`${MODEL_ROOT}models/vehicles/moto.glb`),
     loadRiderVisual(),
   ]);
   const root = gltf.scene;
@@ -380,8 +380,10 @@ export async function loadBikeVisual(spec: BikeSpec): Promise<BikeVisual> {
       ? toBike(new THREE.Vector3(0, 0, seatBox.min.z + (seatBox.max.z - seatBox.min.z) * 0.3)).z
       : 0.02;
     // The group's origin is the rider's feet; what has to sit on the saddle is
-    // his hips, so the group is pushed down by the hip height.
-    rider.group.position.set(0, seatTop + 0.04 - RIDER_HIP_HEIGHT, seatZ);
+    // his hips, so the group is pushed down by the hip height. The longer torso
+    // of the modelled biker put his hips on the tank instead of the saddle, so
+    // he is sat further back than the box's front third.
+    rider.group.position.set(0, seatTop + 0.04 - RIDER_HIP_HEIGHT, seatZ + 0.22);
     bodyRig.add(rider.group);
 
     // Boots: the footpegs sit a hand's width below the saddle and just behind

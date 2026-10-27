@@ -11,6 +11,7 @@ import {
   roadClearance,
 } from './layout.ts';
 import { roadEnds } from './terrain.ts';
+import { buildBuildings, type BuildingLot } from './buildings.ts';
 import type { EnvironmentMaterials } from '../render/materials.ts';
 
 function mulberry32(seed: number): () => number {
@@ -22,16 +23,6 @@ function mulberry32(seed: number): () => number {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-interface BuildingLot {
-  x: number;
-  z: number;
-  w: number;
-  d: number;
-  h: number;
-  y: number;
-  color: THREE.Color;
 }
 
 export interface DynamicProp {
@@ -97,6 +88,9 @@ function buildNeighbourhoods(
     if (!free(cx, cz, gap)) return;
     if (roadClearance(cx, cz) < 8.5) return;
     if (padEdgeDistance(cx, cz) < 14) return;
+    // The middle of the city belongs to the towers and their street fronts:
+    // rows of detached houses there are what made downtown look like a suburb.
+    if (Math.hypot(cx + 110, cz + 55) < 120) return;
     if (Math.hypot(cx - SUMMIT.cx, cz - SUMMIT.cz) < SUMMIT.radius + 14) return;
     if (Math.hypot(cx - DRIFT_PAD.cx, cz - DRIFT_PAD.cz) < 90) return;
     const ground = heightAt(cx, cz);
@@ -283,109 +277,38 @@ function buildNeighbourhoods(
   }
 }
 
-export function buildCity(
+export async function buildCity(
   scene: THREE.Scene,
   world: RAPIER.World,
   mats: EnvironmentMaterials,
-): DynamicProp[] {
+): Promise<DynamicProp[]> {
   const rand = mulberry32(95);
   const lots: BuildingLot[] = [];
 
-  for (let gx = CITY.minX + 25; gx < CITY.maxX - 15; gx += 36) {
-    for (let gz = CITY.minZ + 25; gz < CITY.maxZ - 15; gz += 36) {
-      if (rand() < 0.28) continue;
-      const x = gx + (rand() - 0.5) * 14;
-      const z = gz + (rand() - 0.5) * 14;
+  // A 26 m grid over the city, denser and taller towards the middle: a core of
+  // towers that thins out into low blocks, instead of a suburb with four lonely
+  // high-rises lost in it.
+  for (let gx = CITY.minX + 22; gx < CITY.maxX - 14; gx += 26) {
+    for (let gz = CITY.minZ + 22; gz < CITY.maxZ - 14; gz += 26) {
+      if (rand() < 0.16) continue;
+      const x = gx + (rand() - 0.5) * 10;
+      const z = gz + (rand() - 0.5) * 10;
       if (padEdgeDistance(x, z) < 20) continue;
-      const w = 14 + rand() * 20;
-      const d = 14 + rand() * 20;
+      const w = 13 + rand() * 13;
+      const d = 13 + rand() * 13;
       const road = nearestRoad(x, z);
-      if (road.dist < Math.max(w, d) * 0.62 + 9) continue;
-      const distToCentre = Math.hypot(x + 110, z + 55);
-      const h = 8 + rand() * 18 + Math.max(0, 1 - distToCentre / 260) * 26;
-      lots.push({
-        x,
-        z,
-        w,
-        d,
-        h,
-        y: heightAt(x, z),
-        color: new THREE.Color().setHSL(
-          0.07 + rand() * 0.06,
-          0.12 + rand() * 0.12,
-          0.62 + rand() * 0.18,
-        ),
-      });
-      if (lots.length >= 90) break;
+      if (road.dist < Math.max(w, d) * 0.6 + 8) continue;
+      const core = Math.max(0, 1 - Math.hypot(x + 110, z + 55) / 230);
+      const h = 9 + rand() * 15 + core * core * (34 + rand() * 34);
+      lots.push({ x, z, w, d, h, y: heightAt(x, z) });
+      if (lots.length >= 150) break;
     }
-    if (lots.length >= 90) break;
+    if (lots.length >= 150) break;
   }
 
-  const groups: Record<'low' | 'mid' | 'tall', BuildingLot[]> = { low: [], mid: [], tall: [] };
-  for (const lot of lots) {
-    if (lot.h < 18) groups.low.push(lot);
-    else if (lot.h < 34) groups.mid.push(lot);
-    else groups.tall.push(lot);
-  }
-
-  const box = new THREE.BoxGeometry(1, 1, 1);
-  const roofGeo = new THREE.BoxGeometry(1, 1, 1);
-  const materials = {
-    low: mats.buildingLow,
-    mid: mats.buildingMid,
-    tall: mats.buildingTall,
-  };
-
-  const matrix = new THREE.Matrix4();
-  const quat = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const position = new THREE.Vector3();
-
-  for (const key of ['low', 'mid', 'tall'] as const) {
-    const list = groups[key];
-    if (list.length === 0) continue;
-    const mesh = new THREE.InstancedMesh(box, materials[key], list.length);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.name = `buildings-${key}`;
-    for (let i = 0; i < list.length; i++) {
-      const b = list[i];
-      position.set(b.x, b.y + b.h / 2 - 1.2, b.z);
-      scale.set(b.w, b.h, b.d);
-      quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0);
-      matrix.compose(position, quat, scale);
-      mesh.setMatrixAt(i, matrix);
-      mesh.setColorAt(i, b.color);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    scene.add(mesh);
-  }
-
-  // Parapets hide the window texture on the roofs.
-  const roof = new THREE.InstancedMesh(roofGeo, mats.roof, lots.length);
-  for (let i = 0; i < lots.length; i++) {
-    const b = lots[i];
-    position.set(b.x, b.y + b.h - 1.0, b.z);
-    scale.set(b.w * 1.02, 0.7, b.d * 1.02);
-    quat.identity();
-    matrix.compose(position, quat, scale);
-    roof.setMatrixAt(i, matrix);
-  }
-  roof.castShadow = true;
-  roof.receiveShadow = true;
-  scene.add(roof);
-
-  // Building collision boxes.
-  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  for (const b of lots) {
-    world.createCollider(
-      RAPIER.ColliderDesc.cuboid(b.w / 2, b.h / 2, b.d / 2)
-        .setTranslation(b.x, b.y + b.h / 2 - 1.2, b.z)
-        .setFriction(0.7),
-      body,
-    );
-  }
+  // The modelled towers and street fronts (public/models/buildings) replace the
+  // flat boxes; the kit builds its own colliders against the same lots.
+  await buildBuildings(scene, world, mats, lots, rand);
 
   // Trees live in world/vegetation.ts: the modelled birches and broadleaves
   // replaced the old procedural cones.

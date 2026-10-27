@@ -32,6 +32,7 @@ import {
   roadEnds,
 } from './world/terrain.ts';
 import { NEIGHBOURHOODS, buildCity, syncProps } from './world/city.ts';
+import { BUILDINGS } from './world/buildings.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
 import { buildPuddles } from './world/puddles.ts';
 import { buildVegetation, type VegetationSummary } from './world/vegetation.ts';
@@ -167,7 +168,7 @@ async function boot(): Promise<void> {
   const puddles = buildPuddles(scene);
 
   await setLoading(0.68, 'Construction de la ville…');
-  const props = buildCity(scene, world, materials);
+  const props = await buildCity(scene, world, materials);
 
   await setLoading(0.74, 'Mobilier urbain…');
   const streetKit = await buildStreetKit(scene, world, materials);
@@ -1460,6 +1461,9 @@ async function boot(): Promise<void> {
     get neighbourhoods() {
       return { ...NEIGHBOURHOODS };
     },
+    get buildings() {
+      return { ...BUILDINGS };
+    },
     get smoke() {
       return smokeFx.live;
     },
@@ -1570,6 +1574,7 @@ declare global {
       readonly vegetation: VegetationSummary;
       readonly roadEnds: number;
       readonly neighbourhoods: { houses: number; shops: number };
+      readonly buildings: { models: number; instances: number; triangles: number };
       readonly smoke: number;
       readonly redline: number;
       readonly vehicleKind: 'car' | 'bike';

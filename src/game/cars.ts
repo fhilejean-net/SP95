@@ -26,7 +26,7 @@ export const CARS: CarDef[] = [
     id: 'aventador',
     label: 'Aventador LP700-4',
     detail: 'V12 6,5 L · 690 Nm · intégrale',
-    model: 'models/cars/aventador.glb',
+    model: 'models/vehicles/aventador.glb',
     yaw: Math.PI,
     wheels: [
       'Lamborghini_Aventador_Wheel_FL',
@@ -70,7 +70,7 @@ export const CARS: CarDef[] = [
     id: 'rx7',
     label: 'RX-7 FD3S',
     detail: '13B birotor turbo · 300 Nm · propulsion',
-    model: 'models/cars/rx7.glb',
+    model: 'models/vehicles/rx7.glb',
     yaw: Math.PI,
     wheels: ['FL_WHEEL', 'FR_WHEEL', 'RL_WHEEL', 'RR_WHEEL'],
     spec: {
@@ -110,7 +110,7 @@ export const CARS: CarDef[] = [
     id: 'i20n',
     label: 'i20 N Rally2',
     detail: '1,6 L turbo · 420 Nm · châssis rallye',
-    model: 'models/cars/i20n.glb',
+    model: 'models/vehicles/i20n.glb',
     yaw: 0,
     wheels: ['FL_WHEEL', 'FR_WHEEL', 'RL_WHEEL', 'RR_WHEEL'],
     spec: {
