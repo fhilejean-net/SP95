@@ -30,6 +30,10 @@ Two skills live in [`skills/`](skills/) and are **always on**:
 | **session-recovery** | Runner restarted, session "ended or changed", turn failed mid-way, tool call cut short, `exitCode 137`. | [skills/session-recovery.md](skills/session-recovery.md) |
 | **idle-improve** | The user's request is done and reported. | [skills/idle-improve.md](skills/idle-improve.md) |
 
+**Nothing runs between messages.** The loop only moves when the user writes. The trigger word
+is **"next"**: it starts a retrospective on the recent code (see `skills/idle-improve.md`),
+then the next backlog cycle.
+
 **The loop is you.** There is no API key, no external CLI and no scheduler in this setup: when a
 request is finished, you immediately start the next backlog entry yourself, in the same turn, and
 keep going — pick, implement, verify, commit, close, next — until the user writes, two checks

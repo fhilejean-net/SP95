@@ -34,11 +34,18 @@ commit hash so the history stays readable.
   *Done when:* switching preset changes the label without a reload.
   *Cycle 5:* `5c62c62` — libellé du preset dans le HUD, vérifié de Série à Stunt sans rechargement, 56 tests
 
+- [ ] **Wet-weather riding** — `M`. Add a selectable wet-road condition using per-surface grip scaling; visibly darken asphalt and emit restrained rear-tire spray while moving. Keep dry handling unchanged and avoid adding new external assets.
+  *Done when:* focused tests prove wet grip is lower than dry grip for asphalt and loose surfaces, the default remains dry, and the spray activates only for a moving vehicle on a wet surface; `npm test` and `npx tsc --noEmit` pass.
+
+- [ ] **Per-vehicle sound presets** — `S`. Keep the existing sound-mix controls, but remember and restore separate channel levels for car and bike while preserving the master level.
+  *Done when:* a focused test shows car and bike channel mixes restore independently across vehicle switches and master volume remains unchanged; `npm test` and `npx tsc --noEmit` pass.
+
+- [ ] **Recent stunt replay** — `M`. Record a short rolling window of the player's recent vehicle poses and expose replay playback with a free camera, without recording the entire session or changing live scoring.
+  *Done when:* a focused test verifies bounded recording and playback of the recorded poses, and a manual dev-server check confirms replay can be started and exited without affecting live vehicle state or score.
+
 ## Ideas (not scheduled)
 
-- Wet weather: grip multiplier per surface, darker asphalt, spray from the rear tire.
-- Replay of the last drift/wheelie with a free camera.
-- Sound mix preset per vehicle instead of one global mix.
+_(Promote a new idea here only after adding a bounded scope and a verifiable « Done when » above.)
 
 ## Done
 

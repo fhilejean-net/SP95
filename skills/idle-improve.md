@@ -7,6 +7,24 @@ vérifiée, commitée, puis la suivante — dans le même tour, tant que le trav
 pour demander « je continue ? » : tu attaques le cycle suivant. L'utilisateur peut
 t'interrompre à tout moment ; c'est lui qui décide de te stopper, pas toi qui attends son feu vert.
 
+## Déclencheur « next »
+
+Un agent ne peut pas se réveiller tout seul entre deux messages : rien ne tourne quand
+l'utilisateur ne parle pas. Le déclencheur est donc le mot **« next »** dans le chat. Quand
+l'utilisateur l'écrit, faire dans le même tour :
+
+1. **Rétrospective du code** — lire l'état (`node scripts/agent-loop.mjs`, le backlog, le
+   journal) puis parcourir le code qui a bougé récemment (`git log -10 --stat`). Chercher ce
+   qui peut être amélioré (bugs probables, duplication, tests manquants, réglages douteux) et
+   ce qui manque au jeu. Rester concret : fichier, fonction, symptôme.
+2. **Proposer** les entrées dans `docs/backlog.md` (section `Ready`), chacune avec une taille et
+   un « Done when » vérifiable. Ne pas en ajouter plus de trois d'un coup.
+3. **Prendre la première entrée éligible** et exécuter le cycle ci-dessous, jusqu'à un arrêt.
+
+Pas de « next » sans rétrospective : ce n'est pas une autorisation de prendre une entrée
+existante sans la relire. Si le backlog est vide, la rétrospective en crée, puis on s'arrête
+sur la première.
+
 ## La boucle, c'est toi
 
 Aucune clé API, aucun CLI externe, aucun processus de fond : c'est l'agent qui exécute le
