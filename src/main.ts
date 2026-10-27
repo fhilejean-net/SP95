@@ -53,7 +53,13 @@ import { BAVETTE_ANGLE } from './physics/wheelie.ts';
 import { Race } from './game/race.ts';
 import { CarAudio } from './game/audio.ts';
 import { AudioPanel } from './game/audioPanel.ts';
-import { saveMix } from './game/audioMix.ts';
+import {
+  SOUND_CHANNELS,
+  loadVehicleMixes,
+  mixForVehicle,
+  rememberMix,
+  saveVehicleMixes,
+} from './game/audioMix.ts';
 import { Garage } from './game/garage.ts';
 import { loadSetup, resolveSpec, saveSetup, type Setup } from './game/tuning.ts';
 
@@ -213,16 +219,20 @@ async function boot(): Promise<void> {
   hud.setVehicle('car');
   setTcs(tcsEnabled, false);
   const audio = new CarAudio();
+  /** Car and bike keep their own balance; the master is shared. */
+  let vehicleMixes = loadVehicleMixes();
   /** Overlay hidden while the sound panel is up, restored when it closes. */
   let soundReturn: HTMLElement | null = null;
   const audioPanel = new AudioPanel(
     audio.soundMix,
     (channel, value) => {
       audio.setChannel(channel, value);
-      saveMix(audio.soundMix);
+      vehicleMixes = rememberMix(vehicleMixes, ridingBike ? 'bike' : 'car', audio.soundMix);
+      saveVehicleMixes(vehicleMixes);
     },
     () => closeSound(),
   );
+  applyVehicleMix();
   const drift = new DriftScore();
   const stunt = new StuntScore();
   const governor = new QualityGovernor(renderer, renderer.getPixelRatio());
@@ -502,6 +512,7 @@ async function boot(): Promise<void> {
     hud.setRedline(bikeSpec.redlineRpm);
     hud.setBikePreset(bikePresetLabel(bikeSetup));
     configureAudio();
+    applyVehicleMix();
     drift.reset();
     stunt.reset();
   }
@@ -519,6 +530,7 @@ async function boot(): Promise<void> {
     vehicle = carVehicle;
     hud.setVehicle('car');
     configureAudio();
+    applyVehicleMix();
     hud.setRedline(spec.redlineRpm);
     carPose = { x: p.x, z: p.z, heading };
     setCarPose(p.x, p.z, heading);
@@ -612,6 +624,12 @@ async function boot(): Promise<void> {
       engineLevel: setup.engine,
       transmission: 'dsg',
     });
+  }
+
+  /** Restores the balance the player left for the vehicle they are now on. */
+  function applyVehicleMix(): void {
+    const mix = mixForVehicle(vehicleMixes, ridingBike ? 'bike' : 'car');
+    for (const channel of SOUND_CHANNELS) audio.setChannel(channel, mix[channel]);
   }
 
   const garage = new Garage(

@@ -6,8 +6,12 @@ import {
   SOUND_CHANNELS,
   clampChannel,
   loadMix,
+  loadVehicleMixes,
+  mixForVehicle,
+  rememberMix,
   sanitizeMix,
   saveMix,
+  saveVehicleMixes,
 } from '../src/game/audioMix.ts';
 import { fillSeamlessNoise } from '../src/game/audioDsp.ts';
 
@@ -52,6 +56,54 @@ test('the mix round-trips through storage and survives a broken entry', () => {
   store.set(MIX_STORAGE_KEY, '{not json');
   assert.deepEqual(loadMix(storage), DEFAULT_MIX);
   assert.deepEqual(loadMix(null), DEFAULT_MIX);
+});
+
+test('car and bike mixes are restored independently, master stays shared', () => {
+  const store = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, value),
+  };
+
+  // The car is balanced first: quieter engine, no turbo whine.
+  let mixes = loadVehicleMixes(storage);
+  const carMix = { ...DEFAULT_MIX, engine: 0.2, turbo: 0, master: 0.55 };
+  mixes = rememberMix(mixes, 'car', carMix);
+  saveVehicleMixes(mixes, storage);
+
+  // Switch to the bike: it opens on its own preset, not the car's.
+  mixes = loadVehicleMixes(storage);
+  assert.equal(mixForVehicle(mixes, 'car').engine, 0.2);
+  assert.equal(mixForVehicle(mixes, 'bike').engine, DEFAULT_MIX.engine);
+
+  const bikeMix = { ...mixForVehicle(mixes, 'bike'), engine: 0.9, turbo: 0.1 };
+  mixes = rememberMix(mixes, 'bike', bikeMix);
+  saveVehicleMixes(mixes, storage);
+
+  // And back again, across a reload: each vehicle keeps its own channels.
+  mixes = loadVehicleMixes(storage);
+  assert.equal(mixForVehicle(mixes, 'car').engine, 0.2);
+  assert.equal(mixForVehicle(mixes, 'car').turbo, 0);
+  assert.equal(mixForVehicle(mixes, 'bike').engine, 0.9);
+  assert.equal(mixForVehicle(mixes, 'bike').turbo, 0.1);
+
+  // The master followed the player instead of being restored per vehicle.
+  assert.equal(mixForVehicle(mixes, 'car').master, 0.55);
+  assert.equal(mixForVehicle(mixes, 'bike').master, 0.55);
+});
+
+test('the first run after presets seeds both vehicles from the old mix', () => {
+  const store = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, value),
+  };
+  const legacy = { ...DEFAULT_MIX, wind: 0.12, master: 0.4 };
+  saveMix(legacy, storage);
+
+  const mixes = loadVehicleMixes(storage);
+  assert.deepEqual(mixForVehicle(mixes, 'car'), legacy);
+  assert.deepEqual(mixForVehicle(mixes, 'bike'), legacy);
 });
 
 test('the looping noise continues across the loop point', () => {

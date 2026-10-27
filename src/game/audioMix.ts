@@ -104,3 +104,89 @@ export function saveMix(mix: SoundMix, storage: WritableStorage | null = default
     /* private mode / quota: the mix just is not remembered */
   }
 }
+
+/* ------------------------------------------------------------------------- *
+ * Per-vehicle presets.
+ *
+ * The car and the bike do not sound alike, so they keep their own channel
+ * balance. The master fader stays shared: the player expects "quieter" to
+ * survive a vehicle switch, and a master that jumped back on the bike would be
+ * a bug, not a preset.
+ * ------------------------------------------------------------------------- */
+
+export type VehicleKind = 'car' | 'bike';
+
+export interface VehicleMixes {
+  master: number;
+  car: SoundMix;
+  bike: SoundMix;
+}
+
+export const VEHICLE_MIX_STORAGE_KEY = 'sp95.audioMix.vehicles';
+
+/** Same channels, but under the shared master. */
+export function withMaster(mix: SoundMix, master: number): SoundMix {
+  return { ...mix, master: clampChannel(master, DEFAULT_MIX.master) };
+}
+
+export function mixForVehicle(mixes: VehicleMixes, vehicle: VehicleKind): SoundMix {
+  return withMaster(mixes[vehicle], mixes.master);
+}
+
+/**
+ * Folds a live mix back into the presets: the channels go to the vehicle that
+ * was playing, and its master becomes the shared one.
+ */
+export function rememberMix(
+  mixes: VehicleMixes,
+  vehicle: VehicleKind,
+  mix: SoundMix,
+): VehicleMixes {
+  const master = clampChannel(mix.master, DEFAULT_MIX.master);
+  return {
+    master,
+    car: vehicle === 'car' ? withMaster(mix, master) : withMaster(mixes.car, master),
+    bike: vehicle === 'bike' ? withMaster(mix, master) : withMaster(mixes.bike, master),
+  };
+}
+
+export function loadVehicleMixes(
+  storage: ReadableStorage | null = defaultStorage(),
+): VehicleMixes {
+  const fallback: VehicleMixes = {
+    master: DEFAULT_MIX.master,
+    car: { ...DEFAULT_MIX },
+    bike: { ...DEFAULT_MIX },
+  };
+  if (!storage) return fallback;
+  try {
+    const raw = storage.getItem(VEHICLE_MIX_STORAGE_KEY);
+    if (!raw) {
+      // First run with presets: both start from the single mix the player
+      // already balanced, so nothing is lost by the upgrade.
+      const legacy = loadMix(storage);
+      return { master: legacy.master, car: { ...legacy }, bike: { ...legacy } };
+    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const master = clampChannel(parsed.master, DEFAULT_MIX.master);
+    return {
+      master,
+      car: withMaster(sanitizeMix(parsed.car), master),
+      bike: withMaster(sanitizeMix(parsed.bike), master),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveVehicleMixes(
+  mixes: VehicleMixes,
+  storage: WritableStorage | null = defaultStorage(),
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(VEHICLE_MIX_STORAGE_KEY, JSON.stringify(mixes));
+  } catch {
+    /* private mode / quota: the presets are not remembered */
+  }
+}
