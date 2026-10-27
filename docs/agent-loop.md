@@ -12,13 +12,13 @@ modifie pas le bloc d'état à la main.
 - `status: blocked` → deux échecs sur la même cause : s'arrêter et le dire à l'utilisateur.
 
 <!-- state:start -->
-status: running
-task: Per-vehicle sound presets
+status: idle
+task: —
 cycle: 7
-started: 2026-10-27T06:48:29Z
-heartbeat: 2026-10-27T06:48:29Z
-commit: 7ef586b
-owner: session-10338
+started: —
+heartbeat: 2026-10-27T06:50:49Z
+commit: 52f3df4
+owner: session-12131
 <!-- state:end -->
 
 ## Journal
@@ -31,3 +31,4 @@ owner: session-10338
 | 4 | 2026-10-26 | Per-vehicle camera framing | — | bloqué : cadrage cockpit non vérifiable ici : le rendu de contrôle tourne à ~1 fps (SwiftShader), donc chaque capture montre la frame précédente du changement de POV, et deux runs ont été tués avant d'obtenir une image stable. Piste mesurée à reprendre : la barre est à 1,12 m de haut et 0,33 m devant l'origine ; un œil à 0,55 m derrière et 0,30 m au-dessus d'elle demande ~8° de piqué pour tenir guidon et garde-boue dans le champ — à juger sur une vraie machine. |
 | 5 | 2026-10-26 | Bike presets in the HUD | `5c62c62` | libellé du preset dans le HUD, vérifié de Série à Stunt sans rechargement, 56 tests |
 | 6 | 2026-10-27 | Wet-weather riding | `7ef586b` | route mouillée G, spray arrière, asphalte assombri, 2 tests ; tsc ok, 58/58 |
+| 7 | 2026-10-27 | Per-vehicle sound presets | `52f3df4` | presets de mix voiture/moto, maître partagé, migration de l'ancien mix ; 2 tests, tsc ok, 60/60, build ok |

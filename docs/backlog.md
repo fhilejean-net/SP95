@@ -38,8 +38,9 @@ commit hash so the history stays readable.
   *Done when:* focused tests prove wet grip is lower than dry grip for asphalt and loose surfaces, the default remains dry, and the spray activates only for a moving vehicle on a wet surface; `npm test` and `npx tsc --noEmit` pass.
   *Cycle 6:* touche `G` (bascule route sèche/mouillée, flash HUD), grip ×0,7 sur toute surface, asphalte assombri, spray arrière sur roue au contact en mouvement ; 2 tests ajoutés, `tsc` ok, 58/58 tests
 
-- [ ] **Per-vehicle sound presets** — `S`. Keep the existing sound-mix controls, but remember and restore separate channel levels for car and bike while preserving the master level.
+- [x] ~~**Per-vehicle sound presets**~~ — `S`. Keep the existing sound-mix controls, but remember and restore separate channel levels for car and bike while preserving the master level.
   *Done when:* a focused test shows car and bike channel mixes restore independently across vehicle switches and master volume remains unchanged; `npm test` and `npx tsc --noEmit` pass.
+  *Cycle 7:* `52f3df4` — presets de mix voiture/moto, maître partagé, migration de l'ancien mix ; 2 tests, tsc ok, 60/60, build ok
 
 - [ ] **Wet surface lookups allocate in the physics hot path** — `S`. Since cycle 6,
   `surfaceAt` clones the dry surface object on every call once the road is wet, and both vehicle
