@@ -50,6 +50,23 @@ import { loadCarVisual } from './render/carModel.ts';
 import { CARS, findCar, loadCarId, saveCarId, type CarDef, type CarId } from './game/cars.ts';
 import { QualityGovernor } from './render/quality.ts';
 import { ChaseCamera, cameraModeLabel } from './core/camera.ts';
+
+/** Les vues du replay, dans l'ordre où `C` les fait défiler. */
+type ReplayView = 'chase' | 'tv' | 'onboard' | 'trackside';
+const REPLAY_VIEWS: ReplayView[] = ['chase', 'tv', 'onboard', 'trackside'];
+
+function replayViewLabel(view: ReplayView): string {
+  switch (view) {
+    case 'tv':
+      return 'Caméra TV';
+    case 'onboard':
+      return 'Embarquée';
+    case 'trackside':
+      return 'Bord de piste';
+    default:
+      return 'Replay · poursuite libre';
+  }
+}
 import { InputManager } from './core/input.ts';
 import { Hud, type GameMode } from './game/hud.ts';
 import { DriftScore } from './game/drift.ts';
@@ -377,6 +394,25 @@ async function boot(): Promise<void> {
   /** Absolute angle the replay camera holds, in world space. */
   let replayCamYaw = 0;
   let replayCamOrbit = 0;
+  /**
+   * Vues du replay, comme dans un jeu de course : poursuite libre, caméra TV en
+   * hauteur, embarquée, et caméra posée au bord de la piste que la voiture
+   * traverse. `C` les fait défiler, `Q`/`E` et la souris tournent la poursuite.
+   */
+  let replayView: ReplayView = 'chase';
+  const replayTrackside = new THREE.Vector3();
+
+  /** Pose la caméra de bord de piste : côté extérieur, un peu en avant. */
+  function placeReplayTrackside(): void {
+    const side = new THREE.Vector3(-carForward.z, 0, carForward.x);
+    if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
+    side.normalize();
+    replayTrackside.set(
+      carPosition.x + side.x * 23 + carForward.x * 9,
+      groundAt(carPosition.x, carPosition.z) + 5.2,
+      carPosition.z + side.z * 23 + carForward.z * 9,
+    );
+  }
   const replayQuat = new THREE.Quaternion();
   /** Seconds of history travelled per real second while rewinding. */
   const REWIND_RATE = 1.7;
@@ -1472,23 +1508,56 @@ async function boot(): Promise<void> {
       camera.fov = 55;
       camera.updateProjectionMatrix();
     } else if (replay) {
-      // Free orbit around the replayed car: the mouse chooses any angle round
-      // it and the wheel sets the distance, without the chase lag or the
-      // auto-return that would fight the player mid-shot.
       const turn = (input.isDown('KeyE') ? 1 : 0) - (input.isDown('KeyQ') ? 1 : 0);
       replayCamYaw += turn * dt * 1.5;
-      const yaw = replayCamYaw + (input.orbitYaw - replayCamOrbit);
-      const pitch = Math.max(-0.05, 0.24 + input.orbitPitch);
-      const distance = Math.max(2.2, 6.2 + input.zoom * 1.6);
-      const horizontal = Math.cos(pitch) * distance;
       const ground = groundAt(carPosition.x, carPosition.z);
-      camera.position.set(
-        carPosition.x + Math.sin(yaw) * horizontal,
-        Math.max(ground + 0.5, carPosition.y + Math.sin(pitch) * distance + 0.55),
-        carPosition.z + Math.cos(yaw) * horizontal,
-      );
-      camera.lookAt(carPosition.x, carPosition.y + 0.7, carPosition.z);
-      camera.fov += (58 - camera.fov) * Math.min(1, dt * 6);
+      const lookY = carPosition.y + 0.7;
+      if (replayView === 'tv') {
+        // Caméra TV : haute, de trois quarts, elle prend la voiture en enfilade
+        // sans coller à elle — l'angle de diffusion d'un tour de circuit.
+        const angle = replayCamYaw + Math.PI * 0.62;
+        const distance = 17;
+        camera.position.set(
+          carPosition.x + Math.sin(angle) * distance,
+          Math.max(ground + 8, carPosition.y + 7),
+          carPosition.z + Math.cos(angle) * distance,
+        );
+        camera.lookAt(carPosition.x, lookY, carPosition.z);
+      } else if (replayView === 'onboard') {
+        // Embarquée : au-dessus du capot, dans l'axe de la voiture.
+        camera.position.set(
+          carPosition.x - carForward.x * 1.35,
+          carPosition.y + 1.18,
+          carPosition.z - carForward.z * 1.35,
+        );
+        camera.lookAt(
+          camera.position.x - carForward.x * 30,
+          camera.position.y - 0.55,
+          camera.position.z - carForward.z * 30,
+        );
+      } else if (replayView === 'trackside') {
+        // Posée au bord de la piste : elle ne bouge plus, la voiture passe.
+        if (Math.hypot(carPosition.x - replayTrackside.x, carPosition.z - replayTrackside.z) > 45) {
+          placeReplayTrackside();
+        }
+        camera.position.copy(replayTrackside);
+        camera.lookAt(carPosition.x, lookY, carPosition.z);
+      } else {
+        // Poursuite libre : la souris choisit l'angle, la molette la distance,
+        // sans le retard de la caméra de jeu ni le rappel automatique.
+        const yaw = replayCamYaw + (input.orbitYaw - replayCamOrbit);
+        const pitch = Math.max(-0.05, 0.24 + input.orbitPitch);
+        const distance = Math.max(2.2, 6.2 + input.zoom * 1.6);
+        const horizontal = Math.cos(pitch) * distance;
+        camera.position.set(
+          carPosition.x + Math.sin(yaw) * horizontal,
+          Math.max(ground + 0.5, carPosition.y + Math.sin(pitch) * distance + 0.55),
+          carPosition.z + Math.cos(yaw) * horizontal,
+        );
+        camera.lookAt(carPosition.x, lookY, carPosition.z);
+      }
+      const replayFov = replayView === 'onboard' ? 64 : replayView === 'tv' ? 45 : 58;
+      camera.fov += (replayFov - camera.fov) * Math.min(1, dt * 6);
       camera.updateProjectionMatrix();
     } else {
       chase.update(
@@ -1577,7 +1646,13 @@ async function boot(): Promise<void> {
       hud.flash(isWetRoad() ? 'Route mouillée' : 'Route sèche', { duration: 900 });
     }
     if (input.consume('camera') && mode !== 'menu') {
-      hud.flash(cameraModeLabel(chase.nextMode()), { duration: 900 });
+      if (replay) {
+        replayView = REPLAY_VIEWS[(REPLAY_VIEWS.indexOf(replayView) + 1) % REPLAY_VIEWS.length];
+        if (replayView === 'trackside') placeReplayTrackside();
+        hud.flash(replayViewLabel(replayView), { accent: true, duration: 1100 });
+      } else {
+        hud.flash(cameraModeLabel(chase.nextMode()), { duration: 900 });
+      }
     }
     if (mode !== 'menu' && !paused && ridingBike && input.consume('wheelie')) {
       triggerWheelie();

@@ -115,6 +115,12 @@ const GROUND_IMAGES = /^(grass|green|sand|rf_|water|rmbl|road0[1-7]|roadx|pitroa
  * faisait buter les roues dessus. La piste uniforme les remplace : masqués.
  */
 const OVERLAY_IMAGES = /^(groove00|skidslong|tyres_add)/;
+/**
+ * Primitives que le fichier laisse sans la moindre texture et qui se lisent comme
+ * un bloc plein posé au bord de la piste — le bloc du panneau stop, sous le
+ * pont. Masquées, elles sortent du rendu **et** du collider.
+ */
+const HIDDEN_PRIMITIVES = new Set(['towerdisplay2']);
 
 /** Groupes de collision du terrain : les pneus mordent, la coque ignore. */
 const GROUND_GROUP = (GROUP_GROUND << 16) | 0xffff;
@@ -231,6 +237,166 @@ function grainTexture(grain: Grain, anisotropy: number): THREE.CanvasTexture {
   return texture;
 }
 
+/**
+ * La piste roulable est reconstruite pour la physique, pas pour l'image.
+ *
+ * Le modèle est un relevé de Suzuka : 51 m de dénivelé, du dévers dans les
+ * courbes, des vibreurs en marche et des raccords de tuiles. Les roues sont des
+ * raycasts : chaque pli et chaque dévers devient un couple de roulis, d'où la
+ * voiture déséquilibrée au freinage et retournée en courbe rapide.
+ *
+ * La surface est donc rééchantillonnée sur une trame de `ROAD_CELL` mètres, la
+ * cote d'un nœud étant la médiane de son voisinage : le dévers et les vibreurs
+ * sont moyennés, la montée du tour reste. L'image garde le modèle, seule la
+ * surface que lisent les roues change, et elle suit le bitume à quelques
+ * centimètres.
+ */
+const ROAD_CELL = 3;
+
+/** Cote médiane : un vibreur isolé ne tire pas la trame à lui. */
+function median(values: number[]): number {
+  values.sort((a, b) => a - b);
+  return values[values.length >> 1];
+}
+
+interface FlatRoad {
+  vertices: Float32Array;
+  indices: Uint32Array;
+  triangles: number;
+  /** Pente la plus forte entre deux nœuds, en pourcentage. */
+  maxGrade: number;
+}
+
+/**
+ * Trame de la surface roulable, **par maillage** : au croisement en huit, les
+ * deux tabliers sont deux maillages distincts et gardent chacun leur cote.
+ */
+function buildFlatRoad(meshes: THREE.Mesh[]): FlatRoad {
+  const point = new THREE.Vector3();
+  const vertices: number[] = [];
+  const indices: number[] = [];
+  let maxGrade = 0;
+
+  for (const mesh of meshes) {
+    const positions = mesh.geometry.attributes.position;
+    if (!positions || positions.count < 3) continue;
+    const xs: number[] = [];
+    const ys: number[] = [];
+    const zs: number[] = [];
+    for (let i = 0; i < positions.count; i++) {
+      point.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+      xs.push(point.x);
+      ys.push(point.y);
+      zs.push(point.z);
+    }
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < xs.length; i++) {
+      if (xs[i] < minX) minX = xs[i];
+      if (xs[i] > maxX) maxX = xs[i];
+      if (zs[i] < minZ) minZ = zs[i];
+      if (zs[i] > maxZ) maxZ = zs[i];
+    }
+    const cols = Math.max(2, Math.ceil((maxX - minX) / ROAD_CELL) + 1);
+    const rows = Math.max(2, Math.ceil((maxZ - minZ) / ROAD_CELL) + 1);
+    const stepX = (maxX - minX) / (cols - 1);
+    const stepZ = (maxZ - minZ) / (rows - 1);
+
+    const values: number[][] = Array.from({ length: cols * rows }, () => []);
+    for (let i = 0; i < xs.length; i++) {
+      const cx = Math.min(cols - 1, Math.max(0, Math.round((xs[i] - minX) / stepX)));
+      const cz = Math.min(rows - 1, Math.max(0, Math.round((zs[i] - minZ) / stepZ)));
+      values[cz * cols + cx].push(ys[i]);
+    }
+    const heights = new Float32Array(cols * rows).fill(NaN);
+    for (let i = 0; i < heights.length; i++) {
+      if (values[i].length) heights[i] = median(values[i]);
+    }
+    // Nœuds sans sommet : moyenne des voisins connus. Les remplir avec la
+    // médiane globale du maillage creusait une falaise de trente mètres entre
+    // un nœud de piste et un nœud hors piste.
+    for (let pass = 0; pass < 4; pass++) {
+      const known = heights.slice();
+      let progressed = false;
+      for (let cz = 0; cz < rows; cz++) {
+        for (let cx = 0; cx < cols; cx++) {
+          const index = cz * cols + cx;
+          if (!Number.isNaN(known[index])) continue;
+          let sum = 0;
+          let count = 0;
+          for (let dz = -1; dz <= 1; dz++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = cx + dx;
+              const nz = cz + dz;
+              if (nx < 0 || nx >= cols || nz < 0 || nz >= rows) continue;
+              const value = known[nz * cols + nx];
+              if (Number.isNaN(value)) continue;
+              sum += value;
+              count++;
+            }
+          }
+          if (count > 0) {
+            heights[index] = sum / count;
+            progressed = true;
+          }
+        }
+      }
+      if (!progressed) break;
+    }
+
+    const base = vertices.length / 3;
+    for (let cz = 0; cz < rows; cz++) {
+      for (let cx = 0; cx < cols; cx++) {
+        const height = heights[cz * cols + cx];
+        vertices.push(minX + cx * stepX, Number.isNaN(height) ? 0 : height, minZ + cz * stepZ);
+      }
+    }
+    for (let cz = 0; cz < rows - 1; cz++) {
+      for (let cx = 0; cx < cols - 1; cx++) {
+        const index = cz * cols + cx;
+        // Pas de dalle hors piste : une case sans sommet du modèle n'a pas de
+        // bitume, et un plancher invisible au-dessus du bac à gravier ferait
+        // rouler la voiture dans le vide.
+        const covered =
+          values[index].length > 0 ||
+          values[index + 1].length > 0 ||
+          values[index + cols].length > 0 ||
+          values[index + cols + 1].length > 0;
+        if (!covered) continue;
+        const corners = [
+          heights[index],
+          heights[index + 1],
+          heights[index + cols],
+          heights[index + cols + 1],
+        ];
+        // Un quad posé sur un nœud inconnu serait une falaise : on le laisse
+        // hors du collider.
+        if (corners.some((height) => Number.isNaN(height))) continue;
+        const a = base + index;
+        const b = a + 1;
+        const c = a + cols;
+        const d = c + 1;
+        indices.push(a, c, b, b, c, d);
+        for (const first of corners) {
+          for (const second of corners) {
+            const grade = (Math.abs(first - second) / ROAD_CELL) * 100;
+            if (grade > maxGrade) maxGrade = grade;
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    vertices: new Float32Array(vertices),
+    indices: new Uint32Array(indices),
+    triangles: indices.length / 3,
+    maxGrade,
+  };
+}
+
 /** Vrai si tous les UV du maillage tiennent dans la case [0,1] de sa texture. */
 function uvInTile(mesh: THREE.Mesh): boolean {
   const uv = mesh.geometry.attributes.uv;
@@ -270,6 +436,8 @@ export async function buildCircuit(
   const looseMeshes: THREE.Mesh[] = [];
   /** Décors à plat masqués : hors rendu, hors collider, hors cote du sol. */
   const overlayMeshes: THREE.Mesh[] = [];
+  /** Primitives sans texture retirées (le bloc sous le pont). */
+  const hiddenPrimitives: string[] = [];
   let plateTop = -Infinity;
   let plateBottom = Infinity;
   let triangles = 0;
@@ -282,10 +450,13 @@ export async function buildCircuit(
     meshes++;
     const geometry = mesh.geometry;
     triangles += (geometry.index ? geometry.index.count : geometry.attributes.position.count) / 3;
+    const materialName =
+      (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material)?.name ?? '';
     const image = nameOf(mesh);
-    if (OVERLAY_IMAGES.test(image)) {
+    if (OVERLAY_IMAGES.test(image) || HIDDEN_PRIMITIVES.has(materialName)) {
       mesh.visible = false;
       overlayMeshes.push(mesh);
+      if (HIDDEN_PRIMITIVES.has(materialName)) hiddenPrimitives.push(materialName);
       return;
     }
     if (ASPHALT_IMAGES.test(image)) asphaltMeshes.push(mesh);
@@ -353,6 +524,18 @@ export async function buildCircuit(
   root.position.set(CIRCUIT.cx, natural - centreY, CIRCUIT.cz);
   root.updateMatrixWorld(true);
   scene.add(root);
+
+  // 2b. Piste plate : la surface que lisent les roues est reconstruite sur une
+  // trame régulière, indépendamment de la géométrie du modèle (ses positions
+  // sont quantifiées, on ne peut pas les réécrire sans casser le rendu).
+  const flatRoad = buildFlatRoad(asphaltMeshes);
+  console.log(
+    `Piste : collider plat sur ${ROAD_CELL} m, ${flatRoad.triangles} triangles, ` +
+      `pente max ${flatRoad.maxGrade.toFixed(1)} %`,
+  );
+  if (hiddenPrimitives.length) {
+    console.log(`Circuit : primitives sans texture retirées (${hiddenPrimitives.join(', ')})`);
+  }
 
   // Tous les maillages passent par ici : le décor (murs, gradins, panneaux) a les
   // mêmes réglages de texture que la piste, sinon il garde un filtrage qui bave
@@ -736,7 +919,27 @@ export async function buildCircuit(
     return indexTotal / 3;
   };
 
-  const groundTriangles = appendTrimesh(surfaceMeshes.size ? [...surfaceMeshes] : [], GROUND_GROUP);
+  /** Pose la trame plate de la piste comme surface roulable. */
+  const appendFlatRoad = (road: FlatRoad, groups: number): number => {
+    if (road.triangles === 0) return 0;
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(
+      RAPIER.ColliderDesc.trimesh(road.vertices, road.indices)
+        .setFriction(0.95)
+        .setRestitution(0.02)
+        .setCollisionGroups(groups),
+      body,
+    );
+    return road.triangles;
+  };
+
+  // La piste du modèle rejoint le collider plat, pas le brut : ses bosses et son
+  // dévers faisaient sauter et retourner la voiture.
+  const groundTriangles =
+    appendTrimesh(
+      [...surfaceMeshes].filter((mesh) => !asphaltMeshes.includes(mesh)),
+      GROUND_GROUP,
+    ) + appendFlatRoad(flatRoad, GROUND_GROUP);
   // Le châssis est membre de GROUP_WORLD et filtre sur GROUP_WORLD (voir
   // CHASSIS_UPRIGHT) : les murs doivent porter exactement ce couple.
   const wallTriangles = appendTrimesh(
