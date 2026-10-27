@@ -14,11 +14,11 @@ modifie pas le bloc d'état à la main.
 <!-- state:start -->
 status: idle
 task: —
-cycle: 8
+cycle: 9
 started: —
-heartbeat: 2026-10-27T06:51:39Z
-commit: 303f4c1
-owner: session-12850
+heartbeat: 2026-10-27T07:01:17Z
+commit: 0e3c584
+owner: session-17219
 <!-- state:end -->
 
 ## Journal
@@ -33,3 +33,4 @@ owner: session-12850
 | 6 | 2026-10-27 | Wet-weather riding | `7ef586b` | route mouillée G, spray arrière, asphalte assombri, 2 tests ; tsc ok, 58/58 |
 | 7 | 2026-10-27 | Per-vehicle sound presets | `52f3df4` | presets de mix voiture/moto, maître partagé, migration de l'ancien mix ; 2 tests, tsc ok, 60/60, build ok |
 | 8 | 2026-10-27 | Wet surface lookups allocate in the physics hot path | `303f4c1` | table WET_SURFACES précalculée, grip inchangé, test d'identité ; tsc ok, 61/61 |
+| 9 | 2026-10-27 | Recent stunt replay | `0e3c584` | replay V, mémoire bornée 120 poses, interpolation, simulation gelée ; 3 tests, tsc ok, 64/64, build ok (vérif navigateur à faire) |

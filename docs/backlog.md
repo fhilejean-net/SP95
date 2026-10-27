@@ -50,8 +50,16 @@ commit hash so the history stays readable.
   point while wet, the wet grip values are unchanged, and `npm test` / `npx tsc --noEmit` pass.
   *Cycle 8:* `303f4c1` — table WET_SURFACES précalculée, grip inchangé, test d'identité ; tsc ok, 61/61
 
-- [ ] **Recent stunt replay** — `M`. Record a short rolling window of the player's recent vehicle poses and expose replay playback with a free camera, without recording the entire session or changing live scoring.
+- [x] ~~**Recent stunt replay**~~ — `M`. Record a short rolling window of the player's recent vehicle poses and expose replay playback with a free camera, without recording the entire session or changing live scoring.
   *Done when:* a focused test verifies bounded recording and playback of the recorded poses, and a manual dev-server check confirms replay can be started and exited without affecting live vehicle state or score.
+  *Cycle 9:* `0e3c584` — replay V, mémoire bornée 120 poses, interpolation, simulation gelée ; 3 tests, tsc ok, 64/64, build ok (vérif navigateur à faire)
+
+- [ ] **Animate wheels, steering and rider inside the replay** — `S`. Cycle 9 replays the body
+  poses only, so the car slides along its own path with frozen wheels and the rider never leans.
+  Record the visual bits with each frame (wheel spin, steer, lean, brake) and feed them to
+  `updateCarVisual` / `bikeVisual.setPose` during playback.
+  *Done when:* a focused test shows the extra fields round-trip per frame and interpolate during
+  playback, and a manual replay shows the wheels turning and the rider leaning.
 
 ## Ideas (not scheduled)
 
