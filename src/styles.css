@@ -517,7 +517,8 @@ button.primary {
   text-transform: uppercase;
 }
 
-#tcs-chip {
+#tcs-chip,
+#abs-chip {
   display: inline-block;
   margin-top: 9px;
   padding: 3px 8px;
@@ -535,12 +536,18 @@ button.primary {
   transition: opacity 0.15s, border-color 0.15s, color 0.15s;
 }
 
-#tcs-chip:hover {
+#tcs-chip:hover,
+#abs-chip:hover {
   border-color: var(--accent);
   opacity: 1;
 }
 
-#tcs-chip.off {
+#abs-chip {
+  margin-left: 6px;
+}
+
+#tcs-chip.off,
+#abs-chip.off {
   border-color: rgba(255, 255, 255, 0.18);
   color: var(--muted);
   opacity: 0.55;

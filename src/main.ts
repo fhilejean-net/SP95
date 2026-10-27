@@ -297,7 +297,9 @@ async function boot(): Promise<void> {
   let bikeSpec = resolveBikeSpec(bikeSetup, SUPERMOTARD.spec);
   let ridingBike = false;
   let tcsEnabled = loadTcs();
+  let absEnabled = loadAbs();
   vehicle.tcsEnabled = tcsEnabled;
+  vehicle.absEnabled = absEnabled;
   // The model is the real thing when it loads; the lofted shell stays as a
   // fallback so a missing or corrupt GLB never blocks the game.
   let car: CarVisual = createCar();
@@ -317,6 +319,7 @@ async function boot(): Promise<void> {
   hud.setRedline(spec.redlineRpm);
   hud.setVehicle('car');
   setTcs(tcsEnabled, false);
+  setAbs(absEnabled, false);
   const audio = new CarAudio();
   /** Car and bike keep their own balance; the master is shared. */
   let vehicleMixes = loadVehicleMixes();
@@ -567,6 +570,7 @@ async function boot(): Promise<void> {
       spec,
     );
     carVehicle.tcsEnabled = tcsEnabled;
+    carVehicle.absEnabled = absEnabled;
     car.setWheelRadius(spec.wheelRadius);
     if (!ridingBike) {
       vehicle = carVehicle;
@@ -731,6 +735,38 @@ async function boot(): Promise<void> {
       localStorage.setItem('sp95.tcs', enabled ? 'on' : 'off');
     } catch {
       // Private mode: the switch just does not persist.
+    }
+  }
+
+  function loadAbs(): boolean {
+    try {
+      return localStorage.getItem('sp95.abs') !== 'off';
+    } catch {
+      return true;
+    }
+  }
+
+  function saveAbs(enabled: boolean): void {
+    try {
+      localStorage.setItem('sp95.abs', enabled ? 'on' : 'off');
+    } catch {
+      // Private mode: the switch just does not persist.
+    }
+  }
+
+  /** ABS on/off : coupé, les roues se bloquent et la voiture glisse au freinage. */
+  function setAbs(enabled: boolean, announce = true): void {
+    absEnabled = enabled;
+    carVehicle.absEnabled = enabled;
+    saveAbs(enabled);
+    hud.setAbs(enabled);
+    const button = document.getElementById('btn-pause-abs');
+    if (button) button.textContent = `ABS · ${enabled ? 'Actif' : 'Coupé'}`;
+    if (announce) {
+      hud.flash(enabled ? 'ABS actif' : 'ABS coupé', {
+        accent: !enabled,
+        duration: 1100,
+      });
     }
   }
 
@@ -910,11 +946,16 @@ async function boot(): Promise<void> {
   document.getElementById('btn-pause-sommet')?.addEventListener('click', () => startMode('free', 'summit'));
   document.getElementById('btn-resume')?.addEventListener('click', () => togglePause());
   document.getElementById('btn-pause-tcs')?.addEventListener('click', () => setTcs(!tcsEnabled));
+  document.getElementById('btn-pause-abs')?.addEventListener('click', () => setAbs(!absEnabled));
   // The HUD chip is a button too: switching the assist must not need a pause.
   // It drops focus on use, otherwise Space (the handbrake) would press it again.
   document.getElementById('tcs-chip')?.addEventListener('click', (event) => {
     (event.currentTarget as HTMLElement).blur();
     setTcs(!tcsEnabled);
+  });
+  document.getElementById('abs-chip')?.addEventListener('click', (event) => {
+    (event.currentTarget as HTMLElement).blur();
+    setAbs(!absEnabled);
   });
   /** Dumps the clutch: the kick, then the clack of the lever letting go. */
   function triggerWheelie(): void {
@@ -1458,6 +1499,7 @@ async function boot(): Promise<void> {
     }
     if (input.consume('mute')) audio.setMuted(!audio.isMuted);
     if (input.consume('tcs') && mode !== 'menu' && !ridingBike) setTcs(!tcsEnabled);
+    if (input.consume('abs') && mode !== 'menu' && !ridingBike) setAbs(!absEnabled);
     if (input.consume('wet') && mode !== 'menu') {
       setWetRoad(!isWetRoad());
       applyWetLook(isWetRoad());
@@ -1600,6 +1642,9 @@ async function boot(): Promise<void> {
     get tcs() {
       return tcsEnabled;
     },
+    get abs() {
+      return absEnabled;
+    },
     get streetKit(): StreetKitSummary {
       return streetKit;
     },
@@ -1730,6 +1775,7 @@ declare global {
       readonly soundPanelOpen: boolean;
       readonly soundMix: Record<string, number>;
       readonly tcs: boolean;
+      readonly abs: boolean;
       readonly streetKit: StreetKitSummary;
       readonly vegetation: VegetationSummary;
       readonly roadEnds: number;

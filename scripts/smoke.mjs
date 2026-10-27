@@ -388,6 +388,25 @@ try {
   );
   check('the TCS chip switches the assist back on', tcsBack && chipBack);
 
+  // ABS : même témoin, mais sur les freins.
+  const absBefore = await page.evaluate(() => window.__sp95.abs);
+  await page.keyboard.press('KeyB');
+  const absOff = await page.evaluate(() => ({
+    state: window.__sp95.abs,
+    stored: localStorage.getItem('sp95.abs'),
+    chipOff: document.getElementById('abs-chip').classList.contains('off'),
+  }));
+  check(
+    'B switches the ABS off and the chip shows it',
+    Boolean(absBefore) && absOff.state === false && absOff.stored === 'off' && absOff.chipOff,
+    `abs ${absOff.state}, stored ${absOff.stored}`,
+  );
+  await page.click('#abs-chip');
+  const absBack = await page.evaluate(
+    () => window.__sp95.abs && !document.getElementById('abs-chip').classList.contains('off'),
+  );
+  check('the ABS chip switches the brakes back on', absBack);
+
   await page.keyboard.down('KeyW');
   await waitFor(() => window.__sp95.speedKmh > 45, 60_000);
   await page.keyboard.up('KeyW');

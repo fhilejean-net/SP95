@@ -43,7 +43,8 @@
           <span>Espace</span><span>Frein à main · embrayage (moto)</span>
           <span>Souris (glisser)</span><span>Caméra autour du véhicule</span>
           <span>C</span><span>Changer de caméra</span>
-          <span>T</span><span>Antipatinage on / off</span><span>G</span><span>Route mouillée on / off</span>
+          <span>T</span><span>Antipatinage on / off</span><span>B</span><span>ABS on / off</span>
+          <span>G</span><span>Route mouillée on / off</span>
           <span>R</span><span>Réapparaître</span>
           <span>V</span><span>Replay des dernières secondes</span>
           <span>X</span><span>Rembobiner (maintenir)</span>
@@ -105,13 +106,14 @@
           <span id="rpm-max">/ 7 300</span>
         </div>
         <button id="tcs-chip" class="on" type="button">TCS</button>
+        <button id="abs-chip" class="on" type="button">ABS</button>
         <button id="wheelie-chip" class="hidden" type="button">WHEELIE</button>
       </div>
 
       <canvas id="minimap" width="190" height="190"></canvas>
 
       <div id="message"></div>
-      <div id="hint">ZQSD conduire · Espace frein à main · C caméra · T antipatinage · G route mouillée · V replay · X rembobiner · Souris autour du véhicule · Échap pause</div>
+      <div id="hint">ZQSD conduire · Espace frein à main · C caméra · T antipatinage · B ABS · G route mouillée · V replay · X rembobiner · Souris autour du véhicule · Échap pause</div>
 
       <div id="touch-controls">
         <div id="touch-steer"><div id="touch-steer-knob"></div></div>
@@ -130,6 +132,7 @@
         <div class="menu-actions">
           <button id="btn-resume" class="primary">Reprendre</button>
           <button id="btn-pause-tcs">Antipatinage · Actif</button>
+          <button id="btn-pause-abs">ABS · Actif</button>
           <button id="btn-pause-moto">Moto · supermotard stunt</button>
           <button id="btn-pause-free">Conduite libre</button>
           <button id="btn-pause-race" class="village-only">Course · 2 tours</button>

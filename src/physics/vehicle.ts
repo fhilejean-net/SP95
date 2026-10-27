@@ -55,6 +55,13 @@ export interface SurfaceGrip {
 
 const ASPHALT: SurfaceGrip = { kind: 'asphalte', grip: 1, peak: 1, rolling: 1, roughness: 0 };
 
+/**
+ * Glissement visé par l'ABS : le pic du pneu, là où il freine le plus fort sans
+ * se bloquer. Un peu en dessous, parce que la pente y est douce et que le pas de
+ * calcul ne doit pas emmener la roue de l'autre côté.
+ */
+const ABS_SLIP_TARGET = KAPPA_PEAK * 0.9;
+
 interface Wheel {
   name: 'FL' | 'FR' | 'RL' | 'RR';
   mount: Vec3;
@@ -286,6 +293,14 @@ export class Vehicle {
    * pulling the rear back under the car the moment it spins up.
    */
   tcsEnabled = true;
+
+  /**
+   * Freins ABS. Actif, la pédale est dosée pour que la roue reste près de son
+   * pic de glissement au lieu de se bloquer ; coupé, la pédale est entièrement
+   * au joueur : les roues se bloquent, la voiture glisse et rallonge ses
+   * distances de freinage. Comme l'antipatinage, il se coupe (`B`, pause).
+   */
+  absEnabled = true;
 
   constructor(
     world: RAPIER.World,
@@ -643,30 +658,65 @@ export class Vehicle {
 
       let forces;
       if (share <= 0.01) {
-        // The un-driven axle is modelled as free rolling: this avoids the stiff
+        // L'axe non motrice freine par un glissement visé: this avoids the stiff
         // wheel-spin limit cycle at speed. Braking is a slip target so the
         // combined-slip ellipse still takes lateral grip away under braking.
         wheel.omega = cvLong / wheel.radius;
         // The slip target has to follow the direction of travel: a fixed negative
         // value pushed the car backwards while it was reversing, which is what
         // made the car impossible to stop and never let it roll forward again.
+        //
+        // Avec l'ABS la roue reste au pic du pneu, là où il freine le plus fort.
+        // Coupé, le glissement visé se lâche jusqu'au blocage (glissement 1) : le
+        // pneu glisse au lieu de mordre et la distance de freinage s'allonge,
+        // c'est tout le comportement recherché quand on le coupe.
+        const brakeSlip = this.absEnabled ? KAPPA_PEAK : 1;
         const kappa =
           Math.abs(cvLong) < 0.3
             ? 0
-            : -serviceBrake * 0.085 * Math.sign(cvLong);
+            : -serviceBrake * brakeSlip * Math.sign(cvLong);
         wheel.slipRatio = kappa;
         forces = tireForces({ kappa, alpha, fz: springForce, mu, peakAngle });
       } else {
         const kappa = slipRatioFromWheelSpeed(wheel.omega, wheel.radius, cvLong);
         wheel.slipRatio = kappa;
         forces = tireForces({ kappa, alpha, fz: springForce, mu, peakAngle });
-        // ABS: back off the brakes when the wheel starts locking, the way a
-        // road-going sports car does. The handbrake bypasses it on purpose, and
-        // only the rear axle has one.
-        const absFactor =
-          serviceBrake > 0.15 && Math.abs(kappa) > 0.14 && Math.abs(cvLong) > 2 ? 0.3 : 1;
+        // ABS : le pneu ne transmet pas plus que sa force au pic, et un couple de
+        // frein au-delà ne fait que bloquer la roue sans freiner plus fort. On
+        // plafonne donc le couple *total* qui retient la roue — frein de service
+        // et frein moteur — à ce que le pneu peut passer, tick par tick ; le
+        // plafond suit la charge et l'adhérence. Le frein moteur compte : sinon la
+        // boîte qui rétrograde bloque la roue que l'ABS vient de relâcher, ce que
+        // le contrôle de couple moteur d'une vraie voiture rattrape. Coupé, on
+        // freine à fond : les roues se bloquent et la voiture glisse.
+        let brakeFactor = 1;
+        if (this.absEnabled && serviceBrake > 0.05 && Math.abs(cvLong) > 1.5 && !input.handbrake) {
+          // 1. Le pneu ne passe pas plus que sa force au pic : on borne le couple
+          //    total (frein de service + frein moteur) à cette valeur.
+          const peakTorque = mu * springForce * wheel.radius;
+          const engineDrag = Math.min(Math.max(0, -wheelDrive), peakTorque);
+          if (wheelDrive < 0) wheelDrive = -engineDrag;
+          let room = Math.max(0, peakTorque - engineDrag);
+          // 2. Ce frein-ci est un frottement sec : il retire son couple à chaque
+          //    sous-pas sans savoir où est la route, donc un couple constant finit
+          //    toujours par arrêter la roue. On lui donne aussi ce plafond-là :
+          //    jamais plus de couple qu'il n'en faut pour amener la roue au
+          //    glissement visé dans le tick. C'est le dosage d'un ABS, recalculé
+          //    à chaque pas, là où une pompe ne peut pas être plus rapide que le
+          //    pas de calcul.
+          const wheelInertia = wheel.front ? frontInertia : rearInertia;
+          // En freinage la roue tourne *moins* vite que la route : c'est le
+          // glissement négatif. Viser le pic par le haut donnerait un couple
+          // négatif, c'est-à-dire aucun frein sur cet essieu.
+          const targetOmega = (Math.abs(cvLong) * (1 - ABS_SLIP_TARGET)) / wheel.radius;
+          const spinRoom =
+            (Math.max(0, Math.abs(wheel.omega) - targetOmega) * wheelInertia) / dt;
+          room = Math.min(room, spinRoom);
+          const full = serviceBrake * this.spec.brakeTorque;
+          brakeFactor = full > 0 ? Math.min(1, room / full) : 1;
+        }
         const brakeTorque =
-          serviceBrake * this.spec.brakeTorque * absFactor +
+          serviceBrake * this.spec.brakeTorque * brakeFactor +
           (input.handbrake && !wheel.front ? 1800 : 0);
         this.integrateWheelSpin(
           wheel,

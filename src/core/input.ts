@@ -5,7 +5,17 @@ export interface Controls {
   handbrake: boolean;
 }
 
-type Action = 'reset' | 'pause' | 'mute' | 'help' | 'tcs' | 'wheelie' | 'camera' | 'wet' | 'replay';
+type Action =
+  | 'reset'
+  | 'pause'
+  | 'mute'
+  | 'help'
+  | 'tcs'
+  | 'abs'
+  | 'wheelie'
+  | 'camera'
+  | 'wet'
+  | 'replay';
 
 const DEADZONE = 0.09;
 
@@ -49,6 +59,7 @@ export class InputManager {
         if (e.code === 'KeyM') this.pendingActions.add('mute');
         if (e.code === 'KeyH') this.pendingActions.add('help');
         if (e.code === 'KeyT') this.pendingActions.add('tcs');
+        if (e.code === 'KeyB') this.pendingActions.add('abs');
         if (e.code === 'KeyC') this.pendingActions.add('camera');
         if (e.code === 'KeyG') this.pendingActions.add('wet');
         if (e.code === 'KeyV') this.pendingActions.add('replay');

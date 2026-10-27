@@ -30,13 +30,14 @@ Sur une machine modeste, ajouter `?fx=low` à l'URL : ombres et post-traitement 
 | Pause | `Échap` | — | — |
 | Couper le son | `M` | — | — |
 | Antipatinage on / off | `T` | — | — |
+| ABS on / off | `B` | — | — |
 | Baisser l'avant (moto) | `S` / `↓` (frein) | gâchette gauche | bouton FREIN |
 
 La moto se lance depuis **Moto · supermotard stunt** dans le menu ou la pause. `Espace` (ou le bouton **WHEELIE** sous le compte-tours) donne le coup d'embrayage : le claquement de la poignée part avec le coup de piston qui lève l'avant. Ensuite l'accélérateur choisit l'angle tenu — environ 35°, un vrai wheelie de conduite — et le frein repose la roue. Un second coup au sommet pousse la moto au-delà : la **bavette** racle, fait des étincelles et paie un bonus — mais il faut freiner pour ne pas partir en looping. Une moto n'a pas de frein à main, donc `Espace` est l'embrayage sur deux roues et le frein à main sur quatre.
 
 À l'arrêt, maintenir `S` fait **reculer la moto au pas** : le pilote pousse, les deux roues roulent (aucun patinage), la boîte affiche `R`, et lâcher le frein arrête net. `C` fait défiler les caméras : poursuite, poursuite serrée, capot, poste de conduite et pare-chocs. En glissant la souris, la caméra fait le tour du véhicule au lieu de le laisser sortir du cadre.
 
-La boîte est automatique 6 rapports + marche arrière : maintenir le frein à l'arrêt enclenche la marche arrière, et l'accélérateur repasse en première dès que la voiture a fini de reculer. Les rapports se décident sur la **vitesse réelle de la caisse**, comme le capteur de sortie d'une vraie boîte, et non sur celle des roues motrices : en drift ou au démarrage, l'essieu arrière patine et lit le double de la vitesse réelle ; la boîte montait alors en quatrième au milieu d'un drift et faisait tomber le moteur hors de sa plage, ce qui vidait le drift de sa vitesse. L'antipatinage se coupe avec `T` ou depuis la pause (le témoin **TCS** du compte-tours s'éteint) : c'est indispensable pour tenir un drift ou un burnout. Le rupteur coupe l'injection par cycles de 140 ms au lieu de brider le couple.
+La boîte est automatique 6 rapports + marche arrière : maintenir le frein à l'arrêt enclenche la marche arrière, et l'accélérateur repasse en première dès que la voiture a fini de reculer. Les rapports se décident sur la **vitesse réelle de la caisse**, comme le capteur de sortie d'une vraie boîte, et non sur celle des roues motrices : en drift ou au démarrage, l'essieu arrière patine et lit le double de la vitesse réelle ; la boîte montait alors en quatrième au milieu d'un drift et faisait tomber le moteur hors de sa plage, ce qui vidait le drift de sa vitesse. L'antipatinage se coupe avec `T` ou depuis la pause (le témoin **TCS** du compte-tours s'éteint) : c'est indispensable pour tenir un drift ou un burnout. Le rupteur coupe l'injection par cycles de 140 ms au lieu de brider le couple. L'**ABS** se coupe de la même façon avec `B` (ou depuis la pause, témoin **ABS** à côté du TCS) : il dose la pédale pour garder la roue près du pic d'adhérence, et coupé les roues se bloquent — la voiture glisse et freine plus long.
 
 ## Atelier
 

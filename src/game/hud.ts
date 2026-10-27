@@ -38,6 +38,7 @@ export class Hud {
   private stuntAngle = el('stunt-angle');
   private bikePreset = el('bike-preset');
   private tcsChip = el('tcs-chip');
+  private absChip = el('abs-chip');
   private wheelieChip = el('wheelie-chip');
   private hint = el('hint');
   private speedValue = el('speed-value');
@@ -229,6 +230,7 @@ export class Hud {
     this.driftPanel.classList.toggle('hidden', bike);
     this.stuntPanel.classList.toggle('hidden', !bike);
     this.tcsChip.classList.toggle('hidden', bike);
+    this.absChip.classList.toggle('hidden', bike);
     this.wheelieChip.classList.toggle('hidden', !bike);
     this.hint.textContent = bike
       ? 'Espace wheelie · S frein et marche arrière · C caméra · ZQSD conduire · Échap pause'
@@ -268,6 +270,15 @@ export class Hud {
     this.tcsChip.title = enabled
       ? 'Antipatinage actif — T ou le menu pause pour le couper'
       : 'Antipatinage coupé — T pour le remettre';
+  }
+
+  /** Même témoin que l'antipatinage, pour les freins : B ou le menu pause. */
+  setAbs(enabled: boolean): void {
+    this.absChip.classList.toggle('off', !enabled);
+    this.absChip.classList.toggle('on', enabled);
+    this.absChip.title = enabled
+      ? 'ABS actif — B ou le menu pause pour le couper'
+      : 'ABS coupé — B pour le remettre';
   }
 
   updateRace(snapshot: RaceSnapshot | null): void {

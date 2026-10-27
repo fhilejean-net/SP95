@@ -20,7 +20,7 @@ import {
   terrainBaseHeight,
   type SurfaceKind,
 } from './layout.ts';
-import { GROUP_GROUND } from '../physics/vehicle.ts';
+import { GROUP_GROUND, GROUP_WORLD } from '../physics/vehicle.ts';
 
 // BASE_URL garde le modèle résolvable sous /SP95/ sur GitHub Pages ; en test
 // Node, import.meta.env n'existe pas et le chemin retombe sur la racine.
@@ -122,6 +122,32 @@ function imageNames(json: ModelJson): Map<string, string> {
   return out;
 }
 
+/**
+ * Teinte de secours des matériaux du circuit qui n'ont aucune texture de couleur
+ * dans le fichier (relevé à l'inspection du GLB : DIANTA02, DIANTA03, TREE09,
+ * PIT_LOGO_REAR, ZHUANPAN09). Sans ça ils sortent en aplat, blancs pour les
+ * arbres, gris clair pour les câbles et leur bloc sous le pont.
+ */
+const TEXTURELESS_FIX: Record<string, { color: number; roughness: number }> = {
+  DIANTA02: { color: 0x53585f, roughness: 0.75 },
+  DIANTA03: { color: 0x23262b, roughness: 0.8 },
+  TREE09: { color: 0x4d6b3c, roughness: 0.9 },
+  PIT_LOGO_REAR: { color: 0xd9ddd4, roughness: 0.85 },
+  ZHUANPAN09: { color: 0x1f4b6b, roughness: 0.7 },
+};
+
+/** Vrai si tous les UV du maillage tiennent dans la case [0,1] de sa texture. */
+function uvInTile(mesh: THREE.Mesh): boolean {
+  const uv = mesh.geometry.attributes.uv;
+  if (!uv) return false;
+  for (let i = 0; i < uv.count; i++) {
+    const u = uv.getX(i);
+    const v = uv.getY(i);
+    if (u < -0.002 || u > 1.002 || v < -0.002 || v > 1.002) return false;
+  }
+  return true;
+}
+
 export async function buildCircuit(
   scene: THREE.Scene,
   world: RAPIER.World,
@@ -180,18 +206,38 @@ export async function buildCircuit(
   root.updateMatrixWorld(true);
   scene.add(root);
 
-  for (const mesh of [...groundMeshes, ...asphaltMeshes, ...looseMeshes]) {
+  // Tous les maillages passent par ici : le décor (murs, gradins, panneaux) a les
+  // mêmes réglages de texture que la piste, sinon il garde un filtrage qui bave
+  // à distance et des matériaux sans map qui sortent en aplat.
+  root.traverse((object) => {
+    if (!(object as THREE.Mesh).isMesh) return;
+    const mesh = object as THREE.Mesh;
     mesh.receiveShadow = true;
     // 183 000 triangles dans la passe d'ombres coûteraient plus qu'ils ne rendent.
     mesh.castShadow = false;
     for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-      for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {
-        const texture = (material as THREE.MeshStandardMaterial)[key as 'map'];
-        if (texture) texture.anisotropy = options.anisotropy;
+      const standard = material as THREE.MeshStandardMaterial;
+      const fix = TEXTURELESS_FIX[standard.name];
+      if (fix && !standard.map) {
+        standard.color.setHex(fix.color);
+        standard.roughness = fix.roughness;
+        standard.metalness = 0;
       }
-      material.needsUpdate = true;
+      // Le modèle est un atlas de tuiles photo : chaque primitive a ses UV dans
+      // la case [0,1]. Une UV qui dépasse d'un cheveu (elles sont quantifiées
+      // dans ce fichier) fait répéter la texture et bave d'un bord de tuile sur
+      // l'autre — d'où des morceaux de piste qui n'ont pas l'air à leur place.
+      // On épingle les textures des primitives dont les UV tiennent dans la case.
+      const clamp = uvInTile(mesh);
+      for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {
+        const texture = standard[key as 'map'];
+        if (!texture) continue;
+        texture.anisotropy = options.anisotropy;
+        if (clamp) texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+      }
+      standard.needsUpdate = true;
     }
-  }
+  });
 
   // 3. Grille d'échantillonnage du sol, en coordonnées modèle puis monde.
   const halfX = CIRCUIT.plateHalfX;
@@ -410,49 +456,70 @@ export async function buildCircuit(
     return 'herbe';
   };
 
-  // 4. Trimesh : le modèle entier, transformé dans le repère du monde.
+  // 4. Deux trimeshes : le sol (herbe, asphalte, terre) dans le groupe du sol,
+  // et tout le reste — murs, glissières, gradins, piliers — dans le groupe des
+  // structures. Avant, le modèle entier n'était que dans le premier et le
+  // châssis ne collisionne qu'avec le second : les murs n'avaient aucune
+  // collision, on les traversait sans rien sentir.
   const buildStarted = performance.now();
-  let vertexTotal = 0;
-  let indexTotal = 0;
   const allMeshes: THREE.Mesh[] = [];
   root.traverse((object) => {
     if ((object as THREE.Mesh).isMesh) allMeshes.push(object as THREE.Mesh);
   });
-  for (const mesh of allMeshes) {
-    vertexTotal += mesh.geometry.attributes.position.count;
-    const index = mesh.geometry.index;
-    indexTotal += index ? index.count : mesh.geometry.attributes.position.count;
-  }
-  const vertices = new Float32Array(vertexTotal * 3);
-  const indices = new Uint32Array(indexTotal);
-  let vertexOffset = 0;
-  let indexOffset = 0;
-  for (const mesh of allMeshes) {
-    const positions = mesh.geometry.attributes.position;
-    for (let i = 0; i < positions.count; i++) {
-      point.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
-      vertices[(vertexOffset + i) * 3] = point.x;
-      vertices[(vertexOffset + i) * 3 + 1] = point.y;
-      vertices[(vertexOffset + i) * 3 + 2] = point.z;
-    }
-    const index = mesh.geometry.index;
-    if (index) {
-      for (let i = 0; i < index.count; i++) indices[indexOffset + i] = vertexOffset + index.getX(i);
-      indexOffset += index.count;
-    } else {
-      for (let i = 0; i < positions.count; i++) indices[indexOffset + i] = vertexOffset + i;
-      indexOffset += positions.count;
-    }
-    vertexOffset += positions.count;
-  }
+  const surfaceMeshes = new Set<THREE.Mesh>([...groundMeshes, ...asphaltMeshes, ...looseMeshes]);
 
-  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  world.createCollider(
-    RAPIER.ColliderDesc.trimesh(vertices, indices)
-      .setFriction(0.95)
-      .setRestitution(0.02)
-      .setCollisionGroups(GROUND_GROUP),
-    body,
+  const appendTrimesh = (list: THREE.Mesh[], groups: number): number => {
+    if (list.length === 0) return 0;
+    let vertexTotal = 0;
+    let indexTotal = 0;
+    for (const mesh of list) {
+      vertexTotal += mesh.geometry.attributes.position.count;
+      const index = mesh.geometry.index;
+      indexTotal += index ? index.count : mesh.geometry.attributes.position.count;
+    }
+    const vertices = new Float32Array(vertexTotal * 3);
+    const indices = new Uint32Array(indexTotal);
+    let vertexOffset = 0;
+    let indexOffset = 0;
+    for (const mesh of list) {
+      const positions = mesh.geometry.attributes.position;
+      for (let i = 0; i < positions.count; i++) {
+        point.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+        vertices[(vertexOffset + i) * 3] = point.x;
+        vertices[(vertexOffset + i) * 3 + 1] = point.y;
+        vertices[(vertexOffset + i) * 3 + 2] = point.z;
+      }
+      const index = mesh.geometry.index;
+      if (index) {
+        for (let i = 0; i < index.count; i++) indices[indexOffset + i] = vertexOffset + index.getX(i);
+        indexOffset += index.count;
+      } else {
+        for (let i = 0; i < positions.count; i++) indices[indexOffset + i] = vertexOffset + i;
+        indexOffset += positions.count;
+      }
+      vertexOffset += positions.count;
+    }
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(
+      RAPIER.ColliderDesc.trimesh(vertices, indices)
+        .setFriction(0.95)
+        .setRestitution(0.02)
+        .setCollisionGroups(groups),
+      body,
+    );
+    return indexTotal / 3;
+  };
+
+  const groundTriangles = appendTrimesh(surfaceMeshes.size ? [...surfaceMeshes] : [], GROUND_GROUP);
+  // Le châssis est membre de GROUP_WORLD et filtre sur GROUP_WORLD (voir
+  // CHASSIS_UPRIGHT) : les murs doivent porter exactement ce couple.
+  const wallTriangles = appendTrimesh(
+    allMeshes.filter((mesh) => !surfaceMeshes.has(mesh)),
+    (GROUP_WORLD << 16) | GROUP_WORLD,
+  );
+  console.log(
+    `Circuit : ${Math.round(groundTriangles)} triangles de sol, ` +
+      `${Math.round(wallTriangles)} de structures (murs et décor) dans le collider`,
   );
 
   // 5. Départ : la ligne droite des stands, dans le repère du monde.

@@ -17,6 +17,7 @@ import { roadEnds } from '../src/world/terrain.ts';
 import { Drivetrain, torqueAtRpm } from '../src/physics/drivetrain.ts';
 import {
   GROUP_GROUND,
+  GROUP_WORLD,
   Vehicle,
   NEUTRAL_INPUT,
   STOCK_SPEC,
@@ -713,6 +714,103 @@ test('the traction control can be switched off, and the rear tires then spin', a
   const assisted = await launch(true);
   const free = await launch(false);
   assert.ok(free > assisted * 1.3, `off gave ${free.toFixed(2)} of slip, on ${assisted.toFixed(2)}`);
+});
+
+test('the walls stop the chassis, and the same walls in the ground group do not', async () => {
+  // Le châssis est membre de GROUP_WORLD et ne filtre que sur GROUP_WORLD. Les
+  // murs du circuit portent donc (WORLD << 16) | WORLD ; quand tout le modèle
+  // était dans le groupe du sol, on les traversait sans rien sentir.
+  const world = await makeWorld();
+  // Sans gravité ni sol sous les boîtes, la seule chose qui peut les arrêter est
+  // le mur : le test ne mesure que le couplage des groupes de collision.
+  world.gravity = { x: 0, y: 0, z: 0 };
+  const chassisGroups = (GROUP_WORLD << 16) | GROUP_WORLD;
+
+  // Chaque essai a sa file : une boîte lancée vers +z, un mur à z = +4, une
+  // file par variante de groupe.
+  const run = (x: number, groups: number): number => {
+    const wall = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, 3, 4));
+    world.createCollider(RAPIER.ColliderDesc.cuboid(6, 1, 0.2).setCollisionGroups(groups), wall);
+    const body = world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic().setTranslation(x, 3, -4).setLinvel(0, 0, 6),
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(0.9, 0.5, 2.2).setCollisionGroups(chassisGroups),
+      body,
+    );
+    world.timestep = 1 / 60;
+    for (let i = 0; i < 120; i++) world.step();
+    return body.translation().z;
+  };
+
+  const structures = run(0, chassisGroups);
+  const rawGround = run(20, GROUP_GROUND);
+  const groundPair = run(40, (GROUP_GROUND << 16) | GROUP_GROUND);
+  console.log(`murs : structures z=${structures.toFixed(1)}, sol brut z=${rawGround.toFixed(1)}, sol apparié z=${groundPair.toFixed(1)}`);
+
+  assert.ok(structures < 3, `the chassis went through the wall, to z=${structures.toFixed(1)}`);
+});
+
+test('the ABS keeps the wheels rolling under full braking, and cutting it locks them', async () => {
+  // Braking from 100 km/h with the pedal to the floor. On, the assist trims the
+  // torque as the slip crosses the tire's peak, so the wheels keep rolling and
+  // the car stops in a shorter distance. Off, the wheels lock and slide.
+  async function stop(abs: boolean): Promise<{
+    distance: number;
+    lock: number;
+    stalls: number;
+    time: number;
+  }> {
+    const world = await makeWorld();
+    const rx7 = CARS.find((c) => c.id === 'rx7')!;
+    const car = new Vehicle(world, { x: 0, y: 0.9, z: 0, heading: 0 }, rx7.spec);
+    car.absEnabled = abs;
+    simulate(world, car, 1, NEUTRAL_INPUT);
+    for (let i = 0; i < 120 * 20 && car.telemetryState.speedKmh < 100; i++) {
+      car.step(TICK, { throttle: 1, brake: 0, steer: 0, handbrake: false }, world);
+      world.step();
+    }
+    assert.ok(car.telemetryState.speedKmh > 90, `only reached ${car.telemetryState.speedKmh.toFixed(0)} km/h`);
+    let distance = 0;
+    let time = 0;
+    let lock = 0;
+    // Un tour de roue arrêté alors que la voiture roule encore : c'est la
+    // définition d'une roue bloquée, et c'est ce que l'ABS doit empêcher.
+    let stalls = 0;
+    while (car.telemetryState.speedKmh > 3 && time < 15) {
+      car.step(TICK, { throttle: 0, brake: 1, steer: 0, handbrake: false }, world);
+      world.step();
+      distance += (car.telemetryState.speedKmh / 3.6) * TICK;
+      time += TICK;
+      // Le glissement ne compte qu'au-dessus de 20 km/h : à l'arrêt, un pas de
+      // calcul ne peut pas descendre plus bas qu'un tour de roue.
+      for (const w of car.telemetryState.wheels) {
+        if (car.telemetryState.speedKmh <= 20) continue;
+        lock = Math.max(lock, Math.abs(w.slipRatio));
+        if (Math.abs(w.omega) < 1) stalls++;
+      }
+    }
+    return { distance, lock, stalls, time };
+  }
+
+  const assisted = await stop(true);
+  const locked = await stop(false);
+  const detail = (r: { lock: number; stalls: number; distance: number }): string =>
+    `peak slip ${r.lock.toFixed(2)}, ${r.stalls} tours de roue bloqués, ` +
+    `${r.distance.toFixed(1)} m`;
+  assert.ok(
+    assisted.stalls === 0,
+    `with the ABS a wheel stopped turning while the car was still rolling: ${detail(assisted)}`,
+  );
+  assert.ok(
+    locked.stalls > 20,
+    `without it no wheel ever locked: ${detail(locked)}`,
+  );
+  assert.ok(assisted.lock < 0.5, `with the ABS the tires slid too far: ${detail(assisted)}`);
+  assert.ok(
+    assisted.distance < locked.distance,
+    `ABS stopped in ${assisted.distance.toFixed(1)} m, locked in ${locked.distance.toFixed(1)} m`,
+  );
 });
 
 test('full throttle while turning drives the car forward instead of crabbing', async () => {
