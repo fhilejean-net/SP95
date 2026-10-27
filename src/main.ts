@@ -12,6 +12,7 @@ import {
   type BikeSetup,
 } from './game/bikeTuning.ts';
 import {
+  CIRCUIT,
   COL_START,
   RACE_START,
   RALLY_START,
@@ -194,6 +195,49 @@ async function boot(): Promise<void> {
   const groundAt = (x: number, z: number) =>
     Math.max(terrain.sample(x, z), circuitFloor(x, z) ?? -Infinity);
 
+  // Contrôle de l'invariant : le terrain de secours doit rester *sous* la dalle
+  // du circuit. Un nœud au-dessus ferait percer l'herbe à travers l'asphalte —
+  // des plaques de texture qui clignotent sous les roues et une voiture qui
+  // bute sur du vide. La valeur est exposée en debug (`__sp95.groundClearance`).
+  let groundClearance = -Infinity;
+  let trackClearance = -Infinity;
+  let clearanceProbes = 0;
+  let worstAt = { x: 0, z: 0 };
+  let trackWorstAt = { x: 0, z: 0 };
+  if (circuit) {
+    const halfX = CIRCUIT.plateHalfX * CIRCUIT.scale;
+    const halfZ = CIRCUIT.plateHalfZ * CIRCUIT.scale;
+    for (let z = CIRCUIT.cz - halfZ; z <= CIRCUIT.cz + halfZ; z += 12) {
+      for (let x = CIRCUIT.cx - halfX; x <= CIRCUIT.cx + halfX; x += 12) {
+        const floor = circuitFloor(x, z);
+        // Seules les cases du modèle comptent : au-delà, c'est le terrain qui
+        // est la surface et il n'y a rien à comparer.
+        const kind = CIRCUIT.surface?.(x, z) ?? null;
+        if (floor === null || kind === null) continue;
+        clearanceProbes++;
+        const gap = terrain.sample(x, z) - floor;
+        if (gap > groundClearance) {
+          groundClearance = gap;
+          worstAt = { x: Math.round(x), z: Math.round(z) };
+        }
+        if (kind === 'asphalte') {
+          trackClearance = Math.max(trackClearance, gap);
+          if (gap === trackClearance) trackWorstAt = { x: Math.round(x), z: Math.round(z) };
+        }
+      }
+    }
+    // Aucune sonde (dalle absente) : l'écart n'a pas de sens, on le remet à zéro.
+    if (clearanceProbes === 0) {
+      groundClearance = 0;
+      trackClearance = 0;
+    }
+    console.log(
+      `Terrain sous la dalle : écart max ${groundClearance.toFixed(2)} m ` +
+        `(en ${worstAt.x},${worstAt.z}) · sous la piste ${trackClearance.toFixed(2)} m ` +
+        `(en ${trackWorstAt.x},${trackWorstAt.z}) sur ${clearanceProbes} sondes`,
+    );
+  }
+
   // Ce que la carte de la ville a en plus : routes, ville, mobilier, arbres et
   // circuit de la ceinture. Sur la carte du circuit, tout cela reste vide.
   let puddles: PuddleField | null = null;
@@ -371,9 +415,25 @@ async function boot(): Promise<void> {
 
   const updateMenuBest = () => refreshMenuBest();
 
+  /**
+   * Cote exacte du sol sous un point : la dalle du circuit si elle est là, le
+   * terrain sinon. La sonde part 4 m au-dessus de l'estimation — assez pour
+   * rattraper son erreur, trop bas pour accrocher un pont ou un toit — et le
+   * rayon ignore le véhicule lui-même.
+   */
+  function surfaceUnder(x: number, z: number): number {
+    const fallback = groundAt(x, z);
+    const from = fallback + 4;
+    const ray = new RAPIER.Ray({ x, y: from, z }, { x: 0, y: -1, z: 0 });
+    const hit = world.castRay(ray, 8, true, undefined, undefined, undefined, vehicle.body);
+    return hit ? from - hit.timeOfImpact : fallback;
+  }
+
   function setCarPose(x: number, z: number, heading: number): void {
-    // Sur la piste, la surface du circuit est au-dessus du terrain de jeu.
-    const ground = groundAt(x, z);
+    // Sur la piste, la surface du circuit est au-dessus du terrain de jeu : on la
+    // mesure au rayon, sinon la voiture tomberait sur l'asphalte au lieu d'y
+    // être posée (l'estimateur par cases se trompe d'un mètre).
+    const ground = surfaceUnder(x, z);
     const height = ridingBike ? bikeSpec.cgHeight : rideHeightFor(spec);
     vehicle.respawn(x, ground + height, z, heading);
     // Let the springs settle so the tires sit on the ground immediately.
@@ -1447,6 +1507,8 @@ async function boot(): Promise<void> {
   window.__sp95 = {
     ready: true,
     map: MAP,
+    groundClearance,
+    trackClearance,
     openMap: (id: MapId) => openMap(id),
     get mode() {
       return mode;
@@ -1642,6 +1704,10 @@ declare global {
     __sp95?: {
       ready: boolean;
       readonly map: string;
+      /** Écart max du terrain de secours au-dessus de la dalle (négatif = ok). */
+      readonly groundClearance: number;
+      /** Le même écart, restreint aux cases d'asphalte de la piste. */
+      readonly trackClearance: number;
       openMap: (id: MapId) => void;
       readonly mode: GameMode;
       readonly paused: boolean;

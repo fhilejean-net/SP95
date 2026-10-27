@@ -296,9 +296,10 @@ test('the circuit lives on its own map, not in the city world', () => {
   const size = worldSizeFor('suzuka');
   assert.ok(Math.abs(suzuka.cx) + halfX + CIRCUIT_FADE < size / 2, 'emprise trop à l\u2019est');
   assert.ok(Math.abs(suzuka.cz) + halfZ + CIRCUIT_FADE < size / 2, 'emprise trop au nord ou au sud');
-  // Plus petite que la ville, avec une maille de terrain plus fine (~5 m).
-  assert.ok(size < worldSizeFor('ville'));
+  // Sa maille de terrain reste fine (~6 m) malgré un monde aussi large, et la
+  // carte laisse une marge derrière le talus.
   assert.ok(size / terrainSegmentsFor('suzuka') < 6);
+  assert.ok(size > 2 * (halfZ + CIRCUIT_FADE), 'marge trop courte au nord ou au sud');
 });
 
 test('the city map ignores the circuit slab and its surface', () => {

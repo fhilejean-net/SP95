@@ -31,15 +31,36 @@ const CIRCUIT_URL = `${BASE}models/tracks/suzuka-2001.glb`;
 const SAMPLE_STEP = 4;
 /**
  * Le terrain de jeu se tient sous la dalle : seule la surface du modèle est
- * visible, et le sol de secours ne doit jamais percer au travers.
+ * visible, et le sol de secours ne doit jamais percer au travers. À 0,3 m il
+ * perçait : l'herbe du terrain remontait à travers l'asphalte en plaques qui
+ * clignotaient sous les roues et faisaient buter la voiture sur du vide.
  */
-const GROUND_MARGIN = 0.3;
+const GROUND_MARGIN = 1.2;
+/**
+ * La cote d'une case est aussi prise dans son voisinage : le terrain est
+ * échantillonné tous les ~6 m et la dalle tous les 4 m, donc une interpolation
+ * entre deux nœuds peut passer au-dessus de la dalle à côté d'une marche
+ * (muret, vibreur, escalier de tribune), ou *par-dessus* un passage étroit — les
+ * deux pistes du croisement en huit se superposent, et la route du dessus
+ * faisait tenir le terrain à son niveau au-dessus de celle du dessous : 3,3 m
+ * d'herbe en travers de la piste. Le voisinage doit donc couvrir au moins une
+ * maille de terrain de rayon (±2 cases de 4 m pour ~6 m de maille).
+ */
+const GROUND_WINDOW = 2;
 /**
  * Passes de comblement : les premières bouchent les trous de la dalle, les
  * suivantes étalent le raccord de CIRCUIT_FADE mètres autour d'elle.
  */
 const HOLE_PASSES = 3;
 const FADE_PASSES = Math.ceil(CIRCUIT_FADE / SAMPLE_STEP) + HOLE_PASSES;
+/**
+ * Bande de cases ajoutée *autour* de l'emprise du modèle. Sans elle, le talus
+ * de raccord tombait dans la première case du terrain naturel : la grille
+ * interpolait d'un coup du niveau de la dalle (plus d'un mètre sous la piste)
+ * au relief des collines, et cette pente ressortait à travers le pourtour du
+ * circuit.
+ */
+const CELL_MARGIN = FADE_PASSES + 1;
 
 /** Textures qui portent de l'asphalte roulable. */
 const ASPHALT_IMAGES = /^(road0[1-7]|roadx|pitroad|grdr|grdrtop|groove00|skidslong)$/;
@@ -175,8 +196,8 @@ export async function buildCircuit(
   // 3. Grille d'échantillonnage du sol, en coordonnées modèle puis monde.
   const halfX = CIRCUIT.plateHalfX;
   const halfZ = CIRCUIT.plateHalfZ;
-  const columns = Math.ceil((halfX * 2) / (SAMPLE_STEP / CIRCUIT.scale));
-  const rows = Math.ceil((halfZ * 2) / (SAMPLE_STEP / CIRCUIT.scale));
+  const columns = Math.ceil((halfX * 2) / (SAMPLE_STEP / CIRCUIT.scale)) + CELL_MARGIN * 2;
+  const rows = Math.ceil((halfZ * 2) / (SAMPLE_STEP / CIRCUIT.scale)) + CELL_MARGIN * 2;
   const cells = columns * rows;
   const groundY = new Float32Array(cells).fill(Infinity);
   const surfaceY = new Float32Array(cells).fill(-Infinity);
@@ -194,9 +215,18 @@ export async function buildCircuit(
     const dz = z - CIRCUIT.cz;
     const lx = (dx * cos - dz * sin) / CIRCUIT.scale;
     const lz = (dx * sin + dz * cos) / CIRCUIT.scale;
-    out.cx = Math.floor((lx + halfX) / stepLocal);
-    out.cz = Math.floor((lz + halfZ) / stepLocal);
+    out.cx = CELL_MARGIN + Math.floor((lx + halfX) / stepLocal);
+    out.cz = CELL_MARGIN + Math.floor((lz + halfZ) / stepLocal);
     return out.cx >= 0 && out.cx < columns && out.cz >= 0 && out.cz < rows;
+  };
+
+  /** Vrai dans l'emprise du modèle, pas dans la bande de talus qui l'entoure. */
+  const insidePlate = (x: number, z: number): boolean => {
+    const dx = x - CIRCUIT.cx;
+    const dz = z - CIRCUIT.cz;
+    const lx = (dx * cos - dz * sin) / CIRCUIT.scale;
+    const lz = (dx * sin + dz * cos) / CIRCUIT.scale;
+    return Math.abs(lx) <= halfX && Math.abs(lz) <= halfZ;
   };
 
   const cell = { cx: 0, cz: 0 };
@@ -291,25 +321,88 @@ export async function buildCircuit(
     covered.set(filled);
   }
 
+  // La cote de la surface *visible* suit le même chemin, mais avec le maximum du
+  // voisinage. Les grandes dalles d'herbe n'ont aucun sommet à l'intérieur de la
+  // plupart des cases : sans cette propagation, `surfaceY` resterait vide
+  // presque partout, `circuitFloor` ne renverrait rien et la voiture serait
+  // posée sur le terrain de secours — plus d'un mètre sous la piste — avant
+  // d'être remontée par le collider. Poser un peu haut est sans conséquence
+  // (la voiture retombe sur la piste), poser sous l'asphalte ne l'est pas.
+  for (let pass = 0; pass < FADE_PASSES; pass++) {
+    const known = surfaceY.slice();
+    let progressed = false;
+    for (let cz = 0; cz < rows; cz++) {
+      for (let cx = 0; cx < columns; cx++) {
+        const index = cz * columns + cx;
+        if (surfaceY[index] !== -Infinity) continue;
+        let best = -Infinity;
+        for (let dz = -1; dz <= 1; dz++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = cx + dx;
+            const nz = cz + dz;
+            if (nx < 0 || nx >= columns || nz < 0 || nz >= rows) continue;
+            const value = known[nz * columns + nx];
+            if (value > best) best = value;
+          }
+        }
+        if (best !== -Infinity) {
+          surfaceY[index] = best;
+          progressed = true;
+        }
+      }
+    }
+    if (!progressed) break;
+  }
+
+  // Le sol de secours passe sous la dalle : la cote de chaque case est ramenée
+  // au minimum de son voisinage (voir GROUND_WINDOW).
+  const lowered = groundY.slice();
+  for (let cz = 0; cz < rows; cz++) {
+    for (let cx = 0; cx < columns; cx++) {
+      const index = cz * columns + cx;
+      let best = groundY[index];
+      for (let dz = -GROUND_WINDOW; dz <= GROUND_WINDOW; dz++) {
+        for (let dx = -GROUND_WINDOW; dx <= GROUND_WINDOW; dx++) {
+          const nx = cx + dx;
+          const nz = cz + dz;
+          if (nx < 0 || nx >= columns || nz < 0 || nz >= rows) continue;
+          const value = groundY[nz * columns + nx];
+          if (value < best) best = value;
+        }
+      }
+      lowered[index] = best;
+    }
+  }
+  groundY.set(lowered);
+
   CIRCUIT.ground = (x, z) => {
     if (!cellOf(x, z, cell)) return null;
     const index = cell.cz * columns + cell.cx;
     if (!covered[index]) return null;
     const plate = groundY[index] - GROUND_MARGIN;
+    // Le raccord ne concerne que le pourtour : dans l'emprise du modèle, la cote
+    // reste celle du sol de secours, même loin de tout sommet échantillonné.
+    // Sinon le talus remontait vers le relief naturel *à l'intérieur* du
+    // circuit — sur la carte du circuit, les collines du bord montent à 50 m, et
+    // le terrain traversait la piste à leur niveau (3 m d'herbe en travers de
+    // l'asphalte au nord du tracé).
+    if (insidePlate(x, z)) return plate;
     const distance = Math.max(0, ring[index] - HOLE_PASSES) * SAMPLE_STEP;
     if (distance <= 0) return plate;
     return fadeGround(plate, terrainBaseHeight(x, z), distance);
   };
 
   floorAt = (x, z) => {
-    if (!cellOf(x, z, cell)) return null;
+    // La surface du modèle n'existe que dans son emprise : dans le talus, c'est
+    // le terrain qui est la surface du jeu.
+    if (!insidePlate(x, z) || !cellOf(x, z, cell)) return null;
     const index = cell.cz * columns + cell.cx;
     if (!covered[index] || surfaceY[index] === -Infinity) return null;
     return surfaceY[index];
   };
 
   CIRCUIT.surface = (x, z): SurfaceKind | null => {
-    if (!cellOf(x, z, cell)) return null;
+    if (!insidePlate(x, z) || !cellOf(x, z, cell)) return null;
     const index = cell.cz * columns + cell.cx;
     if (!covered[index]) return null;
     if (asphaltMask[index]) return 'asphalte';

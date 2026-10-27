@@ -3,17 +3,17 @@ import { MAP_ID, type MapId } from '../game/maps.ts';
 
 /** La ville d'origine : 2 km de côté. */
 const VILLAGE_WORLD_SIZE = 2000;
-/** La carte du circuit est calée sur sa dalle : 1,7 km de côté. */
-const SUZUKA_WORLD_SIZE = 1700;
+/** La carte du circuit est calée sur sa dalle : 2,4 km de côté. */
+const SUZUKA_WORLD_SIZE = 2400;
 
 /** Taille du monde de chaque carte. */
 export function worldSizeFor(map: MapId): number {
   return map === 'suzuka' ? SUZUKA_WORLD_SIZE : VILLAGE_WORLD_SIZE;
 }
 
-/** ~6 m de maille sur la ville, ~5 m sur le circuit : sa dalle est plus fine. */
+/** ~7 m de maille sur la ville, ~6 m sur le circuit : sa dalle est plus fine. */
 export function terrainSegmentsFor(map: MapId): number {
-  return map === 'suzuka' ? 340 : 300;
+  return map === 'suzuka' ? 420 : 300;
 }
 
 export const WORLD_SIZE = worldSizeFor(MAP_ID);
@@ -198,8 +198,9 @@ export interface CircuitPlacement {
 
 /**
  * Place du circuit sur chaque carte. La ville n'a plus le sien : le modèle a sa
- * propre carte, centrée sur sa dalle, et à l'échelle de ce monde plus petit
- * (0,7 au lieu de 0,45 — la piste y fait 1,1 km au lieu de 700 m).
+ * propre carte, centrée sur sa dalle, à **l'échelle du modèle** — 1 unité = 1 m,
+ * soit une piste de ~8 m de large et un tour de 1,6 km. Toute échelle plus
+ * petite rétrécit la piste sous la voiture et fait percer le terrain de secours.
  */
 export function circuitPlacement(map: MapId): CircuitPlacement {
   const suzuka = map === 'suzuka';
@@ -208,7 +209,7 @@ export function circuitPlacement(map: MapId): CircuitPlacement {
     cx: 0,
     cz: 0,
     yaw: 0,
-    scale: suzuka ? 0.7 : 0.45,
+    scale: suzuka ? 1 : 0.45,
     plateHalfX: suzuka ? PLATE_HALF_X : 0,
     plateHalfZ: suzuka ? PLATE_HALF_Z : 0,
     ground: null,
