@@ -116,11 +116,16 @@ const GROUND_IMAGES = /^(grass|green|sand|rf_|water|rmbl|road0[1-7]|roadx|pitroa
  */
 const OVERLAY_IMAGES = /^(groove00|skidslong|tyres_add)/;
 /**
- * Primitives que le fichier laisse sans la moindre texture et qui se lisent comme
- * un bloc plein posé au bord de la piste — le bloc du panneau stop, sous le
- * pont. Masquées, elles sortent du rendu **et** du collider.
+ * Primitives que le fichier habille d'une texture de panneau stop ou laisse
+ * sans la moindre image et qui se lisent comme des blocs défectueux posés au
+ * bord de la piste — le bloc du panneau stop sous le pont, et les coffres de
+ * support de la même famille. Masquées, elles sortent du rendu **et** du
+ * collider.
  */
-const HIDDEN_PRIMITIVES = new Set(['towerdisplay2']);
+const HIDDEN_PRIMITIVES = new Set([
+  'towerdisplay2',
+  ...Array.from({ length: 11 }, (_, index) => `BOX${String(index + 1).padStart(2, '0')}`),
+]);
 
 /** Groupes de collision du terrain : les pneus mordent, la coque ignore. */
 const GROUND_GROUP = (GROUP_GROUND << 16) | 0xffff;
@@ -269,34 +274,59 @@ interface FlatRoad {
   vertices: Float32Array;
   indices: Uint32Array;
   triangles: number;
-  /** Pente la plus forte entre deux sommets reliés par une arête, en %. */
+  /** Pente la plus forte entre deux nœuds reliés par une arête, en %. */
   maxGrade: number;
 }
 
 /**
- * Surface roulable lissée, **dans la topologie du modèle**.
+ * Surface roulable : grille dense posée sur les triangles d'asphalte du modèle.
  *
- * Une trame régulière posée sur les carreaux du fichier laissait des trous : une
- * dalle d'asphalte de trente mètres de long n'a aucun sommet dans les cases
- * intermédiaires, leurs quads n'avaient donc pas de coin connu et étaient jetés.
- * Il restait des trous dans le collider — la voiture tombait à travers la piste,
- * sous l'asphalte. Ici chaque triangle d'asphalte reste un triangle du collider :
- * aucune case ne peut manquer sous une roue.
- *
- * Seules les cotes bougent : un sommet prend la médiane de ses voisins à
- * `ROAD_SMOOTH_RADIUS` mètres, sur le même tablier — les deux pistes du
- * croisement en huit se croisent à sept mètres l'une au-dessus de l'autre et ne
- * doivent pas se moyenner. Le dévers et les vibreurs sont moyennés, la montée du
- * tour reste.
+ * Pourquoi tout ce détour : les positions du fichier sont quantifiées et ses
+ * dalles sont longues (trente mètres pour quatre sommets). Un collider qui
+ * reprend la topologie brute garde les marches de quantification — la voiture
+ * décollait sur des « escaliers » —, et une trame posée sur les carreaux du
+ * fichier laissait des trous là où une dalle n'a aucun sommet dans ses cases
+ * intermédiaires : la voiture tombait à travers la piste. Ici les deux défauts
+ * disparaissent : les triangles d'asphalte servent à *couvrir* la grille
+ * (chaque nœud prend sa cote par interpolation dans le triangle qui le
+ * contient, comme un vrai relevé du sol), puis le relief court est effacé sur
+ * la grille même, en deux passes de voisinage (médiane puis moyenne, sur le
+ * même tablier — voir `ROAD_LEVEL_TOL`) : la couture entre deux tuiles est
+ * accordée, parce que le voisinage lit les maillages voisins. Un quad dont un
+ * coin manque emprunte sa cote au maillage voisin de même niveau — c'est ce qui
+ * rattrape la case que deux tuilesadjacentes ne couvrent pas toutes deux. La
+ * montée du tour traverse le lissage ; les marches et les raccords de tuiles ne
+ * la traversent plus.
  */
 export function buildFlatRoad(meshes: THREE.Mesh[]): FlatRoad {
   const point = new THREE.Vector3();
+  /** Sommets de tous les maillages, en coordonnées monde. */
   const xs: number[] = [];
   const ys: number[] = [];
   const zs: number[] = [];
-  const indices: number[] = [];
 
-  for (const mesh of meshes) {
+  /* Clé d'un nœud de la grille du monde : (i + 100000) · 10⁶ + (j + 100000). */
+  const keyOf = (i: number, j: number) => (i + 100000) * 1000000 + (j + 100000);
+
+  /**
+   * Cotes d'origine par maillage : les deux pistes du croisement en huit sont
+   * deux maillages distincts qui gardent chacun leur cote.
+   */
+  const meshNodes: Map<number, number>[] = meshes.map(() => new Map<number, number>());
+  /** Clés de nœud portant une cote, par case du monde, pour le voisinage. */
+  const cellNodes = new Map<number, number[]>();
+
+  const toGrid = (value: number) => Math.floor(value / ROAD_CELL);
+  const cellOfNode = (key: number): [number, number] => [
+    Math.floor(key / 1000000) - 100000,
+    (key % 1000000) - 100000,
+  ];
+
+  // 1. Rasterisation : chaque triangle d'asphalte donne sa cote aux nœuds
+  // qu'il contient. Une dalle de trente mètres n'a pas besoin de sommets aux
+  // coins de la grille : son plan les porte.
+  for (let meshIndex = 0; meshIndex < meshes.length; meshIndex++) {
+    const mesh = meshes[meshIndex];
     const positions = mesh.geometry.attributes.position;
     if (!positions || positions.count < 3) continue;
     const start = xs.length;
@@ -307,107 +337,199 @@ export function buildFlatRoad(meshes: THREE.Mesh[]): FlatRoad {
       zs.push(point.z);
     }
     const index = mesh.geometry.index;
+    const faces: number[] = [];
     if (index) {
-      for (let i = 0; i < index.count; i++) indices.push(start + index.getX(i));
+      for (let i = 0; i + 2 < index.count; i += 3) {
+        faces.push(index.getX(i), index.getX(i + 1), index.getX(i + 2));
+      }
     } else {
-      for (let i = 0; i < positions.count; i++) indices.push(start + i);
+      for (let i = 0; i + 2 < positions.count; i += 3) {
+        faces.push(i, i + 1, i + 2);
+      }
     }
-  }
 
-  // Voisinage par cases creuses : un sommet ne se compare qu'aux siens au lieu
-  // des dizaines de milliers du modèle. La grille est prise dans le monde, donc
-  // deux primitives qui partagent un sommet lui trouvent le même voisinage.
-  const buckets = new Map<number, number[]>();
-  const keyOf = (cx: number, cz: number) => (cx + 100000) * 1000000 + (cz + 100000);
-  const cellIndex = (value: number) => Math.floor(value / ROAD_CELL);
-  for (let i = 0; i < xs.length; i++) {
-    const key = keyOf(cellIndex(xs[i]), cellIndex(zs[i]));
-    const list = buckets.get(key);
-    if (list) list.push(i);
-    else buckets.set(key, [i]);
-  }
-
-  const radiusSq = ROAD_SMOOTH_RADIUS * ROAD_SMOOTH_RADIUS;
-  const heights = new Float32Array(xs.length);
-  const samples: number[] = [];
-  for (let i = 0; i < xs.length; i++) {
-    const cx = cellIndex(xs[i]);
-    const cz = cellIndex(zs[i]);
-    samples.length = 0;
-    for (let dz = -1; dz <= 1; dz++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const list = buckets.get(keyOf(cx + dx, cz + dz));
-        if (!list) continue;
-        for (const j of list) {
-          // Deux tabliers superposés gardent chacun leur cote.
-          if (Math.abs(ys[j] - ys[i]) > ROAD_LEVEL_TOL) continue;
-          const ex = xs[j] - xs[i];
-          const ez = zs[j] - zs[i];
-          if (ex * ex + ez * ez > radiusSq) continue;
-          samples.push(ys[j]);
+    const nodes = meshNodes[meshIndex];
+    for (let f = 0; f < faces.length; f += 3) {
+      const a = start + faces[f];
+      const b = start + faces[f + 1];
+      const c = start + faces[f + 2];
+      const ax = xs[a];
+      const bx = xs[b];
+      const cx = xs[c];
+      const az = zs[a];
+      const bz = zs[b];
+      const cz = zs[c];
+      const ay = ys[a];
+      const by = ys[b];
+      const cy = ys[c];
+      const denom = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
+      if (Math.abs(denom) < 1e-9) continue;
+      // Nœuds de la grille compris dans la boîte englobante du triangle.
+      const i0 = Math.ceil(Math.min(ax, bx, cx) / ROAD_CELL);
+      const i1 = Math.floor(Math.max(ax, bx, cx) / ROAD_CELL);
+      const j0 = Math.ceil(Math.min(az, bz, cz) / ROAD_CELL);
+      const j1 = Math.floor(Math.max(az, bz, cz) / ROAD_CELL);
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const nodeKey = keyOf(i, j);
+          if (nodes.has(nodeKey)) continue;
+          const px = i * ROAD_CELL;
+          const pz = j * ROAD_CELL;
+          // P − A = α (B − A) + β (C − A), résolu par la règle de Cramer : la
+          // cote se lit barycentriquement, peu importe l'ordre des sommets.
+          const alpha = ((pz - az) * (cx - ax) - (px - ax) * (cz - az)) / denom;
+          const beta = ((bz - az) * (px - ax) - (bx - ax) * (pz - az)) / denom;
+          if (alpha < -1e-6 || beta < -1e-6 || alpha + beta > 1 + 1e-6) continue;
+          nodes.set(nodeKey, ay + (by - ay) * alpha + (cy - ay) * beta);
+          const cell = keyOf(toGrid(px), toGrid(pz));
+          const list = cellNodes.get(cell);
+          if (list) list.push(nodeKey);
+          else cellNodes.set(cell, [nodeKey]);
         }
       }
     }
-    // Un sommet isolé (bord de piste) garde sa cote.
-    if (samples.length === 0) {
-      heights[i] = ys[i];
-      continue;
-    }
-    heights[i] = median(samples);
   }
 
-  /*
-   * Deuxième passe : la moyenne du voisinage, prise sur les cotes déjà médianées.
-   * Un filtre médian seul ne suffit pas — il recopie une alternance, une marche
-   * de vibreur sur deux survit telle quelle. La moyenne, elle, l'efface ; et
-   * comme la moyenne d'une pente vaut la cote du centre, la montée du tour
-   * traverse intacte. C'est le relief court, celui qui secoue la voiture au
-   * freinage et la retourne en courbe, qui disparaît.
-   */
-  const smoothed = new Float32Array(xs.length);
-  for (let i = 0; i < xs.length; i++) {
-    const cx = cellIndex(xs[i]);
-    const cz = cellIndex(zs[i]);
-    let sum = 0;
-    let count = 0;
-    for (let dz = -1; dz <= 1; dz++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const list = buckets.get(keyOf(cx + dx, cz + dz));
-        if (!list) continue;
-        for (const j of list) {
-          if (Math.abs(ys[j] - ys[i]) > ROAD_LEVEL_TOL) continue;
-          const ex = xs[j] - xs[i];
-          const ez = zs[j] - zs[i];
-          if (ex * ex + ez * ez > radiusSq) continue;
-          sum += heights[j];
-          count++;
+  // 2. Lissage, sur la grille même : médiane du voisinage (± 1 nœud) puis
+  // moyenne sur ces médianes. Le filtre médian garde les bords et la montée du
+  // tour, mais recopie une alternance — une marche sur deux — ; la moyenne
+  // l'efface, et la moyenne d'une pente vaut sa cote centrale.
+  const buildNeighbours = () => {
+    const neighbours: number[] = [];
+    return (nodeKey: number, level: number): number[] => {
+      neighbours.length = 0;
+      const [i, j] = cellOfNode(nodeKey);
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const list = cellNodes.get(keyOf(i + dx, j + dz));
+          if (!list) continue;
+          for (const other of list) {
+            for (const heights of meshNodes) {
+              // Tout maillage qui porte ce nœud est un voisin : c'est ce qui
+              // accorde la couture entre deux tuiles du même tablier. Parmi les
+              // tabliers superposés, le filtre de niveau garde le sien.
+              const value = heights.get(other);
+              if (value === undefined || Math.abs(value - level) > ROAD_LEVEL_TOL) continue;
+              neighbours.push(value);
+            }
+          }
         }
       }
+      return neighbours;
+    };
+  };
+
+  const medians: Map<number, number>[] = meshNodes.map(() => new Map());
+  for (let meshIndex = 0; meshIndex < meshNodes.length; meshIndex++) {
+    const gather = buildNeighbours();
+    const target = medians[meshIndex];
+    for (const [nodeKey, height] of meshNodes[meshIndex]) {
+      const samples = gather(nodeKey, height);
+      // La médiane d'un échantillon vide ne se produit pas : le nœud lui-même
+      // est toujours son premier voisin.
+      target.set(nodeKey, median(samples));
     }
-    smoothed[i] = count > 0 ? sum / count : heights[i];
   }
 
-  const vertices = new Float32Array(xs.length * 3);
-  for (let i = 0; i < xs.length; i++) {
-    vertices[i * 3] = xs[i];
-    vertices[i * 3 + 1] = smoothed[i];
-    vertices[i * 3 + 2] = zs[i];
+  const filtered: Map<number, number>[] = meshNodes.map(() => new Map());
+  for (let meshIndex = 0; meshIndex < meshNodes.length; meshIndex++) {
+    const gather = buildNeighbours();
+    const target = filtered[meshIndex];
+    const source = medians[meshIndex];
+    for (const [nodeKey, height] of source) {
+      const samples = gather(nodeKey, height);
+      let sum = 0;
+      for (const sample of samples) sum += sample;
+      target.set(nodeKey, samples.length > 0 ? sum / samples.length : height);
+    }
   }
 
+  // 3. Le collider : une dalle par case couverte aux quatre coins par le même
+  // maillage. Chaque maillage bâtit sa surface : les tabliers ne se mélangent
+  // pas, et les coutures entre tuiles du même tablier ont reçu la même moyenne.
+  const vertices: number[] = [];
+  const indices: number[] = [];
   let maxGrade = 0;
-  for (let i = 0; i + 2 < indices.length; i += 3) {
-    for (let edge = 0; edge < 3; edge++) {
-      const a = indices[i + edge];
-      const b = indices[i + ((edge + 1) % 3)];
-      const run = Math.hypot(xs[a] - xs[b], zs[a] - zs[b]);
-      if (run < 0.05) continue;
-      const grade = (Math.abs(smoothed[a] - smoothed[b]) / run) * 100;
-      if (grade > maxGrade) maxGrade = grade;
+  for (let meshIndex = 0; meshIndex < filtered.length; meshIndex++) {
+    const heights = filtered[meshIndex];
+    const vertexOf = new Map<number, number>();
+    /**
+     * Emprunte un coin manquant à un maillage de même niveau : deux tuiles d'un
+     * même tablier ne couvrent pas les mêmes nœuds de la grille, mais la surface
+     * est continue — le quad qui franchit leur couture la garde. Un tablier
+     * voisin, sept mètres plus haut au croisement en huit, est rejeté par le
+     * filtre de niveau.
+     */
+    const idOf = (
+      i: number,
+      j: number,
+      reference: number,
+    ): { vertex: number; height: number } | null => {
+      const nodeKey = keyOf(i, j);
+      let height = heights.get(nodeKey);
+      if (height === undefined) {
+        let best: number | undefined;
+        for (const otherHeights of filtered) {
+          const value = otherHeights.get(nodeKey);
+          if (value === undefined || Math.abs(value - reference) > ROAD_LEVEL_TOL) continue;
+          if (best === undefined || Math.abs(value - reference) < Math.abs(best - reference)) {
+            best = value;
+          }
+        }
+        if (best === undefined) return null;
+        height = best;
+      }
+      let vertex = vertexOf.get(nodeKey);
+      if (vertex === undefined) {
+        vertex = vertices.length / 3;
+        vertexOf.set(nodeKey, vertex);
+        vertices.push(i * ROAD_CELL, height, j * ROAD_CELL);
+      }
+      return { vertex, height };
+    };
+    for (const nodeKey of heights.keys()) {
+      const [i, j] = cellOfNode(nodeKey);
+      // Résolution en deux temps : les coins que ce maillage porte d'abord, la
+      // référence de niveau qu'ils donnent ensuite pour les manquants.
+      const own = [
+        heights.get(keyOf(i, j)),
+        heights.get(keyOf(i + 1, j)),
+        heights.get(keyOf(i, j + 1)),
+        heights.get(keyOf(i + 1, j + 1)),
+      ];
+      if (own[0] === undefined) continue;
+      let sum = 0;
+      let count = 0;
+      for (const height of own) {
+        if (height === undefined) continue;
+        sum += height;
+        count++;
+      }
+      const reference = count > 0 ? sum / count : own[0];
+      const zero = idOf(i, j, reference);
+      const ten = idOf(i + 1, j, reference);
+      const zeroOne = idOf(i, j + 1, reference);
+      const eleven = idOf(i + 1, j + 1, reference);
+      if (!zero || !ten || !zeroOne || !eleven) continue;
+      // Deux triangles d'une dalle ; leurs arêtes mesurent la pente réelle
+      // restante, celle que liront les rayons des roues.
+      indices.push(zero.vertex, zeroOne.vertex, ten.vertex);
+      indices.push(ten.vertex, zeroOne.vertex, eleven.vertex);
+      for (const [first, second] of [
+        [zero, zeroOne],
+        [zeroOne, eleven],
+        [eleven, ten],
+        [ten, zero],
+      ]) {
+        const run = ROAD_CELL;
+        const grade = (Math.abs(first.height - second.height) / run) * 100;
+        if (grade > maxGrade) maxGrade = grade;
+      }
     }
   }
 
   return {
-    vertices,
+    vertices: new Float32Array(vertices),
     indices: new Uint32Array(indices),
     triangles: indices.length / 3,
     maxGrade,
@@ -592,6 +714,27 @@ export async function buildCircuit(
       standard.needsUpdate = true;
     }
   });
+
+  // Diagnostic : les matières que le parseur laisse sans image après toutes
+  // les retouches. Le relief et la distance font le reste à l'écran, mais une
+  // liste courte dit exactement quelle famille retoucher (voir TEXTURELESS_FIX).
+  const bareMaterials = new Set<string>();
+  root.traverse((object) => {
+    if (!(object as THREE.Mesh).isMesh) return;
+    const materials = Array.isArray((object as THREE.Mesh).material)
+      ? (object as THREE.Mesh).material
+      : [(object as THREE.Mesh).material];
+    for (const material of materials as THREE.MeshStandardMaterial[]) {
+      if (material.map || TEXTURELESS_FIX[material.name] || HIDDEN_PRIMITIVES.has(material.name)) continue;
+      bareMaterials.add(material.name);
+    }
+  });
+  if (bareMaterials.size > 0) {
+    console.log(
+      `Circuit : ${bareMaterials.size} matières restées sans image — ` +
+        `${[...bareMaterials].slice(0, 14).join(', ')}${bareMaterials.size > 14 ? '…' : ''}`,
+    );
+  }
 
   // 3. Grille d'échantillonnage du sol, en coordonnées modèle puis monde.
   const halfX = CIRCUIT.plateHalfX;

@@ -246,6 +246,15 @@ const ROLLED_UP_DOT = 0.6;
  */
 const CHASSIS_LIFT = 0.12;
 
+/**
+ * Amortissement des suspensions, en facteur de la spécification. Les
+ * spécifications ont été réglées sur un asphalte lisse : sur la piste, le relief
+ * court restant renvoie des coups secs et les ressorts rebondissaient comme un
+ * trampoline. On plombe vers l'amortissement critique (ζ ≈ 0,8) au lieu de
+ * retoucher dix spécimens.
+ */
+const SUSPENSION_DAMPING = 1.5;
+
 const MIN_LENGTH = 0.06;
 /** First-stage bump stop: firm, but it lets the body settle instead of jamming. */
 const BUMP_K = 90000;
@@ -607,7 +616,8 @@ export class Vehicle {
       const pointVel = add(velocity, cross(angular, arm));
       const vAlongUp = dot(pointVel, up);
 
-      let springForce = this.spec.springK * compression + this.spec.springC * -vAlongUp;
+      let springForce =
+        this.spec.springK * compression + this.spec.springC * SUSPENSION_DAMPING * -vAlongUp;
       if (compression > this.bumpStop) {
         const over = compression - this.bumpStop;
         springForce += BUMP_K * over + BUMP_K_HARD * over * over;
