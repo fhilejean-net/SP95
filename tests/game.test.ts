@@ -5,7 +5,7 @@ import { DriftScore } from '../src/game/drift.ts';
 import { StuntScore } from '../src/game/stunt.ts';
 import { Race } from '../src/game/race.ts';
 import { BIKE_DEFAULT_SETUP, bikePresetLabel } from '../src/game/bikeTuning.ts';
-import { fadeGround } from '../src/world/circuit.ts';
+import { fadeGround, trackUv } from '../src/world/circuit.ts';
 import { MAP_ID, mapFromSearch, mapUrl } from '../src/game/maps.ts';
 // Le circuit est posé par world/circuit.ts au chargement : ces tests vérifient
 // le contrat des cartes (emprise, sol, revêtement), pas le chargement du GLB.
@@ -357,6 +357,19 @@ test('the map is chosen in the URL, and the switch keeps the rest', () => {
   // Le reste de l'URL suit : `?fx=low` ne se perd pas en changeant de carte.
   assert.equal(new URL(suzuka).searchParams.get('fx'), 'low');
   assert.equal(new URL(mapUrl('ville', suzuka)).searchParams.has('map'), false);
+});
+
+test('the track paints its asphalt from world coordinates, so its tiles join', () => {
+  // Le modèle est une mosaïque de tuiles photo (ROAD01…ROAD07, ROADX, PITROAD)
+  // dont les gris ne se raccordent pas. La trame est maintenant prise dans le
+  // monde : deux primitives voisines tombent sur la même répétition et le
+  // raccord disparaît.
+  assert.deepEqual(trackUv(12, -6, 6), [2, -1]);
+  // Une tuile fait 6 m : avancer d'une tuile ramène exactement sur la même image
+  // (à l'arrondi flottant près).
+  assert.ok(Math.abs(trackUv(6.5, 0, 6)[0] - trackUv(0.5, 0, 6)[0] - 1) < 1e-9);
+  // La trame est continue : pas de saut d'un maillage à l'autre.
+  assert.ok(Math.abs(trackUv(3, 0, 6)[0] - trackUv(3.001, 0, 6)[0]) < 0.001);
 });
 
 test('the circuit slab fades into the ground instead of ending on a cliff', () => {

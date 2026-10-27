@@ -341,6 +341,10 @@ export class Vehicle {
           z: 0,
           w: Math.cos(opts.heading / 2),
         })
+        // Le collider du circuit est un trimesh : ses barrières sont minces, et
+        // à 150 km/h une barrière peut passer entièrement entre deux pas de
+        // calcul. Le CCD balaie le déplacement du châssis sur le pas.
+        .setCcdEnabled(true)
         // Aerodynamic drag is modelled explicitly; Rapier's linear damping
         // would add thousands of newtons at speed and cap the top end.
         .setLinearDamping(0.0)

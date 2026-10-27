@@ -21,6 +21,7 @@ import {
   type SurfaceKind,
 } from './layout.ts';
 import { GROUP_GROUND, GROUP_WORLD } from '../physics/vehicle.ts';
+import { createAsphaltTexture } from '../render/materials.ts';
 
 // BASE_URL garde le modèle résolvable sous /SP95/ sur GitHub Pages ; en test
 // Node, import.meta.env n'existe pas et le chemin retombe sur la racine.
@@ -34,8 +35,12 @@ const SAMPLE_STEP = 4;
  * visible, et le sol de secours ne doit jamais percer au travers. À 0,3 m il
  * perçait : l'herbe du terrain remontait à travers l'asphalte en plaques qui
  * clignotaient sous les roues et faisaient buter la voiture sur du vide.
+ *
+ * À 1,2 m la marge creusait une tranchée visible entre la piste et les murs, et
+ * la voiture y tombait en se prenant un mur : 0,3 m suffisent, puisque la cote
+ * d'une case est déjà le minimum de tout son voisinage.
  */
-const GROUND_MARGIN = 1.2;
+const GROUND_MARGIN = 0.3;
 /**
  * La cote d'une case est aussi prise dans son voisinage : le terrain est
  * échantillonné tous les ~6 m et la dalle tous les 4 m, donc une interpolation
@@ -64,6 +69,25 @@ const CELL_MARGIN = FADE_PASSES + 1;
 
 /** Textures qui portent de l'asphalte roulable. */
 const ASPHALT_IMAGES = /^(road0[1-7]|roadx|pitroad|grdr|grdrtop|groove00|skidslong)$/;
+/**
+ * Tuiles d'asphalte qui font *la piste* — celles qu'on repose en trame unique.
+ * Les vibreurs (`grdr`), les bandes de gomme (`groove00`, `skidslong`) et les
+ * bacs à gravier gardent leur texture : ce sont des décors, pas du revêtement.
+ */
+const TRACK_IMAGES = /^(road0[1-7]|roadx|pitroad)$/;
+/** Une répétition d'asphalte tous les 6 m. */
+const TRACK_TILE = 6;
+/**
+ * En dessous de cette image, une grande surface n'est plus une matière : le
+ * modèle en a quinze à soixante-quatre pixels étalées sur des centaines de
+ * mètres (terrassements, glissières, murs du pont), et à l'échelle réelle elles
+ * se lisent comme un bloc vide.
+ */
+const RETILE_MAX_PIXELS = 128 * 128;
+/** Taille au-delà de laquelle une texture de quelques pixels est étirée. */
+const RETILE_MIN_SIZE = 8;
+/** Répétition des textures retuilées, en mètres. */
+const RETILE_METRES = 4;
 /** Bac à gravier et terre : ça freine, ça ne tient pas. */
 const LOOSE_IMAGES = /^(rf_sand01|rf_sand02|sand|gravel|rmbl)/;
 /** Tout ce qui porte le sol du modèle (herbe, eau, sable, asphalte). */
@@ -89,6 +113,15 @@ export function circuitFloor(x: number, z: number): number | null {
  * Cote de la dalle une fois fondue dans le terrain, à `distance` mètres de son
  * bord : c'est le talus qui raccorde le circuit au reste du monde.
  */
+/**
+ * UV planaires de la piste, pris dans le repère du monde : une répétition tous
+ * les `tile` mètres. Deux primitives voisines partagent donc la même trame, et
+ * le raccord entre leurs tuiles photo disparaît.
+ */
+export function trackUv(x: number, z: number, tile: number): [number, number] {
+  return [x / tile, z / tile];
+}
+
 export function fadeGround(plate: number, base: number, distance: number): number {
   const t = Math.min(1, Math.max(0, distance) / CIRCUIT_FADE);
   return plate * (1 - t) + base * t;
@@ -128,13 +161,52 @@ function imageNames(json: ModelJson): Map<string, string> {
  * PIT_LOGO_REAR, ZHUANPAN09). Sans ça ils sortent en aplat, blancs pour les
  * arbres, gris clair pour les câbles et leur bloc sous le pont.
  */
-const TEXTURELESS_FIX: Record<string, { color: number; roughness: number }> = {
-  DIANTA02: { color: 0x53585f, roughness: 0.75 },
-  DIANTA03: { color: 0x23262b, roughness: 0.8 },
-  TREE09: { color: 0x4d6b3c, roughness: 0.9 },
-  PIT_LOGO_REAR: { color: 0xd9ddd4, roughness: 0.85 },
-  ZHUANPAN09: { color: 0x1f4b6b, roughness: 0.7 },
+type Grain = 'steel' | 'foliage' | 'plate';
+
+const TEXTURELESS_FIX: Record<string, { color: number; roughness: number; grain: Grain }> = {
+  DIANTA02: { color: 0x6c7178, roughness: 0.7, grain: 'steel' },
+  DIANTA03: { color: 0x262a2f, roughness: 0.8, grain: 'steel' },
+  TREE09: { color: 0x53703f, roughness: 0.92, grain: 'foliage' },
+  PIT_LOGO_REAR: { color: 0xd9ddd4, roughness: 0.85, grain: 'plate' },
+  ZHUANPAN09: { color: 0x1f4b6b, roughness: 0.7, grain: 'plate' },
 };
+
+/**
+ * Grain procédural pour les matériaux que le fichier laisse sans aucune texture :
+ * sans lui ils sortent en aplat, et un aplat gris de plusieurs mètres sous un
+ * pont se lit comme un bloc vide. Le motif est projeté sur les UV d'origine de
+ * la primitive, donc il suit la forme du maillage.
+ */
+function grainTexture(grain: Grain, anisotropy: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  const palettes: Record<Grain, [string, string, string]> = {
+    steel: ['#71767d', '#82878e', '#5c6168'],
+    foliage: ['#3f5c33', '#4f7340', '#2f4a24'],
+    plate: ['#c9cec4', '#d9ddd4', '#aeb4aa'],
+  };
+  const [base, light, dark] = palettes[grain];
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, 128, 128);
+  let seed = 12345;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  for (let i = 0; i < 2600; i++) {
+    ctx.fillStyle = rand() > 0.5 ? light : dark;
+    ctx.globalAlpha = 0.25 + rand() * 0.5;
+    const size = 1 + rand() * (grain === 'foliage' ? 4 : 2);
+    ctx.fillRect(rand() * 128, rand() * 128, size, size);
+  }
+  ctx.globalAlpha = 1;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = anisotropy;
+  return texture;
+}
 
 /** Vrai si tous les UV du maillage tiennent dans la case [0,1] de sa texture. */
 function uvInTile(mesh: THREE.Mesh): boolean {
@@ -160,6 +232,8 @@ export async function buildCircuit(
   const loadMs = performance.now() - loadStarted;
 
   const root = gltf.scene;
+  /** Un grain par famille de matériau sans texture, partagé entre primitives. */
+  const grains = new Map<Grain, THREE.CanvasTexture>();
   const imageOf = imageNames((gltf.parser as unknown as { json: ModelJson }).json);
   const nameOf = (mesh: THREE.Mesh): string => {
     const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
@@ -222,6 +296,12 @@ export async function buildCircuit(
         standard.color.setHex(fix.color);
         standard.roughness = fix.roughness;
         standard.metalness = 0;
+        let grain = grains.get(fix.grain);
+        if (!grain) {
+          grain = grainTexture(fix.grain, options.anisotropy);
+          grains.set(fix.grain, grain);
+        }
+        standard.map = grain;
       }
       // Le modèle est un atlas de tuiles photo : chaque primitive a ses UV dans
       // la case [0,1]. Une UV qui dépasse d'un cheveu (elles sont quantifiées
@@ -522,7 +602,77 @@ export async function buildCircuit(
       `${Math.round(wallTriangles)} de structures (murs et décor) dans le collider`,
   );
 
-  // 5. Départ : la ligne droite des stands, dans le repère du monde.
+  // 5. Piste uniforme. Le modèle en a une mosaïque de tuiles photo dont les gris
+  // ne se raccordent pas : à l'échelle réelle (1 unité = 1 m) ça se lit comme des
+  // plaques, et c'est ce que le joueur voit. On repose l'asphalte en UV planaires
+  // pris dans le monde sur une seule matière pour toute la piste : plus aucun
+  // raccord entre primitives. La pénombre des bords viendra des ombres portées
+  // (entrée du backlog), pas de la mosaïque.
+  const asphaltMap = createAsphaltTexture();
+  asphaltMap.anisotropy = options.anisotropy;
+  const trackMaterial = new THREE.MeshStandardMaterial({
+    map: asphaltMap,
+    roughness: 0.93,
+    metalness: 0,
+  });
+  let trackQuads = 0;
+  for (const mesh of asphaltMeshes) {
+    if (!TRACK_IMAGES.test(nameOf(mesh))) continue;
+    const uv = mesh.geometry.attributes.uv;
+    const positions = mesh.geometry.attributes.position;
+    if (!uv || uv.count !== positions.count) continue;
+    for (let i = 0; i < positions.count; i++) {
+      point.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+      const [u, v] = trackUv(point.x, point.z, TRACK_TILE);
+      uv.setXY(i, u, v);
+    }
+    uv.needsUpdate = true;
+    mesh.material = trackMaterial;
+    trackQuads++;
+  }
+  console.log(`Piste : asphalte uniforme sur ${trackQuads} maillages (trame de ${TRACK_TILE} m)`);
+
+  // 6. Textures étirées. Terrain, glissières, murs du pont : le modèle porte une
+  // image de 16 à 64 px sur des centaines de mètres, ce qui ne se lit plus comme
+  // une matière mais comme un aplat — c'est ce qui restait de « blocs sans
+  // texture ». On garde leur image et on refait les UV en projection planaire,
+  // sur le plan de la face la plus large (déduit de la boîte englobante), avec
+  // une répétition tous les RETILE_METRES mètres.
+  const box = new THREE.Box3();
+  const size = new THREE.Vector3();
+  const scratch = new THREE.Vector3();
+  let retiled = 0;
+  for (const mesh of allMeshes) {
+    if (surfaceMeshes.has(mesh)) continue;
+    const material = (
+      Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+    ) as THREE.MeshStandardMaterial;
+    const map = material?.map;
+    const image = map?.image as { width?: number; height?: number } | undefined;
+    if (!map || !image?.width || !image.height) continue;
+    if (image.width * image.height > RETILE_MAX_PIXELS) continue;
+    box.setFromObject(mesh);
+    box.getSize(size);
+    if (Math.max(size.x, size.y, size.z) < RETILE_MIN_SIZE) continue;
+    // L'axe le plus fin est la normale de la face : on projette sur les deux autres.
+    const thin = size.x <= size.y && size.x <= size.z ? 0 : size.y <= size.z ? 1 : 2;
+    const axisA = thin === 2 ? 0 : thin === 1 ? 0 : 2;
+    const axisB = thin === 0 ? 1 : 2;
+    const uv = mesh.geometry.attributes.uv;
+    const positions = mesh.geometry.attributes.position;
+    if (!uv || uv.count !== positions.count) continue;
+    for (let i = 0; i < positions.count; i++) {
+      scratch.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+      uv.setXY(i, scratch.getComponent(axisA) / RETILE_METRES, scratch.getComponent(axisB) / RETILE_METRES);
+    }
+    uv.needsUpdate = true;
+    map.wrapS = map.wrapT = THREE.RepeatWrapping;
+    map.needsUpdate = true;
+    retiled++;
+  }
+  console.log(`Matières : ${retiled} maillages retuiles à ${RETILE_METRES} m (textures étirées)`);
+
+  // 7. Départ : la ligne droite des stands, dans le repère du monde.
   const spawnX = CIRCUIT.cx + (START_LOCAL.x * cos + START_LOCAL.z * sin) * CIRCUIT.scale;
   const spawnZ = CIRCUIT.cz + (-START_LOCAL.x * sin + START_LOCAL.z * cos) * CIRCUIT.scale;
   const spawn = {
