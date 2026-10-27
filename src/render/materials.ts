@@ -19,25 +19,37 @@ function seededRandom(seed: number): () => number {
 export function createAsphaltTexture(): THREE.CanvasTexture {
   const { canvas, ctx } = makeCanvas(256, 256);
   const rand = seededRandom(7);
-  ctx.fillStyle = '#33343a';
+  ctx.fillStyle = '#3a3b41';
   ctx.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 9000; i++) {
-    const g = 38 + Math.floor(rand() * 40);
-    ctx.fillStyle = `rgba(${g},${g},${g + 4},${0.35 + rand() * 0.4})`;
+  // Taches larges, dessinées aussi sur les copies qui débordent du carreau :
+  // sans ça une tache coupée au bord laissait une ligne nette à chaque
+  // raccord d'asphalte, tous les `TRACK_TILE` mètres de piste.
+  for (let i = 0; i < 320; i++) {
+    const g = 46 + Math.floor(rand() * 26);
+    ctx.fillStyle = `rgba(${g},${g},${g + 4},${0.18 + rand() * 0.3})`;
     const x = rand() * 256;
     const y = rand() * 256;
-    const s = 0.6 + rand() * 1.8;
-    ctx.fillRect(x, y, s, s);
+    const rx = 7 + rand() * 24;
+    const ry = rx * (0.55 + rand() * 0.7);
+    const angle = rand() * Math.PI;
+    for (const dx of [-256, 0, 256]) {
+      for (const dy of [-256, 0, 256]) {
+        if (Math.abs(x + dx - 128) > 190 || Math.abs(y + dy - 128) > 190) continue;
+        ctx.beginPath();
+        ctx.ellipse(x + dx, y + dy, rx, ry, angle, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
-  // Faint repair patches.
-  ctx.strokeStyle = 'rgba(20,20,24,0.35)';
-  ctx.lineWidth = 2;
-  for (let i = 0; i < 4; i++) {
-    ctx.beginPath();
-    const x = rand() * 256;
-    ctx.moveTo(x, 0);
-    ctx.bezierCurveTo(x + 30, 80, x - 30, 170, x + 10, 256);
-    ctx.stroke();
+  // Grain serré mais peu contrasté. Le fichier portait 9000 points d'un pixel sur
+  // un carreau répété tous les 6 m : à distance ils scintillaient, et quatre
+  // « rustines » en courbes de Bézier ressortaient en zigzag répété le long de la
+  // route — la texture cassée posée sur l'asphalte que voyait le joueur.
+  for (let i = 0; i < 5200; i++) {
+    const g = 44 + Math.floor(rand() * 24);
+    ctx.fillStyle = `rgba(${g},${g},${g + 4},${0.14 + rand() * 0.22})`;
+    const s = 1.3 + rand() * 2.2;
+    ctx.fillRect(rand() * 256, rand() * 256, s, s);
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;

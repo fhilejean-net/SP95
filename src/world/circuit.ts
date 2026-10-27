@@ -53,6 +53,17 @@ const GROUND_MARGIN = 0.3;
  */
 const GROUND_WINDOW = 2;
 /**
+ * Décor à plat posé *sur* la piste : épaisseur et emprise maximales d'une
+ * plaque, et hauteur à partir de laquelle elle flotte au-dessus du sol. Une
+ * plaque plus épaisse qu'un vibreur est un ouvrage, pas un marquage ; une plaque
+ * de plus de 80 m est un revêtement, pas un décor. 0,12 m est l'ordre du défaut
+ * de fabrication de ces tuiles photo : en dessous, la plaque et l'asphalte sont
+ * à la même cote et il n'y a rien à corriger.
+ */
+const DECAL_MAX_THICK = 2.5;
+const DECAL_MAX_SPAN = 80;
+const DECAL_LIFT = 0.12;
+/**
  * Passes de comblement : les premières bouchent les trous de la dalle, les
  * suivantes étalent le raccord de CIRCUIT_FADE mètres autour d'elle.
  */
@@ -75,8 +86,12 @@ const ASPHALT_IMAGES = /^(road0[1-7]|roadx|pitroad|grdr|grdrtop|groove00|skidslo
  * bacs à gravier gardent leur texture : ce sont des décors, pas du revêtement.
  */
 const TRACK_IMAGES = /^(road0[1-7]|roadx|pitroad)$/;
-/** Une répétition d'asphalte tous les 6 m. */
-const TRACK_TILE = 6;
+/**
+ * Une répétition d'asphalte tous les 10 m. Le grain du carreau se réduit en gris
+ * uni à distance ; plus la trame est large, moins l'œil peut compter les
+ * répétitions en enfilade sur une ligne droite.
+ */
+const TRACK_TILE = 10;
 /**
  * En dessous de cette image, une grande surface n'est plus une matière : le
  * modèle en a quinze à soixante-quatre pixels étalées sur des centaines de
@@ -92,6 +107,14 @@ const RETILE_METRES = 4;
 const LOOSE_IMAGES = /^(rf_sand01|rf_sand02|sand|gravel|rmbl)/;
 /** Tout ce qui porte le sol du modèle (herbe, eau, sable, asphalte). */
 const GROUND_IMAGES = /^(grass|green|sand|rf_|water|rmbl|road0[1-7]|roadx|pitroad|grdr|groove|skid)/;
+/**
+ * Décors posés à plat par-dessus le dallage photo : la gomme de la trajectoire
+ * (`groove00`, `skidslong`) et les traces de pneus (`tyres_add`). Ils étaient
+ * écrits pour le dallage d'origine ; sur la piste uniforme ils se lisent comme
+ * une texture cassée étalée sur l'asphalte, et leur place dans le collider
+ * faisait buter les roues dessus. La piste uniforme les remplace : masqués.
+ */
+const OVERLAY_IMAGES = /^(groove00|skidslong|tyres_add)/;
 
 /** Groupes de collision du terrain : les pneus mordent, la coque ignore. */
 const GROUND_GROUP = (GROUP_GROUND << 16) | 0xffff;
@@ -245,6 +268,8 @@ export async function buildCircuit(
   const groundMeshes: THREE.Mesh[] = [];
   const asphaltMeshes: THREE.Mesh[] = [];
   const looseMeshes: THREE.Mesh[] = [];
+  /** Décors à plat masqués : hors rendu, hors collider, hors cote du sol. */
+  const overlayMeshes: THREE.Mesh[] = [];
   let plateTop = -Infinity;
   let plateBottom = Infinity;
   let triangles = 0;
@@ -258,6 +283,11 @@ export async function buildCircuit(
     const geometry = mesh.geometry;
     triangles += (geometry.index ? geometry.index.count : geometry.attributes.position.count) / 3;
     const image = nameOf(mesh);
+    if (OVERLAY_IMAGES.test(image)) {
+      mesh.visible = false;
+      overlayMeshes.push(mesh);
+      return;
+    }
     if (ASPHALT_IMAGES.test(image)) asphaltMeshes.push(mesh);
     else if (LOOSE_IMAGES.test(image)) looseMeshes.push(mesh);
     if (!GROUND_IMAGES.test(image)) return;
@@ -269,6 +299,50 @@ export async function buildCircuit(
       if (point.y < plateBottom) plateBottom = point.y;
     }
   });
+
+  // 1b. Les primitives qui regardent le ciel sont des surfaces roulables.
+  //
+  // Le modèle range la piste, ses vibreurs, ses marquages et ses herbes dans des
+  // primitives dont l'image ne porte qu'un numéro : 271 des 308 images du
+  // fichier ne disent rien, et tout ce qui n'était reconnu par aucune liste
+  // finissait dans le collider des **murs**. Le châssis y cognait les plaques
+  // posées à plat sur la piste — la voiture butait sur une dalle à ras
+  // l'asphalte et se déséquilibrait, exactement ce qu'on voyait. On classe donc
+  // aussi par la géométrie : une primitive dont les normales regardent le ciel
+  // est une surface (les roues roulent dessus, la coque l'ignore), une primitive
+  // aux normales horizontales reste une structure.
+  const normalMatrix = new THREE.Matrix3();
+  const sampleNormal = new THREE.Vector3();
+  /** Surfaces reconnues par leur nom : elles font foi sous une plaque flottante. */
+  const trustedMeshes = [...groundMeshes, ...looseMeshes];
+  /** Plaques classées surface par leurs normales, à vérifier contre le sol. */
+  const surfaceCandidates: THREE.Mesh[] = [];
+  let surfacesAdded = 0;
+  root.traverse((object) => {
+    if (!(object as THREE.Mesh).isMesh) return;
+    const mesh = object as THREE.Mesh;
+    if (overlayMeshes.includes(mesh)) return;
+    if (asphaltMeshes.includes(mesh) || looseMeshes.includes(mesh) || groundMeshes.includes(mesh)) return;
+    const attribute = mesh.geometry.attributes.normal;
+    const positions = mesh.geometry.attributes.position;
+    if (!attribute || attribute.count !== positions.count) return;
+    normalMatrix.getNormalMatrix(mesh.matrixWorld);
+    const step = Math.max(1, Math.floor(attribute.count / 240));
+    let up = 0;
+    let sampled = 0;
+    for (let i = 0; i < attribute.count; i += step) {
+      sampleNormal.fromBufferAttribute(attribute, i).applyMatrix3(normalMatrix);
+      if (sampleNormal.y > 0.55) up++;
+      sampled++;
+    }
+    if (sampled > 0 && up / sampled >= 0.6) {
+      // Elle rejoint le sol de secours : c'est la surface que la roue lit.
+      groundMeshes.push(mesh);
+      surfaceCandidates.push(mesh);
+      surfacesAdded++;
+    }
+  });
+  console.log(`Circuit : ${surfacesAdded} primitives classées surfaces par leurs normales`);
 
   // 2. Pose : la dalle se centre sur le terrain naturel de l'emprise, sans le
   // déplacer de travers (les collines du modèle restent ces collines-là).
@@ -480,6 +554,11 @@ export async function buildCircuit(
     if (!progressed) break;
   }
 
+  // Cote brute d'une case, relevée avant l'élargissement : elle sert à mesurer
+  // la hauteur d'une plaque au-dessus du sol. La grille élargie est descendue de
+  // tout son voisinage et fausserait la mesure dès qu'une pente s'en mêle.
+  const rawGround = groundY.slice();
+
   // Le sol de secours passe sous la dalle : la cote de chaque case est ramenée
   // au minimum de son voisinage (voir GROUND_WINDOW).
   const lowered = groundY.slice();
@@ -500,6 +579,70 @@ export async function buildCircuit(
     }
   }
   groundY.set(lowered);
+
+  // 3b. Décors à plat posés *sur* la piste. Le modèle range sous des noms muets
+  // des plaques fines — marquages, gomme, raccords de tuile — qui flottent
+  // au-dessus du revêtement. Elles passaient dans le collider du sol : la roue
+  // prenait leur bord comme une marche, la caisse sautillait et se déséquilibrait
+  // en pleine ligne droite, et à l'écran la plaque z-fightait avec l'asphalte,
+  // d'où les damiers qui bougent sous la voiture. Une plaque n'est un décor que
+  // si une surface reconnue passe *sous* elle : sinon c'est elle le sol.
+  const trustedCells = new Uint8Array(cells);
+  for (const mesh of trustedMeshes) {
+    const positions = mesh.geometry.attributes.position;
+    const stride = Math.max(1, Math.floor(positions.count / 8000));
+    for (let i = 0; i < positions.count; i += stride) {
+      point.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+      if (!cellOf(point.x, point.z, cell)) continue;
+      trustedCells[cell.cz * columns + cell.cx] = 1;
+    }
+  }
+
+  const plateBox = new THREE.Box3();
+  const plateSize = new THREE.Vector3();
+  const decals: string[] = [];
+  for (const mesh of surfaceCandidates) {
+    plateBox.setFromObject(mesh);
+    plateBox.getSize(plateSize);
+    if (plateSize.y > DECAL_MAX_THICK) continue;
+    if (Math.max(plateSize.x, plateSize.z) > DECAL_MAX_SPAN) continue;
+    const positions = mesh.geometry.attributes.position;
+    const stride = Math.max(1, Math.floor(positions.count / 200));
+    let sampled = 0;
+    let overGround = 0;
+    let lifted = 0;
+    for (let i = 0; i < positions.count; i += stride) {
+      point.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+      if (!cellOf(point.x, point.z, cell)) continue;
+      sampled++;
+      // La plus basse des surfaces reconnues autour de la case : c'est le sol.
+      let level = Infinity;
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = cell.cx + dx;
+          const nz = cell.cz + dz;
+          if (nx < 0 || nx >= columns || nz < 0 || nz >= rows) continue;
+          const index = nz * columns + nx;
+          if (!trustedCells[index]) continue;
+          if (rawGround[index] < level) level = rawGround[index];
+        }
+      }
+      if (level === Infinity) continue;
+      overGround++;
+      if (point.y - level > DECAL_LIFT) lifted++;
+    }
+    if (sampled < 4 || overGround / sampled < 0.5) continue;
+    if (lifted / overGround < 0.5) continue;
+    mesh.visible = false;
+    overlayMeshes.push(mesh);
+    const at = groundMeshes.indexOf(mesh);
+    if (at >= 0) groundMeshes.splice(at, 1);
+    const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+    decals.push(nameOf(mesh) || material?.name || 'sans nom');
+  }
+  if (decals.length) {
+    console.log(`Circuit : ${decals.length} décors à plat retirés du sol (${decals.join(', ')})`);
+  }
 
   CIRCUIT.ground = (x, z) => {
     if (!cellOf(x, z, cell)) return null;
@@ -544,7 +687,10 @@ export async function buildCircuit(
   const buildStarted = performance.now();
   const allMeshes: THREE.Mesh[] = [];
   root.traverse((object) => {
-    if ((object as THREE.Mesh).isMesh) allMeshes.push(object as THREE.Mesh);
+    if (!(object as THREE.Mesh).isMesh) return;
+    const mesh = object as THREE.Mesh;
+    if (overlayMeshes.includes(mesh)) return;
+    allMeshes.push(mesh);
   });
   const surfaceMeshes = new Set<THREE.Mesh>([...groundMeshes, ...asphaltMeshes, ...looseMeshes]);
 
@@ -654,6 +800,10 @@ export async function buildCircuit(
     box.setFromObject(mesh);
     box.getSize(size);
     if (Math.max(size.x, size.y, size.z) < RETILE_MIN_SIZE) continue;
+    // Une trame ne se pose que sur un mur, une glissière, un talus. Une plaque
+    // horizontale — marquage, dalle, gomme — recevait des UV projetés à la
+    // verticale et se lisait comme une texture cassée posée sur la piste.
+    if (size.y < Math.max(size.x, size.z) * 0.2) continue;
     // L'axe le plus fin est la normale de la face : on projette sur les deux autres.
     const thin = size.x <= size.y && size.x <= size.z ? 0 : size.y <= size.z ? 1 : 2;
     const axisA = thin === 2 ? 0 : thin === 1 ? 0 : 2;
@@ -679,6 +829,16 @@ export async function buildCircuit(
     x: spawnX,
     z: spawnZ,
     heading: START_LOCAL.heading + CIRCUIT.yaw,
+  };
+
+  // Diagnostic des scripts de test (voir scripts/probe-*.mjs) : le classement
+  // des maillages, tel qu'il a servi à bâtir le collider.
+  (globalThis as unknown as { __sp95Circuit?: unknown }).__sp95Circuit = {
+    root,
+    groundMeshes,
+    asphaltMeshes,
+    looseMeshes,
+    overlayMeshes,
   };
 
   return {
