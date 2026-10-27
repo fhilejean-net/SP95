@@ -7,6 +7,8 @@ import { Race } from '../src/game/race.ts';
 import { BIKE_DEFAULT_SETUP, bikePresetLabel } from '../src/game/bikeTuning.ts';
 import { fadeGround, trackUv } from '../src/world/circuit.ts';
 import { MAP_ID, mapFromSearch, mapUrl } from '../src/game/maps.ts';
+import { CARS } from '../src/game/cars.ts';
+import { pickWheels } from '../src/render/wheels.ts';
 // Le circuit est posé par world/circuit.ts au chargement : ces tests vérifient
 // le contrat des cartes (emprise, sol, revêtement), pas le chargement du GLB.
 import {
@@ -31,6 +33,8 @@ import {
   worldSizeFor,
 } from '../src/world/layout.ts';
 import { ReplayBuffer, samplePoses } from '../src/game/replay.ts';
+import { Chrono, formatLap } from '../src/game/chrono.ts';
+import { DEFAULT_SETUP, PRESETS, describeSetup, resolveSpec } from '../src/game/tuning.ts';
 import { planPuddles } from '../src/world/puddles.ts';
 
 const pose = (x: number) => ({ x, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 });
@@ -357,6 +361,170 @@ test('the map is chosen in the URL, and the switch keeps the rest', () => {
   // Le reste de l'URL suit : `?fx=low` ne se perd pas en changeant de carte.
   assert.equal(new URL(suzuka).searchParams.get('fx'), 'low');
   assert.equal(new URL(mapUrl('ville', suzuka)).searchParams.has('map'), false);
+});
+
+test('les slicks de course collent plus que la monte de route', () => {
+  const car = CARS.find((entry) => entry.id === 'apollo')!;
+  const road = resolveSpec({ ...DEFAULT_SETUP, tires: 0 }, car.spec);
+  const slicks = resolveSpec({ ...DEFAULT_SETUP, tires: 4 }, car.spec);
+  assert.ok(slicks.muFront > road.muFront * 1.3, `slick ${slicks.muFront} contre ${road.muFront}`);
+  assert.ok(slicks.muRear > road.muRear * 1.3, `slick ${slicks.muRear} contre ${road.muRear}`);
+  // Plus de grip, mais une pente de glisse plus raide : ça prévient tard, et
+  // ça décroche d'un coup.
+  assert.ok(slicks.peakSlipAngle < road.peakSlipAngle);
+  // Hors de l'asphalte, la gomme tendre ne sert plus à rien.
+  assert.ok(slicks.looseGrip < road.looseGrip);
+  assert.equal(describeSetup({ ...DEFAULT_SETUP, tires: 4 }, car.spec).grip, 'Slick de course');
+});
+
+test('le réglage Chrono monte les slicks, et chaque voiture annonce sa transmission', () => {
+  const chrono = PRESETS.find((preset) => preset.label === 'Chrono');
+  assert.ok(chrono, 'le preset Chrono doit exister');
+  assert.equal(chrono!.setup.tires, 4, 'le preset Chrono roule en slicks');
+  const drive = (id: string) =>
+    describeSetup(DEFAULT_SETUP, CARS.find((entry) => entry.id === id)!.spec).drive;
+  assert.equal(drive('gt40'), 'Propulsion');
+  assert.equal(drive('apollo'), 'Propulsion');
+  assert.equal(drive('fk8'), 'Traction');
+  assert.equal(drive('rs7'), 'Intégrale');
+  assert.equal(drive('yaris'), 'Intégrale');
+});
+
+test('le chrono compte un tour au franchissement de la ligne, et rien dautre', () => {
+  const line = { x: 0, z: 0, heading: 0 };
+  const run = (
+    instance: Chrono,
+    from: number,
+    to: number,
+    speed = 30,
+    x = 0,
+    dt = 0.1,
+  ) => {
+    const events: string[] = [];
+    const step = to < from ? -4 : 4;
+    for (let z = from; step < 0 ? z >= to : z <= to; z += step) {
+      const event = instance.update(dt, x, z, speed);
+      if (event) events.push(event);
+    }
+    return events;
+  };
+
+  const chrono = new Chrono(line, null);
+  // Départ arrêté derrière la ligne : le premier passage lance le chrono.
+  assert.deepEqual(run(chrono, 20, -8), ['start']);
+  assert.equal(chrono.armed, true);
+  assert.equal(chrono.lap, 1);
+  // Le chrono démarre au franchissement : le tour en cours part de zéro.
+  assert.ok(chrono.current <= 0.25, `tour lancé à ${chrono.current}s`);
+
+  // Un tour : on repart loin devant, on revient derrière la ligne, on la
+  // repasse dans le bon sens.
+  assert.deepEqual(run(chrono, -8, -80), [], 'aucun tour tant quon ne repasse pas la ligne');
+  assert.deepEqual(run(chrono, -80, 20), [], 'franchir la ligne à contresens ne compte pas');
+  assert.deepEqual(run(chrono, 20, -8), ['lap']);
+  assert.equal(chrono.lap, 2);
+  assert.ok(chrono.last > 0, 'le tour doit avoir un temps');
+  assert.equal(chrono.best, chrono.last, 'le premier tour est la référence');
+  assert.ok(chrono.current < chrono.last, 'le tour suivant repart de zéro');
+
+  // À l'arrêt, la ligne ne compte pas : ni poussée, ni remorquée.
+  const stopped = new Chrono(line, null);
+  assert.deepEqual(run(stopped, 20, -8, 0), []);
+  assert.equal(stopped.armed, false);
+
+  // À trente mètres sur le côté — un autre morceau de piste —, rien non plus.
+  const aside = new Chrono(line, null);
+  assert.deepEqual(run(aside, 20, -80, 30, 30), []);
+
+  assert.equal(formatLap(92.34), '1:32.34');
+  assert.equal(formatLap(7.5), '0:07.50');
+});
+
+test('the wheels of an unnamed model are found by shape, and named ones win', () => {
+  const body = {
+    min: [-0.95, 0, -2.3] as [number, number, number],
+    max: [0.95, 1.3, 2.3] as [number, number, number],
+  };
+  const wheel = (x: number, z: number, name: string, half = 0.32) => ({
+    name,
+    box: {
+      min: [x - 0.11, 0, z - half] as [number, number, number],
+      max: [x + 0.11, half * 2, z + half] as [number, number, number],
+    },
+  });
+
+  // Noms anonymes (Object_14…) : la forme et la position suffisent.
+  const picks = pickWheels(
+    [
+      wheel(-0.78, -1.4, 'Object_14'),
+      wheel(0.78, -1.4, 'Object_23'),
+      wheel(-0.8, 1.35, 'Object_41'),
+      wheel(1.42, 1.35, 'Object_57'),
+    ],
+    body,
+  );
+  assert.ok(picks, 'quatre roues rondes et basses doivent être trouvées');
+  const corners = picks!.map((pick) => pick.corner);
+  assert.deepEqual(corners, [0, 1, 2, 3]);
+  assert.ok(Math.abs(picks![0].hub[0] + 0.78) < 0.01 && Math.abs(picks![0].hub[2] + 1.4) < 0.01);
+  assert.ok(Math.abs(picks![0].radius - 0.32) < 0.01, `rayon ${picks![0].radius}`);
+
+  // Trois roues sur quatre : on refuse, la voiture de secours prend le relais.
+  assert.equal(
+    pickWheels([wheel(-0.78, -1.4, 'a'), wheel(0.78, -1.4, 'b'), wheel(-0.8, 1.35, 'c')], body),
+    null,
+  );
+  // Un garde-boue plus gros que le pneu ne doit pas voler la place de la roue
+  // avant droite : le miroir des trois autres coins recale le quatrième.
+  const withFender = pickWheels(
+    [
+      wheel(-0.78, -1.4, 'Object_14'),
+      wheel(0.78, -1.4, 'Object_23'),
+      wheel(-0.8, 1.35, 'Object_41'),
+      wheel(1.42, 1.35, 'Object_57'),
+      {
+        name: 'Object_88',
+        box: { min: [0.3, 0.05, -1.9], max: [1.0, 0.55, -1.0] },
+      },
+    ],
+    body,
+  );
+  assert.ok(withFender, 'un garde-boue de plus ne doit pas empêcher la détection');
+  const frontRight = withFender!.find((pick) => pick.corner === 1)!;
+  assert.ok(
+    Math.abs(frontRight.hub[0] - 0.78) < 0.01 && Math.abs(frontRight.hub[2] + 1.4) < 0.01,
+    `moyeu avant droit à ${frontRight.hub.map((v) => v.toFixed(2)).join(',')}`,
+  );
+  assert.ok(Math.abs(frontRight.radius - 0.32) < 0.02, `rayon ${frontRight.radius}`);
+
+  // Un nom qui sent la roue passe avant une forme plausible : le rétroviseur
+  // rond de 25 cm ne doit pas voler la place du pneu.
+  const named = pickWheels(
+    [
+      wheel(-0.78, -1.4, 'rim_FL'),
+      wheel(0.78, -1.4, 'rim_FR'),
+      wheel(-0.8, 1.35, 'rim_RL'),
+      wheel(0.8, 1.35, 'rim_RR'),
+      { name: 'mirror_L', box: { min: [-1.1, 0.9, -0.9], max: [-0.85, 1.15, -0.65] } },
+    ],
+    body,
+  );
+  assert.ok(named);
+  assert.ok(Math.abs(named![0].radius - 0.32) < 0.01, `rayon ${named![0].radius}`);
+});
+
+test('every car in the registry loads its own model, and ids stay unique', () => {
+  const ids = new Set(CARS.map((car) => car.id));
+  assert.equal(ids.size, CARS.length, 'deux voitures partagent un id');
+  for (const car of CARS) {
+    assert.ok(car.model.endsWith('.glb'), `${car.id} : modèle manquant`);
+    assert.ok(car.label.length > 2 && car.detail.length > 2, `${car.id} : libellé trop court`);
+    assert.ok(car.spec.wheelbase > 1.8 && car.spec.mass > 600, `${car.id} : specs invraisemblables`);
+  }
+  assert.ok(CARS.length >= 10, `${CARS.length} voitures au registre`);
+  // Les modèles arrivent d'ateliers différents : chaque voiture doit dire dans
+  // quel sens elle roule (0 quand le nez regarde déjà le -Z du jeu).
+  for (const car of CARS) assert.ok(Number.isFinite(car.yaw) && Math.abs(car.yaw) <= Math.PI + 1e-6, `${car.id} : orientation invalide`);
 });
 
 test('the track paints its asphalt from world coordinates, so its tiles join', () => {

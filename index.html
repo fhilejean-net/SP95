@@ -25,7 +25,7 @@
       <div class="menu-card">
         <p class="eyebrow">Simulation de conduite</p>
         <h1 class="logo">SP95</h1>
-        <p class="tagline">Aventador · RX-7 · i20 Rally2 · Supermotard — routes ouvertes</p>
+        <p class="tagline">10 voitures &amp; un supermotard — showroom, atelier, chrono</p>
         <div class="menu-actions">
           <button id="btn-free" class="primary">Conduite libre</button>
           <button id="btn-race" class="village-only">Course · 2 tours</button>
@@ -34,6 +34,7 @@
           <button id="btn-rally" class="village-only">Rallye · piste en terre</button>
           <button id="btn-sommet" class="village-only">Sommet · aire de drift</button>
           <button id="btn-moto">Moto · supermotard stunt</button>
+          <button id="btn-cars">Voitures · showroom</button>
           <button id="btn-garage">Atelier · préparation</button>
           <button id="btn-sound">Son · mixage</button>
         </div>
@@ -139,6 +140,7 @@
           <button id="btn-pause-col" class="village-only">Col · route de montagne</button>
           <button id="btn-pause-rally" class="village-only">Rallye · piste en terre</button>
           <button id="btn-pause-sommet" class="village-only">Sommet · aire de drift</button>
+          <button id="btn-pause-cars">Voitures · showroom</button>
           <button id="btn-pause-garage">Atelier · préparation</button>
           <button id="btn-pause-sound">Son · mixage</button>
           <button id="btn-pause-menu">Menu principal</button>
@@ -159,10 +161,6 @@
         <div class="garage-body">
           <nav class="garage-tabs" id="garage-tabs"></nav>
           <div class="garage-main">
-            <div class="garage-cars-wrap">
-              <span class="garage-cars-label">Voiture</span>
-              <div class="garage-cars" id="garage-cars"></div>
-            </div>
             <div class="garage-presets" id="garage-presets"></div>
             <p class="garage-hint" id="garage-hint"></p>
             <div class="garage-options" id="garage-options"></div>
@@ -171,6 +169,27 @@
         <div class="garage-foot">
           <p class="menu-footnote">Chaque pièce est appliquée immédiatement et mémorisée.</p>
           <button id="btn-garage-close" class="primary">Terminer</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="showroom" class="overlay hidden">
+      <div class="showroom-card">
+        <div class="showroom-head">
+          <div>
+            <p class="eyebrow">Showroom</p>
+            <h2 class="logo small">Voitures</h2>
+          </div>
+          <p class="showroom-sub">Clique une carte pour l'essayer · flèches du clavier pour parcourir</p>
+        </div>
+        <div class="showroom-body">
+          <div class="showroom-detail" id="showroom-detail"></div>
+          <div class="showroom-list" id="showroom-list"></div>
+        </div>
+        <div class="showroom-foot">
+          <button id="btn-showroom-pick">Choisir cette voiture</button>
+          <button id="btn-showroom-drive" class="primary">Conduire</button>
+          <button id="btn-showroom-close">Terminer</button>
         </div>
       </div>
     </div>

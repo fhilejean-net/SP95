@@ -67,6 +67,8 @@ import {
   saveVehicleMixes,
 } from './game/audioMix.ts';
 import { Garage } from './game/garage.ts';
+import { Showroom } from './game/showroom.ts';
+import { Chrono, formatLap } from './game/chrono.ts';
 import { loadSetup, resolveSpec, saveSetup, type Setup } from './game/tuning.ts';
 
 const FIXED = 1 / 120;
@@ -76,6 +78,8 @@ const DRY_ASPHALT_COLOR = 0x8f9096;
 const WET_ASPHALT_COLOR = 0x6b7178;
 const DRY_PAD_COLOR = 0x808086;
 const WET_PAD_COLOR = 0x63696f;
+/** La ligne du chrono, posée devant la sortie des stands : on démarre avant. */
+const CHRONO_LINE_OFFSET = 8;
 
 type FreeSpawn = 'city' | 'col' | 'rally' | 'summit' | 'circuit';
 
@@ -176,6 +180,8 @@ async function boot(): Promise<void> {
   // emprise, et la grille de terrain se cale dessus. Il n'existe que sur sa
   // propre carte : la ville ne l'a plus du tout.
   let circuit: CircuitHandles | null = null;
+  /** Chrono de la piste : seulement là où il y a une piste. */
+  let chrono: Chrono | null = null;
   if (SUZUKA_MAP) {
     await setLoading(0.26, 'Pose du circuit de Suzuka…');
     circuit = await buildCircuit(scene, world, {
@@ -184,6 +190,19 @@ async function boot(): Promise<void> {
     console.log(
       `Circuit de Suzuka : ${circuit.meshes} maillages, ${circuit.triangles} triangles, ` +
         `chargé en ${circuit.loadMs} ms, collider en ${circuit.buildMs} ms`,
+    );
+
+    // Le chrono de la piste. La ligne est posée quelques mètres devant la sortie
+    // des stands : le départ arrêté a donc lieu avant elle, et c'est le premier
+    // franchissement qui lance le tour lancé.
+    const lineForward = forwardFromHeading(circuit.spawn.heading);
+    chrono = new Chrono(
+      {
+        x: circuit.spawn.x + lineForward.x * CHRONO_LINE_OFFSET,
+        z: circuit.spawn.z + lineForward.z * CHRONO_LINE_OFFSET,
+        heading: circuit.spawn.heading,
+      },
+      'sp95.chrono.suzuka',
     );
   }
 
@@ -344,6 +363,8 @@ async function boot(): Promise<void> {
   let paused = false;
   let accumulator = 0;
   let race: Race | null = null;
+  /** Vrai quand la session en cours est chronométrée (conduite libre à Suzuka). */
+  let timedLap = false;
   let menuTime = 0;
   let lastSpeed = 0;
   let lastCrashTime = -10;
@@ -479,6 +500,11 @@ async function boot(): Promise<void> {
     menu.classList.add('hidden');
     pause.classList.add('hidden');
     hudElement.classList.remove('hidden');
+    // Sur la carte du circuit, la conduite libre se roule au chrono : le
+    // panneau des tours affiche le tour en cours et le meilleur, sans course.
+    timedLap = Boolean(chrono) && wanted === 'free' && target === 'circuit';
+    if (timedLap) chrono?.reset();
+    hud.setChrono(timedLap);
     hud.setMode(wanted, SUZUKA_MAP ? 'Circuit · Suzuka' : undefined);
     input.clear();
     audio.init();
@@ -550,6 +576,8 @@ async function boot(): Promise<void> {
       else if (freeSpawn === 'summit') setCarPose(SUMMIT_START.x, SUMMIT_START.z, SUMMIT_START.heading);
       else spawnFree();
     }
+    // Repartir des stands, c'est repartir du chrono : le tour en cours est perdu.
+    if (timedLap) chrono?.reset();
     hud.flash('Réapparition', { duration: 700 });
   }
 
@@ -837,22 +865,24 @@ async function boot(): Promise<void> {
     for (const channel of SOUND_CHANNELS) audio.setChannel(channel, mix[channel]);
   }
 
-  const garage = new Garage(
+  const garage = new Garage(setup, bikeSetup, carDef, applySetup, applyBikeSetup);
+  // Le showroom choisit la voiture ; l'atelier ne s'occupe plus que des pièces.
+  const showroom = new Showroom(
     setup,
-    bikeSetup,
     carDef,
-    applySetup,
     (id) => {
       void selectCar(id);
     },
-    applyBikeSetup,
+    (id) => {
+      void driveCar(id);
+    },
   );
 
   /** Swaps the model, then the physics footprint that goes with it. */
   async function selectCar(id: CarId): Promise<void> {
     const def = CARS.find((entry) => entry.id === id);
     if (!def || (def.id === carDef.id && !ridingBike)) {
-      garage.clearPending();
+      showroom.clearPending();
       return;
     }
     let next: CarVisual;
@@ -860,7 +890,7 @@ async function boot(): Promise<void> {
       next = await loadCarVisual(def, resolveSpec(setup, def.spec));
     } catch (error) {
       console.error(error);
-      garage.clearPending();
+      showroom.clearPending();
       hud.flash('Modèle indisponible', { duration: 1600 });
       return;
     }
@@ -875,6 +905,7 @@ async function boot(): Promise<void> {
     car.group.visible = true;
     rebuildVehicle();
     garage.setCar(def);
+    showroom.setCar(def);
     hud.flash(def.label, { duration: 1200 });
   }
 
@@ -883,6 +914,21 @@ async function boot(): Promise<void> {
     // The panel tunes whatever is in the garage: two wheels or four.
     if (ridingBike) garage.openBike(bikeSetup);
     else garage.open(setup);
+  }
+
+  /** L'écran de sélection : il montre la voiture, l'atelier la règle. */
+  function openShowroom(): void {
+    if (mode !== 'menu' && !paused) togglePause();
+    showroom.open(setup);
+  }
+
+  /** « Conduire » depuis le showroom : on charge, puis on rend le volant. */
+  async function driveCar(id: CarId): Promise<void> {
+    const fromMenu = mode === 'menu';
+    await selectCar(id);
+    showroom.close();
+    if (fromMenu) startMode('free');
+    else if (paused) togglePause();
   }
 
   function openSound(): void {
@@ -932,6 +978,8 @@ async function boot(): Promise<void> {
   document.getElementById('btn-race')?.addEventListener('click', () => startMode('race'));
   document.getElementById('btn-garage')?.addEventListener('click', openGarage);
   document.getElementById('btn-pause-garage')?.addEventListener('click', openGarage);
+  document.getElementById('btn-cars')?.addEventListener('click', openShowroom);
+  document.getElementById('btn-pause-cars')?.addEventListener('click', openShowroom);
   document.getElementById('btn-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-pause-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-col')?.addEventListener('click', () => startMode('free', 'col'));
@@ -979,6 +1027,8 @@ async function boot(): Promise<void> {
     mode = 'menu';
     paused = false;
     race = null;
+    timedLap = false;
+    hud.setChrono(false);
     pause.classList.add('hidden');
     hudElement.classList.add('hidden');
     menu.classList.remove('hidden');
@@ -1121,6 +1171,23 @@ async function boot(): Promise<void> {
             hud.flash(label, { duration: 700 });
           }
         }
+      }
+    }
+
+    // Le chrono tourne dans la simulation, pas dans le rendu : un tour compte
+    // les secondes réellement simulées, pause et replay exclus.
+    if (chrono && timedLap) {
+      const pos = vehicle.position;
+      const chronoEvent = chrono.update(dt, pos.x, pos.z, telemetry.speed);
+      if (chronoEvent === 'start') {
+        hud.flash('Chrono lancé', { accent: true, duration: 1200 });
+      } else if (chronoEvent === 'lap') {
+        const isBest = chrono.best !== null && chrono.last <= chrono.best + 1e-6;
+        hud.flash(
+          `Tour ${chrono.lap - 1} · ${formatLap(chrono.last)}${isBest ? ' · meilleur' : ''}`,
+          { accent: isBest, duration: 2100 },
+        );
+        updateMenuBest();
       }
     }
 
@@ -1462,6 +1529,9 @@ async function boot(): Promise<void> {
     if (mode === 'race' && race) {
       hud.updateRace(race.snapshot(carPosition));
     }
+    if (chrono && timedLap) {
+      hud.updateChrono(chrono.lap, chrono.current, chrono.best);
+    }
 
     if (mode !== 'menu') {
       const next = race ? checkpoints[race.next] : null;
@@ -1494,6 +1564,7 @@ async function boot(): Promise<void> {
 
     if (input.consume('pause')) {
       if (audioPanel.isOpen) closeSound();
+      else if (showroom.isOpen) showroom.close();
       else if (garage.isOpen) garage.close();
       else togglePause();
     }
@@ -1628,10 +1699,27 @@ async function boot(): Promise<void> {
       return { gear: t.gear, rpm: t.rpm, limiter: t.limiter, shifting: t.shifting };
     },
     get spec() {
-      return { name: spec.name, mass: spec.mass, peakTorque: spec.peakTorque, maxSteer: spec.maxSteer };
+      return {
+        name: spec.name,
+        mass: spec.mass,
+        peakTorque: spec.peakTorque,
+        maxSteer: spec.maxSteer,
+        wheelbase: spec.wheelbase,
+        track: spec.track,
+        wheelRadius: spec.wheelRadius,
+      };
     },
     get garageOpen() {
       return garage.isOpen;
+    },
+    get showroomOpen() {
+      return showroom.isOpen;
+    },
+    get chrono() {
+      return chrono ? chrono.snapshot() : null;
+    },
+    get timedLap() {
+      return timedLap;
     },
     get soundPanelOpen() {
       return audioPanel.isOpen;
@@ -1723,6 +1811,8 @@ async function boot(): Promise<void> {
     startBike: () => startBikeMode(),
     stopBike: () => leaveBike(),
     popWheelie: () => bike?.popWheelie() ?? false,
+    openShowroom: () => openShowroom(),
+    resetChrono: () => chrono?.reset(),
     startFree: () => startMode('free'),
     startRace: () => startMode('race'),
     startCol: () => startMode('free', 'col'),
@@ -1770,8 +1860,28 @@ declare global {
       readonly audioEvents: number;
       readonly audioSamples: number;
       readonly drivetrain: { gear: number; rpm: number; limiter: boolean; shifting: boolean };
-      readonly spec: { name: string; mass: number; peakTorque: number; maxSteer: number };
+      readonly spec: {
+        name: string;
+        mass: number;
+        peakTorque: number;
+        maxSteer: number;
+        wheelbase: number;
+        track: number;
+        wheelRadius: number;
+      };
       readonly garageOpen: boolean;
+      readonly showroomOpen: boolean;
+      readonly chrono: {
+        armed: boolean;
+        lap: number;
+        current: number;
+        last: number;
+        best: number | null;
+        lastLabel: string;
+      } | null;
+      readonly timedLap: boolean;
+      openShowroom: () => void;
+      resetChrono: () => void;
       readonly soundPanelOpen: boolean;
       readonly soundMix: Record<string, number>;
       readonly tcs: boolean;

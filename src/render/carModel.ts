@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { CarVisual } from './car.ts';
 import type { CarDef } from '../game/cars.ts';
 import type { VehicleSpec } from '../physics/vehicle.ts';
+import { pickWheels, type Box3Data, type WheelCandidate } from './wheels.ts';
 
 /**
  * Turns a modelled car into the same `CarVisual` contract the procedural car
@@ -13,7 +14,12 @@ import type { VehicleSpec } from '../physics/vehicle.ts';
  * groups and spun. Scale comes from the wheelbase, so a model authored at any
  * size lands on the physics contact patches; the body is then dropped until
  * its wheels touch the same plane.
+ *
+ * La recherche des roues vit dans `wheels.ts` : elle ne dépend ni de Three ni de
+ * Vite, et se teste donc hors navigateur.
  */
+
+export type { Box3Data, WheelCandidate, WheelPick } from './wheels.ts';
 
 const loader = new GLTFLoader();
 // BASE_URL keeps the models reachable at the dev root and under /SP95/ on Pages.
@@ -26,6 +32,27 @@ function meshList(root: THREE.Object3D): THREE.Mesh[] {
     if (mesh.isMesh) out.push(mesh);
   });
   return out;
+}
+
+/**
+ * Un nœud par son nom, tel qu'il est écrit au registre. three renomme les nœuds
+ * du glTF en y remplaçant espaces et deux-points : `3DWheel Front L_35` devient
+ * `3DWheel_Front_L_35`. On cherche donc d'abord à l'identique, puis en ignorant
+ * espaces, deux-points et points, sans se soucier de la casse.
+ */
+function findNode(root: THREE.Object3D, name: string): THREE.Object3D | null {
+  const exact = root.getObjectByName(name);
+  if (exact) return exact;
+  const wanted = normalise(name);
+  let found: THREE.Object3D | null = null;
+  root.traverse((node) => {
+    if (!found && node.name && normalise(node.name) === wanted) found = node;
+  });
+  return found;
+}
+
+function normalise(text: string): string {
+  return text.replace(/[\s:.]+/g, '').toLowerCase();
 }
 
 function bounds(geometries: THREE.BufferGeometry[]): THREE.Box3 {
@@ -57,10 +84,104 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
     geometries.set(mesh, geometry);
   }
 
-  for (let i = 0; i < def.wheels.length; i++) {
-    const node = root.getObjectByName(def.wheels[i]);
-    if (!node) throw new Error(`${def.id}: missing wheel node ${def.wheels[i]}`);
-    for (const mesh of meshList(node)) owner.set(mesh, i);
+  const boxOf = (geometry: THREE.BufferGeometry): Box3Data => {
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox!;
+    return { min: [box.min.x, box.min.y, box.min.z], max: [box.max.x, box.max.y, box.max.z] };
+  };
+  /** Nom du nœud et de ses parents, là où se cache « wheel », « rim »… */
+  const labelOf = (mesh: THREE.Mesh): string => {
+    const parts: string[] = [];
+    let node: THREE.Object3D | null = mesh;
+    while (node && node !== root) {
+      if (node.name) parts.push(node.name);
+      node = node.parent;
+    }
+    return parts.join('/');
+  };
+
+  // Les noms du registre, quand le modèle en porte. Un nom qui manque (three
+  // renomme les nœuds du glTF, et certains ateliers nomment les groupes autrement
+  // que prévu) retombe sur la détection par forme : une coquille au registre ne
+  // doit pas rendre une voiture injouable.
+  if (def.wheels) {
+    const nodes = def.wheels.map((name) => findNode(root, name));
+    if (nodes.every((node) => node !== null)) {
+      nodes.forEach((node, index) => {
+        for (const mesh of meshList(node!)) owner.set(mesh, index);
+      });
+    } else {
+      const suspects: string[] = [];
+      root.traverse((node) => {
+        if (node.name && /wheel|tyre|tire|roue|rim/i.test(node.name)) suspects.push(node.name);
+      });
+      console.warn(
+        `${def.id}: nœuds de roue absents au registre (` +
+          `${def.wheels.filter((_, index) => !nodes[index]).join(', ')}) — ` +
+          `détection par forme. Nœuds candidats : ${suspects.slice(0, 10).join(' | ') || 'aucun'}`,
+      );
+    }
+  }
+
+  // Aucun nom utilisable : on cherche les roues dans le modèle lui-même.
+  let detected: ReturnType<typeof pickWheels> = null;
+  if (owner.size === 0) {
+    const body = bounds([...geometries.values()]);
+    const model: Box3Data = {
+      min: [body.min.x, body.min.y, body.min.z],
+      max: [body.max.x, body.max.y, body.max.z],
+    };
+    const candidates: WheelCandidate[] = meshes.map((mesh) => ({
+      name: labelOf(mesh),
+      box: boxOf(geometries.get(mesh)!),
+    }));
+    detected = pickWheels(candidates, model);
+    if (!detected) {
+      console.warn(
+        `${def.id}: roues introuvables, maillages : ` +
+          candidates.map((entry) => entry.name).slice(0, 24).join(' | '),
+      );
+      throw new Error(`${def.id}: no wheel geometry`);
+    }
+    // Chaque maillage rejoint la roue dont le moyeu est le plus proche, à
+    // condition de tenir **tout entier** dans son rayon : la jante, le disque et
+    // l'étrier suivent le pneu, mais pas l'aile ni le bas de caisse, qui ne
+    // font que passer à côté du moyeu. Le critère porte sur le coin le plus
+    // éloigné de la boîte, pas sur son centre — un maillage long dont le centre
+    // tombe près du moyeu (une aile, un bas de caisse) était aspiré dans la
+    // roue et tournait avec elle.
+    for (const mesh of meshes) {
+      const box = boxOf(geometries.get(mesh)!);
+      let best: { index: number; distance: number } | null = null;
+      for (const pick of detected) {
+        let farthest = 0;
+        let centre = 0;
+        for (let corner = 0; corner < 8; corner++) {
+          const point: [number, number, number] = [
+            corner & 1 ? box.max[0] : box.min[0],
+            corner & 2 ? box.max[1] : box.min[1],
+            corner & 4 ? box.max[2] : box.min[2],
+          ];
+          const distance = Math.hypot(
+            point[0] - pick.hub[0],
+            point[1] - pick.hub[1],
+            point[2] - pick.hub[2],
+          );
+          farthest = Math.max(farthest, distance);
+          centre += distance / 8;
+        }
+        if (farthest > pick.radius * 1.2) continue;
+        if (!best || centre < best.distance) best = { index: pick.corner, distance: centre };
+      }
+      if (best) owner.set(mesh, best.index);
+    }
+    console.log(
+      `${def.id}: roues détectées — ` +
+        detected
+          .map((pick) => `coin ${pick.corner} moyeu ${pick.hub.map((v) => v.toFixed(2)).join(',')}`)
+          .join(' · ') +
+        ` rayon ${detected[0].radius.toFixed(3)} m, ${meshes.filter((mesh) => owner.has(mesh)).length} maillages`,
+    );
   }
   if (owner.size === 0) throw new Error(`${def.id}: no wheel geometry`);
 
@@ -74,10 +195,17 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
     return boxes;
   };
 
+  // Le modèle peut être authoré à n'importe quelle échelle — le trueno arrive
+  // en centimètres, la Ford GT en unités de 4 m. C'est donc le rapport à la
+  // taille du modèle qui dit si la mesure a un sens, pas une valeur en mètres.
+  const modelBox = bounds([...geometries.values()]);
+  const modelLength = Math.max(modelBox.max.x - modelBox.min.x, modelBox.max.z - modelBox.min.z);
   let boxes = wheelBoxes();
   const hubs = boxes.map((box) => box.getCenter(new THREE.Vector3()));
   const measuredBase = Math.abs(hubs[0].z - hubs[2].z);
-  if (!(measuredBase > 0.2)) throw new Error(`${def.id}: wheelbase not found`);
+  if (!(measuredBase > modelLength * 0.15)) {
+    throw new Error(`${def.id}: wheelbase not found`);
+  }
   const scale = spec.wheelbase / measuredBase;
 
   for (const geometry of geometries.values()) geometry.scale(scale, scale, scale);

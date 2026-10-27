@@ -6,7 +6,7 @@ import {
   type BikeSetup,
   type BikeSetupKey,
 } from './bikeTuning.ts';
-import { CARS, type CarDef, type CarId } from './cars.ts';
+import type { CarDef } from './cars.ts';
 import { SUPERMOTARD } from './bikes.ts';
 
 function el<T extends HTMLElement>(id: string): T {
@@ -32,34 +32,21 @@ export class Garage {
   private hint = el('garage-hint');
   private stats = el('garage-stats');
   private presets: HTMLDivElement = el('garage-presets');
-  private carList: HTMLDivElement = el('garage-cars');
   private title: HTMLElement = el('garage-vehicle');
   private setup: Setup;
   private bikeSetup: BikeSetup;
   private mode: GarageMode = 'car';
   private active: AnyKey = 'engine';
-  /** Car being loaded, shown on its card meanwhile. */
-  private pending: CarId | null = null;
 
   constructor(
     setup: Setup,
     bikeSetup: BikeSetup,
     private car: CarDef,
     private readonly onChange: (setup: Setup) => void,
-    private readonly onCarChange: (id: CarId) => void,
     private readonly onBikeChange: (setup: BikeSetup) => void,
   ) {
     this.setup = { ...setup };
     this.bikeSetup = { ...bikeSetup };
-    this.carList.addEventListener('click', (event) => {
-      const button = (event.target as HTMLElement).closest('button[data-car]');
-      if (!button || this.mode !== 'car') return;
-      const id = button.getAttribute('data-car') as CarId;
-      if (!CARS.some((entry) => entry.id === id) || id === this.car.id || this.pending) return;
-      this.pending = id;
-      this.render();
-      this.onCarChange(id);
-    });
     this.tabs.addEventListener('click', (event) => {
       const button = (event.target as HTMLElement).closest('button[data-key]');
       if (!button) return;
@@ -105,16 +92,9 @@ export class Garage {
     return !this.overlay.classList.contains('hidden');
   }
 
-  /** The game picked the car: drop the loading state and re-render. */
+  /** Le showroom a changé de voiture : les stats suivent la nouvelle caisse. */
   setCar(car: CarDef): void {
     this.car = car;
-    this.pending = null;
-    if (this.isOpen) this.render();
-  }
-
-  /** Loading failed: hand the choice back to the player. */
-  clearPending(): void {
-    this.pending = null;
     if (this.isOpen) this.render();
   }
 
@@ -149,34 +129,6 @@ export class Garage {
   private render(): void {
     const bike = this.mode === 'bike';
     this.title.textContent = bike ? 'Atelier moto' : 'Atelier';
-
-    this.carList.replaceChildren(
-      ...(bike
-        ? [
-            (() => {
-              const card = document.createElement('button');
-              card.type = 'button';
-              card.className = 'car-choice selected';
-              card.disabled = true;
-              card.innerHTML = `<strong>${SUPERMOTARD.label}</strong><span>${SUPERMOTARD.detail}</span>`;
-              return card;
-            })(),
-          ]
-        : CARS.map((car) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.dataset.car = car.id;
-            const classes = ['car-choice'];
-            if (car.id === this.car.id) classes.push('selected');
-            if (car.id === this.pending) classes.push('loading');
-            button.className = classes.join(' ');
-            button.disabled = this.pending !== null;
-            button.innerHTML = `<strong>${car.label}</strong><span>${
-              car.id === this.pending ? 'Chargement…' : car.detail
-            }</span>`;
-            return button;
-          })),
-    );
 
     this.presets.replaceChildren(
       ...(bike ? BIKE_PRESETS : PRESETS).map((preset, index) => {

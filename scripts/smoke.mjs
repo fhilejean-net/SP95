@@ -172,12 +172,18 @@ try {
     `${stockAgain.peakTorque} Nm`,
   );
 
-  // Car picker: the rally car has its own footprint, engine and redline.
-  await page.click('#btn-garage');
+  // Showroom: the rally car has its own footprint, engine and redline.
+  await page.click('#btn-cars');
   await page.waitForTimeout(400);
-  await page.click('#garage-cars .car-choice[data-car="i20n"]');
+  const cards = await page.evaluate(
+    () => document.querySelectorAll('#showroom-list .car-card').length,
+  );
+  check('the showroom lists the whole garage', cards >= 11, `${cards} cartes`);
+  await page.click('#showroom-list .car-card[data-car="i20n"]');
   const swapped = await waitFor(
-    () => window.__sp95.car === 'i20n' && !document.querySelector('#garage-cars .car-choice.loading'),
+    () =>
+      window.__sp95.car === 'i20n' &&
+      !document.querySelector('#showroom-list .car-card.loading'),
     60_000,
   );
   const pickup = await page.evaluate(() => ({
@@ -187,7 +193,7 @@ try {
   }));
   const rallyBase = Math.abs(pickup.mounts[0].z - pickup.mounts[2].z);
   check(
-    'the garage swaps in another car model',
+    'the showroom swaps in another car model',
     Boolean(swapped) && pickup.spec.mass === 1230 && pickup.redline === 7200,
     `${pickup.spec.name}, ${pickup.redline} tr/min`,
   );
@@ -196,9 +202,9 @@ try {
     Math.abs(rallyBase - 2.59) < 0.02,
     `${rallyBase.toFixed(3)} m`,
   );
-  await page.click('#garage-cars .car-choice[data-car="aventador"]');
+  await page.click('#showroom-list .car-card[data-car="aventador"]');
   await waitFor(() => window.__sp95.car === 'aventador', 60_000);
-  await page.click('#btn-garage-close');
+  await page.click('#btn-showroom-close');
 
   await page.click('#btn-free');
   await page.waitForFunction(() => window.__sp95.mode === 'free');
@@ -489,15 +495,32 @@ try {
   // Back to a car: the garage must put the bike away and rebuild the car.
   await page.keyboard.press('Escape');
   await waitFor(() => window.__sp95.paused === true, 8000);
-  await page.click('#btn-pause-garage');
+  await page.click('#btn-pause-cars');
   await page.waitForTimeout(400);
-  await page.click('#garage-cars .car-choice[data-car="rx7"]');
+  await page.click('#showroom-list .car-card[data-car="rx7"]');
   const backInCar = await waitFor(
     () => window.__sp95.vehicleKind === 'car' && window.__sp95.car === 'rx7',
     60_000,
   );
+  await page.click('#btn-showroom-close');
+  check('the showroom puts the bike away and rebuilds the car', Boolean(backInCar));
+
+  // Le preset Chrono monte les slicks : c'est la monte des tours lancés.
+  await page.click('#btn-pause-garage');
+  await page.waitForTimeout(400);
+  const pickPreset = (label) =>
+    page.evaluate((name) => {
+      const button = [...document.querySelectorAll('#garage-presets .preset')].find(
+        (node) => node.textContent === name,
+      );
+      button?.click();
+    }, label);
+  await pickPreset('Chrono');
+  const slicks = await waitFor(() => window.__sp95.setup.tires === 4, 8000);
+  check('the Chrono preset mounts track slicks', Boolean(slicks));
+  await pickPreset('Série');
+  await waitFor(() => window.__sp95.setup.tires === 0, 8000);
   await page.click('#btn-garage-close');
-  check('the garage puts the bike away and rebuilds the car', Boolean(backInCar));
 
   check('no console errors at the end', errors.length === 0, errors.slice(0, 3).join(' | '));
 } catch (error) {

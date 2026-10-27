@@ -57,6 +57,8 @@ export class Hud {
   private lastSpeed = -1;
   private lastGear = -99;
   private lastRpm = -1;
+  /** Le panneau des tours sert aussi de chrono en conduite libre chronométrée. */
+  private chrono = false;
 
   constructor() {
     this.minimapBase = document.createElement('canvas');
@@ -181,7 +183,7 @@ export class Hud {
 
   /** `track` remplace le libellé du mode quand la carte n'est pas la ville. */
   setMode(mode: GameMode, track?: string): void {
-    this.racePanel.classList.toggle('hidden', mode !== 'race');
+    this.racePanel.classList.toggle('hidden', mode !== 'race' && !this.chrono);
     this.modeBadge.textContent =
       track ??
       (mode === 'race' ? 'Course · 2 tours' : mode === 'free' ? 'Conduite libre' : 'SP95');
@@ -279,6 +281,22 @@ export class Hud {
     this.absChip.title = enabled
       ? 'ABS actif — B ou le menu pause pour le couper'
       : 'ABS coupé — B pour le remettre';
+  }
+
+  /**
+   * Le chrono de la piste : le tour en cours, le meilleur. Sur la carte du
+   * circuit, la conduite libre est chronométrée sans qu'il y ait de course à
+   * gagner — c'est le panneau des tours, avec un autre libellé.
+   */
+  setChrono(on: boolean): void {
+    this.chrono = on;
+    this.racePanel.classList.toggle('hidden', !on);
+  }
+
+  updateChrono(lap: number, current: number, best: number | null): void {
+    this.raceLap.textContent = lap > 0 ? String(lap) : '—';
+    this.raceTime.textContent = Race.formatTime(current);
+    this.raceBest.textContent = Race.formatTime(best);
   }
 
   updateRace(snapshot: RaceSnapshot | null): void {

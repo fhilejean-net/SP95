@@ -77,6 +77,9 @@ export const CATEGORIES: SetupCategory[] = [
       { label: 'Semi-slick', detail: 'Grip maximal sur le sec' },
       { label: 'Drift', detail: 'Glisse progressivement, angles tenus plus longtemps' },
       { label: 'Tout-terrain', detail: 'Flancs hauts, meilleur sur les chemins' },
+      // La gomme tendre des tours chrono : c'est la seule monte qui tient un
+      // tour lancé sans glisser. Sur mouillé elle ne tient plus rien du tout.
+      { label: 'Slick de course', detail: 'Gomme tendre · le grip maxi, né sur le sec' },
     ],
   },
   {
@@ -100,6 +103,8 @@ export const PRESETS: SetupPreset[] = [
   { label: 'Série', setup: { engine: 0, exhaust: 0, weight: 0, suspension: 0, tires: 0, steering: 0 } },
   { label: 'Drift', setup: { engine: 1, exhaust: 1, weight: 1, suspension: 4, tires: 2, steering: 1 } },
   { label: 'Piste', setup: { engine: 3, exhaust: 2, weight: 2, suspension: 2, tires: 1, steering: 0 } },
+  // Tours chrono : slicks, caisse allégée, tout pour la seconde au tour.
+  { label: 'Chrono', setup: { engine: 2, exhaust: 2, weight: 2, suspension: 2, tires: 4, steering: 0 } },
   { label: 'Tout-terrain', setup: { engine: 2, exhaust: 1, weight: 0, suspension: 3, tires: 3, steering: 1 } },
 ];
 
@@ -141,6 +146,9 @@ const TIRES = [
   { muFront: 1.3, muRear: 1.05, peakSlipAngle: 0.19, radius: 0.335, looseGrip: 1 },
   // Tall sidewalls, open tread: the only set that actually gains grip on dirt.
   { muFront: 1.18, muRear: 1.14, peakSlipAngle: 0.2, radius: 0.38, looseGrip: 1.45 },
+  // Slick de course : beaucoup de mu, une pente de glisse très raide (prévenu
+  // tard, décroché vite) et rien à espérer hors de l'asphalte.
+  { muFront: 1.72, muRear: 1.66, peakSlipAngle: 0.1, radius: 0.33, looseGrip: 0.55 },
 ];
 
 const STEERING = [
@@ -217,6 +225,11 @@ export interface SetupSummary {
   ratio: number;
   grip: string;
   steering: string;
+  /** Où le couple part : propulsion, traction ou intégrale. */
+  drive: string;
+  /** Barres 0 → 1 pour le showroom, tirées du mu et de l'appui. */
+  gripBar: number;
+  aeroBar: number;
 }
 
 export function describeSetup(setup: Setup, base: VehicleSpec = STOCK_SPEC): SetupSummary {
@@ -229,7 +242,17 @@ export function describeSetup(setup: Setup, base: VehicleSpec = STOCK_SPEC): Set
     ratio: Math.round((powerHp / spec.mass) * 1000),
     grip: CATEGORIES[4].options[setup.tires]?.label ?? 'Route sport',
     steering: CATEGORIES[5].options[setup.steering]?.label ?? 'Série',
+    drive: driveLabel(spec),
+    gripBar: Math.max(0, Math.min(1, spec.muFront / 1.9)),
+    aeroBar: Math.max(0, Math.min(1, spec.downforceArea / 2.2)),
   };
+}
+
+/** Ce que la voiture fait de son couple, dit en deux mots. */
+export function driveLabel(spec: VehicleSpec): string {
+  if (spec.driveFront <= 0.15) return 'Propulsion';
+  if (spec.driveFront >= 0.85) return 'Traction';
+  return 'Intégrale';
 }
 
 export function normalizeSetup(raw: unknown): Setup {

@@ -666,6 +666,11 @@ export class Vehicle {
         // wheel-spin limit cycle at speed. Braking is a slip target so the
         // combined-slip ellipse still takes lateral grip away under braking.
         wheel.omega = cvLong / wheel.radius;
+        // L'axe non motrice ne passe pas par integrateWheelSpin : sans cette
+        // ligne, sa roue tournait dans le vide — les roues avant d'une
+        // propulsion restaient figées à l'écran pendant que l'axe arrière
+        // roulait. L'angle est visuel, mais il compte.
+        wheel.spinAngle = (wheel.spinAngle + wheel.omega * dt) % (Math.PI * 2);
         // The slip target has to follow the direction of travel: a fixed negative
         // value pushed the car backwards while it was reversing, which is what
         // made the car impossible to stop and never let it roll forward again.
