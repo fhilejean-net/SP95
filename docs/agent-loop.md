@@ -12,13 +12,13 @@ modifie pas le bloc d'état à la main.
 - `status: blocked` → deux échecs sur la même cause : s'arrêter et le dire à l'utilisateur.
 
 <!-- state:start -->
-status: running
-task: Wet-weather riding
+status: idle
+task: —
 cycle: 6
-started: 2026-10-27T06:42:03Z
-heartbeat: 2026-10-27T06:46:01Z
-commit: 5c62c62
-owner: session-8921
+started: —
+heartbeat: 2026-10-27T06:46:16Z
+commit: 7ef586b
+owner: session-9187
 <!-- state:end -->
 
 ## Journal
@@ -30,3 +30,4 @@ owner: session-8921
 | 3 | 2026-10-26 | Forest shadows | `0afe31d` | flaques de contact conformées au terrain, +2 draw calls (62 → 64) mesurés en fx=low |
 | 4 | 2026-10-26 | Per-vehicle camera framing | — | bloqué : cadrage cockpit non vérifiable ici : le rendu de contrôle tourne à ~1 fps (SwiftShader), donc chaque capture montre la frame précédente du changement de POV, et deux runs ont été tués avant d'obtenir une image stable. Piste mesurée à reprendre : la barre est à 1,12 m de haut et 0,33 m devant l'origine ; un œil à 0,55 m derrière et 0,30 m au-dessus d'elle demande ~8° de piqué pour tenir guidon et garde-boue dans le champ — à juger sur une vraie machine. |
 | 5 | 2026-10-26 | Bike presets in the HUD | `5c62c62` | libellé du preset dans le HUD, vérifié de Série à Stunt sans rechargement, 56 tests |
+| 6 | 2026-10-27 | Wet-weather riding | `7ef586b` | route mouillée G, spray arrière, asphalte assombri, 2 tests ; tsc ok, 58/58 |
