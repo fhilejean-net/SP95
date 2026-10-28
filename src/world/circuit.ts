@@ -260,8 +260,6 @@ function grainTexture(grain: Grain, anisotropy: number): THREE.CanvasTexture {
  */
 /** Case de la grille de voisinage, en mètres. */
 const ROAD_CELL = 3;
-/** Rayon dont un sommet prend la cote médiane, en mètres. */
-const ROAD_SMOOTH_RADIUS = 3;
 /**
  * Écart de cote au-delà duquel deux sommets ne sont pas sur le même tablier : au
  * croisement en huit, la piste du dessus passe sept mètres au-dessus.
@@ -338,26 +336,6 @@ function surfaceLevel(
   if (levels.length === 0) return near ? surfaceLevel(meshes) : 0;
   levels.sort((a, b) => a - b);
   return levels[Math.floor(levels.length / 2)];
-}
-
-function flattenSurfaces(meshes: THREE.Mesh[], level: number): void {
-  const point = new THREE.Vector3();
-  const inverse = new THREE.Matrix4();
-  for (const mesh of meshes) {
-    const positions = mesh.geometry.attributes.position;
-    if (!positions) continue;
-    inverse.copy(mesh.matrixWorld).invert();
-    for (let i = 0; i < positions.count; i++) {
-      point.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
-      point.y = level;
-      point.applyMatrix4(inverse);
-      positions.setXYZ(i, point.x, point.y, point.z);
-    }
-    positions.needsUpdate = true;
-    mesh.geometry.computeVertexNormals();
-    mesh.geometry.computeBoundingBox();
-    mesh.geometry.computeBoundingSphere();
-  }
 }
 
 export function buildFlatRoad(meshes: THREE.Mesh[]): FlatRoad {
@@ -733,18 +711,16 @@ export async function buildCircuit(
   const startWorld = new THREE.Vector3(START_LOCAL.x, 0, START_LOCAL.z).applyMatrix4(
     root.matrixWorld,
   );
+  // La table rase est celle de la physique, pas celle du décor : aplatir les
+  // maillages du modèle dégénérait les triangles et rendait le sol noir. Le sol
+  // que lisent les roues est donc une dalle parfaitement plate à la cote de la
+  // ligne des stands, et le décor garde sa géométrie.
   const roadLevel = surfaceLevel(asphaltMeshes.length ? asphaltMeshes : groundMeshes, {
     x: startWorld.x,
     z: startWorld.z,
     radius: 90,
   });
-  flattenSurfaces([...groundMeshes, ...asphaltMeshes, ...looseMeshes], roadLevel);
-  console.log(`Piste : table rase à y = ${roadLevel.toFixed(2)} m`);
-  const flatRoad = buildFlatRoad(asphaltMeshes);
-  console.log(
-    `Piste : collider lissé (topologie du modèle), ${flatRoad.triangles} triangles, ` +
-      `pente max ${flatRoad.maxGrade.toFixed(1)} % (voisinage ${ROAD_SMOOTH_RADIUS} m)`,
-  );
+  console.log(`Piste : dalle physique plate à y = ${roadLevel.toFixed(2)} m`);
   if (hiddenPrimitives.length) {
     console.log(`Circuit : primitives sans texture retirées (${hiddenPrimitives.join(', ')})`);
   }
@@ -1152,20 +1128,6 @@ export async function buildCircuit(
     return indexTotal / 3;
   };
 
-  /** Pose la trame plate de la piste comme surface roulable. */
-  const appendFlatRoad = (road: FlatRoad, groups: number): number => {
-    if (road.triangles === 0) return 0;
-    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-    world.createCollider(
-      RAPIER.ColliderDesc.trimesh(road.vertices, road.indices)
-        .setFriction(0.95)
-        .setRestitution(0.02)
-        .setCollisionGroups(groups),
-      body,
-    );
-    return road.triangles;
-  };
-
   /**
    * Dalle pleine et plate sous tout le circuit. Le trimesh de la piste avait des
    * trous et des arêtes qui faisaient décoller la voiture ; une dalle ne peut ni
@@ -1188,13 +1150,10 @@ export async function buildCircuit(
   // La piste du modèle rejoint le collider plat, pas le brut : ses bosses et son
   // dévers faisaient sauter et retourner la voiture. La dalle pleine passe
   // dessous : plus aucun trou possible.
-  const groundTriangles =
-    appendTrimesh(
-      [...surfaceMeshes].filter((mesh) => !asphaltMeshes.includes(mesh)),
-      GROUND_GROUP,
-    ) +
-    appendFlatRoad(flatRoad, GROUND_GROUP) +
-    appendFlatFloor(roadLevel, GROUND_GROUP);
+  // Une seule dalle plate sert de sol aux roues. Ni la surface du modèle (ses
+  // bosses, ses ponts, ses collines) ni la grille lissée : tout ce qui resterait
+  // dans le groupe du sol serait un monticule invisible de plus.
+  const groundTriangles = appendFlatFloor(roadLevel, GROUND_GROUP);
   // Le châssis est membre de GROUP_WORLD et filtre sur GROUP_WORLD (voir
   // CHASSIS_UPRIGHT) : les murs doivent porter exactement ce couple.
   const wallTriangles = appendTrimesh(
