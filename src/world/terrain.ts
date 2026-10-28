@@ -51,14 +51,13 @@ export function buildTerrain(scene: THREE.Scene, world: RAPIER.World, mats: Envi
   const indices: number[] = [];
   const half = size / 2;
 
-  // These are multipliers on the photo texture, not the colour of the ground:
-  // the old olive values were dark enough to swallow every blade of grass in
-  // the albedo, so the landscape read as flat plastic. Near-white tints keep
-  // the photograph visible and only shift its hue (dry grass, bare rock).
+  // These are multipliers on the photo texture, not the colour of the ground.
+  // Ils étaient presque blancs : sous le plein soleil l'herbe lissait en
+  // surexposition. On redescend d'un cran, la photo reste lisible.
   const color = new THREE.Color();
-  const grass = new THREE.Color(0xd9e0bc);
-  const dry = new THREE.Color(0xe2d2a6);
-  const rock = new THREE.Color(0xa8a49c);
+  const grass = new THREE.Color(0xa9b78f);
+  const dry = new THREE.Color(0xbfa87e);
+  const rock = new THREE.Color(0x8e8b84);
 
   for (let iz = 0; iz < count; iz++) {
     for (let ix = 0; ix < count; ix++) {

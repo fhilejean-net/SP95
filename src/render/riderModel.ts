@@ -209,7 +209,7 @@ export async function loadRiderVisual(): Promise<RiderVisual | null> {
 
     const material = (mesh.material as THREE.MeshStandardMaterial).clone();
     material.roughness = Math.max(0.32, material.roughness);
-    material.envMapIntensity = 1.1;
+    material.envMapIntensity = 0.9;
     if (material.map) material.map.anisotropy = 4;
     material.needsUpdate = true;
 

@@ -44,7 +44,7 @@ const WHEEL_CONTAINMENT = 1.02;
  * Réflexions : le ciel et les néons de la piste arrivent par l'environnement.
  * Au-dessus de 1, la peinture prend des reflets francs sans cramer les chromes.
  */
-const ENV_INTENSITY = 1.35;
+const ENV_INTENSITY = 1.0;
 /** Peinture vernie : une couche de clearcoat par-dessus la couleur de base. */
 const PAINT_MATERIAL = /paint|body|colou?r|carrosserie|peinture/i;
 const PAINT_CLEARCOAT = 1;

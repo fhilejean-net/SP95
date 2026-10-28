@@ -1,53 +1,194 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 
+/**
+ * Presets de lumière. Le jeu était éclairé par un seul plein soleil : tout
+ * cramait (peintures blanches, herbe pâle, ciel délavé) et aucune partie ne
+ * ressemblait à une autre. Chaque preset règle le soleil, le ciel, l'ambiance,
+ * le brouillard, la couleur de fond et surtout l'exposition du rendu.
+ *
+ * Les valeurs sont mesurées à l'écran : une exposition de 0,74 avec un soleil
+ * bas donne une scène lisible sans brûler les carrosseries claires.
+ */
+export interface SkyPreset {
+  id: string;
+  label: string;
+  /** Hauteur du soleil au-dessus de l'horizon, en degrés. */
+  elevation: number;
+  azimuth: number;
+  turbidity: number;
+  rayleigh: number;
+  mieCoefficient: number;
+  mieDirectionalG: number;
+  sunColor: number;
+  sunIntensity: number;
+  hemisphereSky: number;
+  hemisphereGround: number;
+  hemisphereIntensity: number;
+  environmentIntensity: number;
+  /** Exposition du tone mapping ACES. */
+  exposure: number;
+  fogColor: number;
+  fogNear: number;
+  fogFar: number;
+  background: number;
+}
+
+export const SKY_PRESETS: SkyPreset[] = [
+  {
+    id: 'apres-midi',
+    label: 'Fin d’après-midi',
+    elevation: 20,
+    azimuth: 142,
+    turbidity: 5.2,
+    rayleigh: 0.95,
+    mieCoefficient: 0.004,
+    mieDirectionalG: 0.78,
+    sunColor: 0xffdcae,
+    sunIntensity: 1.8,
+    hemisphereSky: 0x9fb8d6,
+    hemisphereGround: 0x4a4538,
+    hemisphereIntensity: 0.26,
+    environmentIntensity: 0.4,
+    exposure: 0.78,
+    fogColor: 0xaebcc4,
+    fogNear: 460,
+    fogFar: 1950,
+    background: 0x93a8b8,
+  },
+  {
+    id: 'matin-brumeux',
+    label: 'Matin brumeux',
+    elevation: 11,
+    azimuth: 96,
+    turbidity: 7.5,
+    rayleigh: 0.7,
+    mieCoefficient: 0.008,
+    mieDirectionalG: 0.82,
+    sunColor: 0xffd2a2,
+    sunIntensity: 1.2,
+    hemisphereSky: 0xb2c2cf,
+    hemisphereGround: 0x504b3e,
+    hemisphereIntensity: 0.38,
+    environmentIntensity: 0.38,
+    exposure: 0.86,
+    fogColor: 0xbfc8cc,
+    fogNear: 240,
+    fogFar: 1250,
+    background: 0xb0b9be,
+  },
+  {
+    id: 'ciel-couvert',
+    label: 'Ciel couvert',
+    elevation: 34,
+    azimuth: 165,
+    turbidity: 10,
+    rayleigh: 0.3,
+    mieCoefficient: 0.09,
+    mieDirectionalG: 0.6,
+    sunColor: 0xdfe3e6,
+    sunIntensity: 0.5,
+    hemisphereSky: 0xa7b6c4,
+    hemisphereGround: 0x46463f,
+    hemisphereIntensity: 0.62,
+    environmentIntensity: 0.55,
+    exposure: 0.88,
+    fogColor: 0x9fa9b0,
+    fogNear: 320,
+    fogFar: 1500,
+    background: 0x99a3aa,
+  },
+  {
+    id: 'soleil-haut',
+    label: 'Grand beau temps',
+    elevation: 46,
+    azimuth: 120,
+    turbidity: 3.2,
+    rayleigh: 1.15,
+    mieCoefficient: 0.003,
+    mieDirectionalG: 0.76,
+    sunColor: 0xfff3e0,
+    sunIntensity: 2.2,
+    hemisphereSky: 0xa8c4e6,
+    hemisphereGround: 0x5a5544,
+    hemisphereIntensity: 0.3,
+    environmentIntensity: 0.48,
+    exposure: 0.74,
+    fogColor: 0xa9c0d2,
+    fogNear: 520,
+    fogFar: 2100,
+    background: 0x8fa9bd,
+  },
+];
+
+/**
+ * Lumière de la partie. `?light=` force un preset (utile aux captures et au
+ * réglage) ; sinon on tire au sort une fois par chargement, avec deux chances
+ * sur cinq d'un plein soleil : le jeu ne vit plus sous la même lumière.
+ */
+export function pickSkyPreset(): SkyPreset {
+  const requested = new URLSearchParams(window.location.search).get('light');
+  if (requested) {
+    const found = SKY_PRESETS.find((preset) => preset.id === requested);
+    if (found) return found;
+  }
+  const table = [
+    SKY_PRESETS[0],
+    SKY_PRESETS[0],
+    SKY_PRESETS[1],
+    SKY_PRESETS[2],
+    SKY_PRESETS[3],
+  ];
+  return table[Math.floor(Math.random() * table.length)];
+}
+
 export interface SkyResult {
   sun: THREE.DirectionalLight;
   sunDirection: THREE.Vector3;
   sky: Sky;
+  preset: SkyPreset;
 }
 
-export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer): SkyResult {
+export function createSky(
+  scene: THREE.Scene,
+  renderer: THREE.WebGLRenderer,
+  preset: SkyPreset = SKY_PRESETS[0],
+): SkyResult {
   const sky = new Sky();
   sky.scale.setScalar(8000);
   const uniforms = sky.material.uniforms;
-  uniforms.turbidity.value = 3.4;
-  uniforms.rayleigh.value = 1.5;
-  // A strong Mie term balloons the sun into a white blob that washes out the
-  // whole frame once tone mapping lifts it.
-  uniforms.mieCoefficient.value = 0.0022;
-  uniforms.mieDirectionalG.value = 0.76;
+  uniforms.turbidity.value = preset.turbidity;
+  uniforms.rayleigh.value = preset.rayleigh;
+  uniforms.mieCoefficient.value = preset.mieCoefficient;
+  uniforms.mieDirectionalG.value = preset.mieDirectionalG;
 
-  const elevation = 32;
-  const azimuth = 132;
   const sunDirection = new THREE.Vector3().setFromSphericalCoords(
     1,
-    THREE.MathUtils.degToRad(90 - elevation),
-    THREE.MathUtils.degToRad(azimuth),
+    THREE.MathUtils.degToRad(90 - preset.elevation),
+    THREE.MathUtils.degToRad(preset.azimuth),
   );
   uniforms.sunPosition.value.copy(sunDirection);
   scene.add(sky);
 
-  // Generate an environment map from the sky so paint, glass and chrome get
-  // believable reflections. A separate scene avoids including the world.
+  // Environment map from the same sky, so paint, glass and chrome reflect the
+  // light of the moment instead of a fixed studio.
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envScene = new THREE.Scene();
   const envSky = new Sky();
   envSky.scale.setScalar(8000);
   const envUniforms = envSky.material.uniforms;
-  Object.assign(envUniforms, {});
-  envUniforms.turbidity.value = uniforms.turbidity.value;
-  envUniforms.rayleigh.value = uniforms.rayleigh.value;
-  envUniforms.mieCoefficient.value = uniforms.mieCoefficient.value;
-  envUniforms.mieDirectionalG.value = uniforms.mieDirectionalG.value;
+  envUniforms.turbidity.value = preset.turbidity;
+  envUniforms.rayleigh.value = preset.rayleigh;
+  envUniforms.mieCoefficient.value = preset.mieCoefficient;
+  envUniforms.mieDirectionalG.value = preset.mieDirectionalG;
   envUniforms.sunPosition.value.copy(sunDirection);
   envScene.add(envSky);
   const envTexture = pmrem.fromScene(envScene, 0, 1, 12000).texture;
   scene.environment = envTexture;
-  scene.environmentIntensity = 0.55;
+  scene.environmentIntensity = preset.environmentIntensity;
   pmrem.dispose();
 
-  const sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
+  const sun = new THREE.DirectionalLight(preset.sunColor, preset.sunIntensity);
   sun.position.copy(sunDirection).multiplyScalar(400);
   // La passe d'ombre du soleil tourne mais ne dépose rien sur l'asphalte de ce
   // rendu : mesure A/B sur la même scène, 129 pixels changent sur 416 000
@@ -71,13 +212,18 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer): Sk
   scene.add(sun);
   scene.add(sun.target);
 
-  const hemi = new THREE.HemisphereLight(0xcfe2ff, 0x6e6650, 0.35);
+  const hemi = new THREE.HemisphereLight(
+    preset.hemisphereSky,
+    preset.hemisphereGround,
+    preset.hemisphereIntensity,
+  );
   scene.add(hemi);
 
   // A solid colour behind everything: if any frame ever fails to draw the sky
   // dome, the player sees haze instead of a black flash.
-  scene.background = new THREE.Color(0xb9cfdd);
-  scene.fog = new THREE.Fog(0xc4d6e2, 380, 1750);
+  scene.background = new THREE.Color(preset.background);
+  scene.fog = new THREE.Fog(preset.fogColor, preset.fogNear, preset.fogFar);
 
-  return { sun, sunDirection, sky };
+  document.documentElement.dataset.sky = preset.id;
+  return { sun, sunDirection, sky, preset };
 }

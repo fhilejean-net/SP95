@@ -44,7 +44,7 @@ const WALL_OVERLAP = 0.25;
 /** Distance de la ligne peinte devant le point de départ. */
 const START_LINE = 8;
 /** Teinte des bords de piste : plus sombre, pour lire la largeur au loin. */
-const EDGE_SHADE = 0.72;
+const EDGE_SHADE = 0.86;
 /** Alternance des vibreurs, en mètres. */
 const KERB_SEGMENT = 2.4;
 /** Rayon en dessous duquel un mur reçoit des pneus empilés. */
@@ -936,11 +936,12 @@ export function buildFlatCircuit(
     normalMap: roadTextures.normalMap,
     // Le relevé est clair et très marqué : on le ramène au gris sombre de la
     // piste et on garde un grain discret, sinon l'asphalte lit comme du béton.
-    normalScale: new THREE.Vector2(0.18, 0.18),
-    color: new THREE.Color(0.44, 0.46, 0.5),
-    roughnessMap: roadTextures.roughnessMap,
-    roughness: 1,
-    metalness: 0.03,
+    normalScale: new THREE.Vector2(0.14, 0.14),
+    color: new THREE.Color(0.58, 0.6, 0.64),
+    // Pas de carte de rugosité : celle du relevé rendait l'asphalte lisse, donc
+    // miroir du ciel — d'où le voile blanc et les taches bleues sur la piste.
+    roughness: 0.94,
+    metalness: 0.02,
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,

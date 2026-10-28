@@ -43,7 +43,7 @@ import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
 import { buildPuddles, type PuddleField } from './world/puddles.ts';
 import { buildVegetation, type VegetationSummary } from './world/vegetation.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
-import { createSky } from './render/sky.ts';
+import { createSky, pickSkyPreset } from './render/sky.ts';
 import { createCar, updateCarVisual, type CarVisual } from './render/car.ts';
 import { createBike, type BikeVisual } from './render/bike.ts';
 import { loadBikeVisual } from './render/bikeModel.ts';
@@ -220,7 +220,12 @@ async function boot(): Promise<void> {
   const chase = new ChaseCamera(camera);
 
   await setLoading(0.18, 'Ciel et éclairage…');
-  const sky = createSky(scene, renderer);
+  // La lumière du jour est tirée une fois par chargement (ou forcée par
+  // `?light=`), et son exposition vient avec : c'est elle qui cramait les
+  // carrosseries claires et le sol sous le plein soleil.
+  const sky = createSky(scene, renderer, pickSkyPreset());
+  renderer.toneMappingExposure = sky.preset.exposure;
+  console.log(`Lumière : ${sky.preset.label} (exposition ${sky.preset.exposure})`);
 
   // DIAGNOSTIC CYCLE 10 (temporaire) : compte les dessins réellement émis
   // pendant la passe d'ombre — on reconnaît la passe à sa target.

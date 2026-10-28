@@ -421,7 +421,7 @@ export function createEnvironmentMaterials(): EnvironmentMaterials {
       metalness: 0.1,
       transparent: true,
       opacity: 0.72,
-      envMapIntensity: 1.6,
+      envMapIntensity: 1.1,
     }),
   };
 }

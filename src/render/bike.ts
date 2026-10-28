@@ -224,7 +224,7 @@ export function createBike(): BikeVisual {
     roughness: 0.32,
     clearcoat: 0.7,
     clearcoatRoughness: 0.12,
-    envMapIntensity: 1.2,
+    envMapIntensity: 1.0,
   });
   const orange = new THREE.MeshStandardMaterial({ color: ORANGE, metalness: 0.3, roughness: 0.4 });
   const dark = new THREE.MeshStandardMaterial({ color: DARK, roughness: 0.55, metalness: 0.4 });

@@ -97,7 +97,7 @@ export function createCar(paint = PAINT_COLOR): CarVisual {
     roughness: 0.24,
     clearcoat: 1,
     clearcoatRoughness: 0.045,
-    envMapIntensity: 1.5,
+    envMapIntensity: 1.1,
   });
 
   const carbon = new THREE.MeshStandardMaterial({ color: 0x17181b, roughness: 0.45, metalness: 0.35 });
@@ -107,7 +107,7 @@ export function createCar(paint = PAINT_COLOR): CarVisual {
     roughness: 0.06,
     transparent: true,
     opacity: 0.82,
-    envMapIntensity: 2,
+    envMapIntensity: 1.3,
   });
   const chrome = new THREE.MeshStandardMaterial({ color: 0xc3c6c9, metalness: 1, roughness: 0.24 });
   const tireMat = new THREE.MeshStandardMaterial({ color: 0x121213, roughness: 0.92 });
