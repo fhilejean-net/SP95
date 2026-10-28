@@ -397,7 +397,18 @@ export async function buildCircuit(
   // pour que l'asphalte gagne là où les deux se recouvrent. Avant, seule la
   // première existait : herbe et vibreurs n'avaient aucune collision et la
   // voiture tombait dans le décor du dessous.
-  const road = buildRoadSurface(asphaltMeshes, 3);
+  const road = buildRoadSurface(
+    asphaltMeshes.filter((mesh) => TRACK_IMAGES.test(nameOf(mesh))),
+    3,
+  );
+  // La même plaque sans collet : elle sert à mesurer ce qui flotte *au-dessus de
+  // la chaussée*. Avec le collet, le nettoyage prenait les neuf mètres de bord
+  // pour la piste et retirait les barrières, panneaux et arbres du bas-côté.
+  const roadCore = buildRoadSurface(
+    asphaltMeshes.filter((mesh) => TRACK_IMAGES.test(nameOf(mesh))),
+    0,
+  );
+  const phantomQuery = createRoadQuery(roadCore);
   const roadQuery = createRoadQuery(road);
   console.log(
     `Piste : ${road.triangles} triangles lissés sur ${road.decks} tabliers, pente max ` +
@@ -779,7 +790,7 @@ export async function buildCircuit(
   // buter la caisse. On les retire du rendu et du collider par la géométrie —
   // aucune liste de matériaux ne pouvait les attraper, ils font partie de gros
   // maillages partagés avec les murs.
-  const trimmed = trimPhantoms(allMeshes, roadQuery, surfaceMeshes);
+  const trimmed = trimPhantoms(allMeshes, phantomQuery, surfaceMeshes);
   if (trimmed.length) {
     const removed = trimmed.reduce((sum, entry) => sum + entry.triangles, 0);
     console.log(
@@ -981,6 +992,7 @@ export async function buildCircuit(
     floorAt,
     roadHeightAt: roadQuery,
     flatRoad: road,
+    roadCore,
     offTrack,
     spawn,
     plate: {

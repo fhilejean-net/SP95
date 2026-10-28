@@ -48,6 +48,16 @@ const QUERY_CELL = 8;
 const PHANTOM_MIN_LIFT = 0.08;
 /** Au-delà, ce n'est plus un obstacle posé sur la piste (pont, passerelle). */
 const PHANTOM_MAX_LIFT = 3.5;
+/**
+ * Un triangle n'est un obstacle *posé à plat* que s'il regarde le ciel. Sans ce
+ * filtre, le nettoyage retirait aussi tout ce qui se dresse au bord de la
+ * piste — barrières, panneaux, arbres, marshals : 12 923 triangles de décor ont
+ * disparu du rendu et du collider, et le joueur a vu la moitié des textures
+ * s'évaporer. Une paroi verticale n'a jamais bloqué la piste en travers.
+ */
+const PHANTOM_FLATNESS = 0.55;
+/** Écart au-delà duquel deux fronts du collet ne se rejoignent pas. */
+const COLLAR_MAX_GAP = 0.5;
 
 export interface RoadSurface {
   vertices: Float32Array;
@@ -246,27 +256,59 @@ export function buildRoadSurface(meshes: THREE.Mesh[], collar = 0): RoadSurface 
     }
 
     // 3b. Collet : la plaque déborde de `collar` cases autour du dernier nœud
-    // connu, à sa cote. Une roue qui sort du treillis lit alors encore la piste
-    // au lieu de l'estimation par cases du modèle — qui remontait au niveau de
-    // l'herbe voisine, surélevait la caisse de trente centimètres et la faisait
-    // décoller au premier virage. C'est aussi ce qui rend le treillis lisible en
-    // debug : plus de zone sans plaque le long de la piste.
+    // connu, à *sa* cote, propagée de proche en proche. Une roue qui sort du
+    // treillis lit alors encore la piste au lieu de l'estimation par cases du
+    // modèle — qui remontait au niveau de l'herbe voisine, surélevait la caisse
+    // de trente centimètres et la faisait décoller au premier virage.
+    //
+    // La propagation se fait par voisinage orthogonal : chaque case reprend la
+    // cote de la case qui l'a atteinte. La version précédente donnait à chaque
+    // case la cote du nœud d'asphalte le plus proche, jusqu'à trois cases plus
+    // loin — donc, au bord d'un virage, la cote d'un nœud situé de l'autre côté
+    // du virage ou du pont. Il en sortait des coins de 4,9 m et 58° collés au
+    // bord de la piste : les roues extérieures montaient dessus, la caisse se
+    // mettait de travers et la voiture décollait à chaque courbe.
     if (collar > 0) {
-      const extra = new Map<number, { height: number; distance: number }>();
-      for (const [key, height] of smoothed) {
-        const [i, j] = nodeCell(key);
-        for (let dz = -collar; dz <= collar; dz++) {
-          for (let dx = -collar; dx <= collar; dx++) {
-            if (dx === 0 && dz === 0) continue;
-            const other = nodeKey(i + dx, j + dz);
+      let frontier = [...smoothed.keys()];
+      for (let step = 0; step < collar && frontier.length > 0; step++) {
+        const next: number[] = [];
+        for (const key of frontier) {
+          const height = smoothed.get(key) as number;
+          const [i, j] = nodeCell(key);
+          for (const other of [
+            nodeKey(i + 1, j),
+            nodeKey(i - 1, j),
+            nodeKey(i, j + 1),
+            nodeKey(i, j - 1),
+          ]) {
             if (smoothed.has(other)) continue;
-            const distance = Math.max(Math.abs(dx), Math.abs(dz));
-            const best = extra.get(other);
-            if (!best || distance < best.distance) extra.set(other, { height, distance });
+            // Deux fronts de collet peuvent se rejoindre sous le pont ou entre
+            // les deux branches d'une épingle. Le premier arrivé impose sa
+            // cote ; la cellule voisine du second front gardait la sienne et il
+            // restait une falaise de sept mètres. On ne remplit pas une case
+            // qui toucherait une case déjà remplie à une autre altitude : mieux
+            // vaut un trou à neuf mètres de la piste qu'un mur invisible.
+            let conflict = false;
+            const [kx, kz] = nodeCell(other);
+            for (const near of [
+              nodeKey(kx + 1, kz),
+              nodeKey(kx - 1, kz),
+              nodeKey(kx, kz + 1),
+              nodeKey(kx, kz - 1),
+            ]) {
+              const value = smoothed.get(near);
+              if (value !== undefined && Math.abs(value - height) > COLLAR_MAX_GAP) {
+                conflict = true;
+                break;
+              }
+            }
+            if (conflict) continue;
+            smoothed.set(other, height);
+            next.push(other);
           }
         }
+        frontier = next;
       }
-      for (const [key, entry] of extra) smoothed.set(key, entry.height);
     }
 
     // 4. Quads : trois coins suffisent, le quatrième prend leur moyenne. Un bord
@@ -418,7 +460,9 @@ export function trimPhantoms(
   keep: Set<THREE.Mesh>,
 ): TrimmedMesh[] {
   const trimmed: TrimmedMesh[] = [];
-  const center = new THREE.Vector3();
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
   for (const mesh of meshes) {
     if (keep.has(mesh)) continue;
     const geometry = mesh.geometry;
@@ -432,13 +476,29 @@ export function trimPhantoms(
       const ia = index ? index.getX(i) : i;
       const ib = index ? index.getX(i + 1) : i + 1;
       const ic = index ? index.getX(i + 2) : i + 2;
-      center.set(0, 0, 0);
-      center.x = (positions.getX(ia) + positions.getX(ib) + positions.getX(ic)) / 3;
-      center.y = (positions.getY(ia) + positions.getY(ib) + positions.getY(ic)) / 3;
-      center.z = (positions.getZ(ia) + positions.getZ(ib) + positions.getZ(ic)) / 3;
-      center.applyMatrix4(mesh.matrixWorld);
-      const level = query(center.x, center.z, center.y);
-      const lift = level === null ? null : center.y - level;
+      a.fromBufferAttribute(positions, ia).applyMatrix4(mesh.matrixWorld);
+      b.fromBufferAttribute(positions, ib).applyMatrix4(mesh.matrixWorld);
+      c.fromBufferAttribute(positions, ic).applyMatrix4(mesh.matrixWorld);
+      // Normale géométrique : seule une dalle à plat traverse la piste.
+      const ux = b.x - a.x;
+      const uy = b.y - a.y;
+      const uz = b.z - a.z;
+      const vx = c.x - a.x;
+      const vy = c.y - a.y;
+      const vz = c.z - a.z;
+      const nx = uy * vz - uz * vy;
+      const ny = uz * vx - ux * vz;
+      const nz = ux * vy - uy * vx;
+      const length = Math.hypot(nx, ny, nz);
+      if (length < 1e-9 || Math.abs(ny) / length < PHANTOM_FLATNESS) {
+        kept.push(ia, ib, ic);
+        continue;
+      }
+      const x = (a.x + b.x + c.x) / 3;
+      const y = (a.y + b.y + c.y) / 3;
+      const z = (a.z + b.z + c.z) / 3;
+      const level = query(x, z, y);
+      const lift = level === null ? null : y - level;
       if (lift !== null && lift > PHANTOM_MIN_LIFT && lift < PHANTOM_MAX_LIFT) {
         removed++;
         continue;
