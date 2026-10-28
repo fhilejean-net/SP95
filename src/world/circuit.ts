@@ -139,6 +139,53 @@ const START_LOCAL = { x: 500, z: 430, heading: Math.PI };
  */
 let floorAt: ((x: number, z: number) => number | null) | null = null;
 
+/** Cotes de la trame lissée, remplies par `buildFlatRoad` (clé de nœud). */
+const roadHeights = new Map<number, number>();
+
+/** Clé d'un nœud de la grille du monde, au pas de `ROAD_CELL`. */
+function roadKey(i: number, j: number): number {
+  return (i + 100000) * 1000000 + (j + 100000);
+}
+
+/**
+ * Cote de la piste lissée sous (x, z), entre les nœuds qui l'entourent. C'est
+ * exactement la surface du collider : le filet des roues ne peut donc pas être
+ * décalé par rapport à la piste — ni au-dessus, ni en dessous.
+ */
+function roadHeightAt(x: number, z: number): number | null {
+  const gx = x / ROAD_CELL;
+  const gz = z / ROAD_CELL;
+  const i = Math.floor(gx);
+  const j = Math.floor(gz);
+  const fx = gx - i;
+  const fz = gz - j;
+  const corner = (a: number, b: number) => roadHeights.get(roadKey(a, b));
+  const h00 = corner(i, j);
+  const h10 = corner(i + 1, j);
+  const h01 = corner(i, j + 1);
+  const h11 = corner(i + 1, j + 1);
+  if (h00 !== undefined && h10 !== undefined && h01 !== undefined && h11 !== undefined) {
+    const near = h00 + (h10 - h00) * fx;
+    const far = h01 + (h11 - h01) * fx;
+    return near + (far - near) * fz;
+  }
+  // Un coin manquant : on prend le nœud connu le plus proche.
+  let best: number | null = null;
+  let distance = Infinity;
+  for (let dz = -2; dz <= 3; dz++) {
+    for (let dx = -2; dx <= 3; dx++) {
+      const value = corner(i + dx, j + dz);
+      if (value === undefined) continue;
+      const d = (i + dx - gx) ** 2 + (j + dz - gz) ** 2;
+      if (d < distance) {
+        distance = d;
+        best = value;
+      }
+    }
+  }
+  return best;
+}
+
 export function circuitFloor(x: number, z: number): number | null {
   return floorAt ? floorAt(x, z) : null;
 }
@@ -274,6 +321,7 @@ interface FlatRoad {
   triangles: number;
   /** Pente la plus forte entre deux nœuds reliés par une arête, en %. */
   maxGrade: number;
+
 }
 
 /**
@@ -490,6 +538,8 @@ export function buildFlatRoad(meshes: THREE.Mesh[]): FlatRoad {
         vertex = vertices.length / 3;
         vertexOf.set(nodeKey, vertex);
         vertices.push(i * ROAD_CELL, height, j * ROAD_CELL);
+        // La même cote sert au filet analytique des roues.
+        roadHeights.set(nodeKey, height);
       }
       return { vertex, height };
     };
@@ -670,9 +720,16 @@ export async function buildCircuit(
   root.updateMatrixWorld(true);
   scene.add(root);
 
-  // 2b. Le sol physique est la surface visible elle-même (voir plus bas). Ni
-  // grille lissée, ni dalle plate : une dalle à une seule cote plaçait la voiture
-  // des dizaines de mètres au-dessus ou sous la piste dès que le tracé montait.
+  // 2b. Piste lissée : la surface que lisent les roues est reconstruite sur une
+  // trame régulière de 3 m à partir des triangles d'asphalte, puis filtrée
+  // (médiane puis moyenne). Les marches de quantification du fichier et les
+  // coutures entre tuiles disparaissent ; un quad qui franchit une couture
+  // emprunte son coin manquant au maillage voisin, donc pas de trou.
+  const flatRoad = buildFlatRoad(asphaltMeshes);
+  console.log(
+    `Piste : ${flatRoad.triangles} triangles lissés, pente max ` +
+      `${flatRoad.maxGrade.toFixed(1)} %`,
+  );
   if (hiddenPrimitives.length) {
     console.log(`Circuit : primitives sans texture retirées (${hiddenPrimitives.join(', ')})`);
   }
@@ -1014,6 +1071,12 @@ export async function buildCircuit(
     return surfaceY[index];
   };
 
+  // La cote analytique suit la trame lissée quand elle existe : le filet des
+  // roues et le collider lisent alors exactement la même surface, et une roue
+  // qui rate un triangle ne se retrouve plus quelques centimètres à côté.
+  const modelFloor = floorAt;
+  floorAt = (x, z) => roadHeightAt(x, z) ?? modelFloor(x, z);
+
   CIRCUIT.surface = (x, z): SurfaceKind | null => {
     if (!insidePlate(x, z) || !cellOf(x, z, cell)) return null;
     const index = cell.cz * columns + cell.cx;
@@ -1085,12 +1148,24 @@ export async function buildCircuit(
    * trous et des arêtes qui faisaient décoller la voiture ; une dalle ne peut ni
    * manquer ni rebondir : restitution nulle, friction d'asphalte.
    */
-  // Le sol que lisent les roues est la surface visible elle-même : les triangles
-  // d'asphalte et de gravier du modèle, transformés dans le repère du monde.
-  // Pas de grille, pas de dalle, pas de lissage : la voiture ne peut ni flotter
-  // au-dessus ni passer sous la piste, et aucune arête inventée ne la fait
-  // décoller. La surface du modèle est continue là où le joueur roule.
-  const groundTriangles = appendTrimesh([...asphaltMeshes, ...looseMeshes], GROUND_GROUP);
+  /** Pose la trame lissée comme surface roulable. */
+  const appendFlatRoad = (road: FlatRoad, groups: number): number => {
+    if (road.triangles === 0) return 0;
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(
+      RAPIER.ColliderDesc.trimesh(road.vertices, road.indices)
+        .setFriction(0.95)
+        .setRestitution(0)
+        .setCollisionGroups(groups),
+      body,
+    );
+    return road.triangles;
+  };
+
+  // Le sol que lisent les roues est la trame lissée du bitume, seule : ni la
+  // surface brute du modèle (marches de quantification), ni une dalle plate (la
+  // piste monte et descend), ni l'herbe (ses collines passaient à travers).
+  const groundTriangles = appendFlatRoad(flatRoad, GROUND_GROUP);
   // Le châssis est membre de GROUP_WORLD et filtre sur GROUP_WORLD (voir
   // CHASSIS_UPRIGHT) : les murs doivent porter exactement ce couple.
   const wallTriangles = appendTrimesh(

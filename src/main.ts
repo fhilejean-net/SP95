@@ -47,7 +47,6 @@ import { loadBikeVisual } from './render/bikeModel.ts';
 import { createSparks } from './render/sparks.ts';
 import { createTireSmoke } from './render/tireSmoke.ts';
 import { loadCarVisual } from './render/carModel.ts';
-import { createGrounding } from './render/grounding.ts';
 import { CARS, findCar, loadCarId, saveCarId, type CarDef, type CarId } from './game/cars.ts';
 import { QualityGovernor } from './render/quality.ts';
 import { ChaseCamera, cameraModeLabel } from './core/camera.ts';
@@ -375,7 +374,7 @@ async function boot(): Promise<void> {
   const floorLookup = (x: number, z: number): number | null =>
     circuitFloor(x, z) ?? groundAt(x, z);
   /** Profondeur sous le sol au-delà de laquelle on repose la caisse sur place. */
-  const FALL_RECOVERY_DEPTH = 2.5;
+  const FALL_RECOVERY_DEPTH = 8;
   let carVehicle: Vehicle = new Vehicle(
     world,
     {
@@ -415,10 +414,6 @@ async function boot(): Promise<void> {
   car.setWheelRadius(spec.wheelRadius);
   car.group.position.set(startPose.x, spawnY, startPose.z);
   scene.add(car.group);
-  // Ancrage au sol : ombre de contact et reflet d'asphalte sous le véhicule
-  // visible. Deux décalques qui suivent la voiture, pas une seconde scène.
-  const grounding = createGrounding(scene, sky.sunDirection);
-  grounding.attach(car.group);
 
   const input = new InputManager(canvas);
   const hud = new Hud();
@@ -449,6 +444,12 @@ async function boot(): Promise<void> {
   let freeSpawn: FreeSpawn = 'city';
   let paused = false;
   let accumulator = 0;
+  /**
+   * Pose physique du pas précédent, pour interpoler le rendu entre deux pas
+   * fixes : à basse cadence, la physique avance par bonds et la voiture semblait
+   * se téléporter.
+   */
+  const physPrevious = { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 };
   let race: Race | null = null;
   /** Vrai quand la session en cours est chronométrée (conduite libre à Suzuka). */
   let timedLap = false;
@@ -562,22 +563,6 @@ async function boot(): Promise<void> {
     return hit ? from - hit.timeOfImpact : fallback;
   }
 
-  /**
-   * Cote du sol sous le véhicule, pour ses décalques d'ancrage. La sonde à rayon
-   * est la seule mesure exacte sur la dalle du circuit ; on la rafraîchit à
-   * 10 Hz au lieu de chaque image, l'asphalte ne bougeant pas sous lui-même.
-   */
-  let groundingClock = 0;
-  let groundingY = 0;
-  function updateGrounding(dt: number, source: THREE.Object3D): void {
-    groundingClock -= dt;
-    if (groundingClock <= 0) {
-      groundingClock = 0.1;
-      groundingY = surfaceUnder(source.position.x, source.position.z);
-    }
-    grounding.update(source, groundingY);
-  }
-
   function setCarPose(x: number, z: number, heading: number): void {
     // Sur la piste, la surface du circuit est au-dessus du terrain de jeu : on la
     // mesure au rayon, sinon la voiture tomberait sur l'asphalte au lieu d'y
@@ -591,6 +576,14 @@ async function boot(): Promise<void> {
       world.step();
     }
     const p = vehicle.position;
+    const r = vehicle.state.rotation;
+    physPrevious.x = p.x;
+    physPrevious.y = p.y;
+    physPrevious.z = p.z;
+    physPrevious.qx = r.x;
+    physPrevious.qy = r.y;
+    physPrevious.qz = r.z;
+    physPrevious.qw = r.w;
     carPosition.set(p.x, p.y, p.z);
     carForward.copy(forwardFromHeading(heading));
     chase.snap(carPosition, carForward, ground);
@@ -1034,7 +1027,6 @@ async function boot(): Promise<void> {
     carDef = def;
     saveCarId(def.id);
     scene.add(car.group);
-    grounding.attach(car.group);
     if (ridingBike) leaveBike();
     car.group.visible = true;
     rebuildVehicle();
@@ -1216,6 +1208,14 @@ async function boot(): Promise<void> {
     accumulator += dt;
     let steps = 0;
     while (accumulator >= FIXED && steps < 8) {
+      const before = vehicle.state;
+      physPrevious.x = before.position.x;
+      physPrevious.y = before.position.y;
+      physPrevious.z = before.position.z;
+      physPrevious.qx = before.rotation.x;
+      physPrevious.qy = before.rotation.y;
+      physPrevious.qz = before.rotation.z;
+      physPrevious.qw = before.rotation.w;
       vehicle.step(FIXED, carInput, world);
       world.step();
       accumulator -= FIXED;
@@ -1437,6 +1437,9 @@ async function boot(): Promise<void> {
   const HUD_INTERVAL = 1 / 12;
   let hudClock = 0;
 
+/** Quaternion de travail de l'interpolation du rendu. */
+  const prevQuat = new THREE.Quaternion();
+
   function updateVisuals(dt: number): void {
     if (replay) {
       const pose = samplePoses(replay.poses, replay.elapsed);
@@ -1447,14 +1450,23 @@ async function boot(): Promise<void> {
         const group = replay.bike && bikeVisual ? bikeVisual.group : car.group;
         group.position.copy(carPosition);
         group.quaternion.copy(replayQuat);
-        updateGrounding(dt, group);
       }
       return;
     }
     const telemetry = vehicle.telemetryState;
     const state = vehicle.state;
-    carPosition.set(state.position.x, state.position.y, state.position.z);
+    // Rendu interpolé entre les deux derniers pas fixes : sans ça, la voiture
+    // saute d'un pas à l'autre dès que la cadence baisse.
+    const alpha = Math.min(1, Math.max(0, accumulator / FIXED));
+    carPosition.set(
+      physPrevious.x + (state.position.x - physPrevious.x) * alpha,
+      physPrevious.y + (state.position.y - physPrevious.y) * alpha,
+      physPrevious.z + (state.position.z - physPrevious.z) * alpha,
+    );
     visualQuat.set(state.rotation.x, state.rotation.y, state.rotation.z, state.rotation.w);
+    prevQuat.set(physPrevious.qx, physPrevious.qy, physPrevious.qz, physPrevious.qw);
+    prevQuat.slerp(visualQuat, alpha);
+    visualQuat.copy(prevQuat);
     carForward.set(0, 0, -1).applyQuaternion(visualQuat);
 
     if (ridingBike && bike && bikeVisual) {
@@ -1519,14 +1531,13 @@ async function boot(): Promise<void> {
     } else {
       updateCarVisual(
         car,
-        state.position,
-        state.rotation,
+        carPosition,
+        visualQuat,
         telemetry.wheels,
         telemetry.brake > 0.1 && telemetry.speed > 0.5,
         telemetry.gear === -1,
       );
     }
-    updateGrounding(dt, ridingBike && bikeVisual ? bikeVisual.group : car.group);
 
     // Tire smoke and gravel dust. A wheel smokes once it slips, which is the
     // only honest signal that the tires are spinning up or sliding: straight
