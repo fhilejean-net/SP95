@@ -14,11 +14,11 @@ modifie pas le bloc d'état à la main.
 <!-- state:start -->
 status: idle
 task: —
-cycle: 11
+cycle: 12
 started: —
-heartbeat: 2026-10-28T20:08:13Z
-commit: b9eec72
-owner: session-9642
+heartbeat: 2026-10-28T20:41:25Z
+commit: 5fb74fd
+owner: session-15322
 <!-- state:end -->
 
 ## Journal
@@ -36,3 +36,4 @@ owner: session-9642
 | 9 | 2026-10-27 | Recent stunt replay | `0e3c584` | replay V, mémoire bornée 120 poses, interpolation, simulation gelée ; 3 tests, tsc ok, 64/64, build ok (vérif navigateur à faire) |
 | 10 | 2026-10-28 | Ombres portées sur la piste et la ville | `e84020f` | Ombres : la passe du soleil ne dépose rien sur l'asphalte (A/B à 129 px sur 416 000). Remplacé par des décalques d'ancrage (ombre de contact + reflet) et une peinture vernie. |
 | 11 | 2026-10-28 | Animate wheels, steering and rider inside the replay | `b9eec72` | Roues, direction, frein et inclinaison enregistrés avec chaque pose et rejoués ; sonde navigateur : physique gelée, roues qui tournent |
+| 12 | 2026-10-28 | Braking markers before every corner | `5fb74fd` | Panneaux 150/100/50 dans le dégagement avant les entrées de virage, faces vers la voiture, plan pur + rendu partagé ; 4 tests, tsc ok, 104/104, build ok, planche de captures ; type du panneau de debug replay corrigé (tsc était rouge sur main) |

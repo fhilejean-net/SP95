@@ -64,12 +64,16 @@ commit hash so the history stays readable.
   *Done when:* a focused test verifies bounded recording and playback of the recorded poses, and a manual dev-server check confirms replay can be started and exited without affecting live vehicle state or score.
   *Cycle 9:* `0e3c584` — replay V, mémoire bornée 120 poses, interpolation, simulation gelée ; 3 tests, tsc ok, 64/64, build ok (vérif navigateur à faire)
 
-- [ ] **Braking markers before every corner** — `S`. The flat circuit now has kerbs and gravel
+- [x] ~~**Braking markers before every corner**~~ — `S`. The flat circuit now has kerbs and gravel
   traps but no braking reference: boards at 150, 100 and 50 m before each corner entry would let
   the player learn the lap instead of guessing. Built from the existing street-kit pieces, planted
   in the run-off between kerb and wall, facing back along the track.
   *Done when:* a test asserts every marker sits in the run-off on both sides and faces the
   approaching car, and a screenshot shows the 150/100/50 m boards before the first corner.
+  *Cycle 12:* `5fb74fd` — plan pur (6 entrées, 18 panneaux) + rendu partagé, 4 tests, tsc ok,
+  104/104, build ok ; la longue ligne droite porte les trois annonces, les courbes serrées
+  n'ont que ce que leur dégagement permet ; planche `artifacts/braking-markers-strip.png`.
+  *Cycle 12:* `5fb74fd` — Panneaux 150/100/50 dans le dégagement avant les entrées de virage, faces vers la voiture, plan pur + rendu partagé ; 4 tests, tsc ok, 104/104, build ok, planche de captures ; type du panneau de debug replay corrigé (tsc était rouge sur main)
 
 - [x] ~~**Animate wheels, steering and rider inside the replay**~~ — `S`. Cycle 9 replays the body
   poses only, so the car slides along its own path with frozen wheels and the rider never leans.
@@ -78,6 +82,20 @@ commit hash so the history stays readable.
   *Done when:* a focused test shows the extra fields round-trip per frame and interpolate during
   playback, and a manual replay shows the wheels turning and the rider leaning.
   *Cycle 11:* `b9eec72` — Roues, direction, frein et inclinaison enregistrés avec chaque pose et rejoués ; sonde navigateur : physique gelée, roues qui tournent
+
+- [ ] **Braking boards should point at the corner** — `S`. The chevrons on every board always
+  point right, so on a left-hander they send the driver the wrong way. The plan already knows
+  which way the corner turns: give each board that sign and mirror only the chevrons, never the
+  number, by pairing one texture per value and direction.
+  *Done when:* a test asserts every board carries the sign of the corner it announces, and the
+  capture strip shows a left and a right corner with mirrored chevrons.
+
+- [ ] **The debug surface is declared twice** — `S`. `window.__sp95` is a seventy-field object
+  literal plus a hand-written type literal, and they have already drifted: `replayState` was
+  added to one and not the other, leaving `tsc` red on `main`. Derive the global type from the
+  object itself so a field cannot compile out of sync.
+  *Done when:* the hand-written type block in `src/main.ts` is gone, the window type is derived
+  with `typeof`, and `npx tsc --noEmit` plus `npm test` pass.
 
 ## Ideas (not scheduled)
 
