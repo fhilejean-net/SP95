@@ -127,25 +127,36 @@
     </div>
 
     <div id="pause" class="overlay hidden">
-      <div class="menu-card compact pause-card">
+      <div class="menu-card pause-card">
         <p class="eyebrow">Pause</p>
         <h2 class="logo small">SP95</h2>
-        <button id="btn-resume" class="primary wide">Reprendre<span class="key">Échap</span></button>
-        <div class="menu-actions">
-          <button id="btn-pause-tcs">Antipatinage · Actif</button>
-          <button id="btn-pause-abs">ABS · Actif</button>
-          <button id="btn-pause-cars">Voitures · showroom</button>
-          <button id="btn-pause-garage">Atelier · freins, appui, pneus</button>
-          <button id="btn-pause-moto">Moto · supermotard</button>
-          <button id="btn-pause-sound">Son · mixage</button>
-          <button id="btn-pause-free">Conduite libre</button>
-          <button id="btn-pause-race" class="village-only">Course · 2 tours</button>
-          <button id="btn-pause-col" class="village-only">Col · route de montagne</button>
-          <button id="btn-pause-rally" class="village-only">Rallye · piste en terre</button>
-          <button id="btn-pause-sommet" class="village-only">Sommet · aire de drift</button>
+        <button id="btn-resume" class="primary pause-resume">Reprendre<small>Échap</small></button>
+        <div class="pause-grid">
+          <section class="pause-col">
+            <h3>Aides</h3>
+            <button id="btn-pause-tcs" class="pause-item">Antipatinage · Actif</button>
+            <button id="btn-pause-abs" class="pause-item">ABS · Actif</button>
+            <button id="btn-pause-sound" class="pause-item">Son<small>M</small></button>
+          </section>
+          <section class="pause-col">
+            <h3>Véhicule</h3>
+            <button id="btn-pause-cars" class="pause-item">Showroom<small>choisir</small></button>
+            <button id="btn-pause-garage" class="pause-item">Atelier<small>pièces</small></button>
+            <button id="btn-pause-moto" class="pause-item">Moto<small>supermotard</small></button>
+          </section>
+          <section class="pause-col">
+            <h3>Rouler</h3>
+            <button id="btn-pause-free" class="pause-item">Conduite libre</button>
+            <button id="btn-pause-race" class="pause-item village-only">Course · 2 tours</button>
+            <button id="btn-pause-col" class="pause-item village-only">Col · montagne</button>
+            <button id="btn-pause-rally" class="pause-item village-only">Rallye · terre</button>
+            <button id="btn-pause-sommet" class="pause-item village-only">Sommet · drift</button>
+          </section>
         </div>
-        <button id="btn-pause-menu" class="wide">Menu principal</button>
-        <p class="menu-footnote">Échap pour reprendre la piste.</p>
+        <div class="pause-foot">
+          <button id="btn-pause-menu" class="pause-item">Menu principal<small>quitter</small></button>
+          <span class="pause-hint">Échap pour reprendre</span>
+        </div>
       </div>
     </div>
 
@@ -185,8 +196,11 @@
           </p>
         </div>
         <div class="showroom-body">
-          <div class="showroom-detail" id="showroom-detail"></div>
-          <div class="showroom-list" id="showroom-list"></div>
+          <div class="showroom-detail showroom-sheet" id="showroom-detail"></div>
+          <div class="showroom-list-col">
+            <div class="showroom-list-head"><span>Le parc</span><span>10 modèles</span></div>
+            <div class="showroom-list" id="showroom-list"></div>
+          </div>
         </div>
         <div class="showroom-foot">
           <button id="btn-showroom-pick">Prendre au garage</button>
