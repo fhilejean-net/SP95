@@ -6,7 +6,7 @@ commit hash so the history stays readable.
 
 ## Ready
 
-- [ ] **Ombres portées sur la piste et la ville** — `M`. Le jeu n'a qu'une directionnelle et
+- [x] ~~**Ombres portées sur la piste et la ville**~~ — `M`. Le jeu n'a qu'une directionnelle et
   aucune ombre sur les 183 000 triangles du circuit : les côtés de la piste sont peints sombres
   dans la texture en attendant (l'asphalte est uniforme au centre, les vibreurs et les bords
   gardent leur gris plus foncé). Active l'ombre de la directionnelle sur une fenêtre glissante
@@ -14,6 +14,7 @@ commit hash so the history stays readable.
   comprises, et laisse la pénombre des bords venir de la lumière au lieu de la texture.
   *Done when:* une capture montre l'ombre de la voiture et d'un mur sur l'asphalte, et
   `drawCalls` de `window.__sp95.debug` ne grimpe pas de plus de 10 en `?fx=low`.
+  *Cycle 10:* `e84020f` — Ombres : la passe du soleil ne dépose rien sur l'asphalte (A/B à 129 px sur 416 000). Remplacé par des décalques d'ancrage (ombre de contact + reflet) et une peinture vernie.
 
 - [x] ~~**Rider shoulder seam**~~ — `S`. The left sleeve still leaves a visible gap at the armpit
   when the bar is on full lock. Blend the shoulder ball into the torso (bigger ball, slightly

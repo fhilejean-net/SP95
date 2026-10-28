@@ -12,13 +12,13 @@ modifie pas le bloc d'état à la main.
 - `status: blocked` → deux échecs sur la même cause : s'arrêter et le dire à l'utilisateur.
 
 <!-- state:start -->
-status: running
-task: Ombres portées sur la piste et la ville
+status: idle
+task: —
 cycle: 10
-started: 2026-10-27T20:07:50Z
-heartbeat: 2026-10-28T06:53:30Z
-commit: 0e3c584
-owner: session-21541
+started: —
+heartbeat: 2026-10-28T07:43:11Z
+commit: e84020f
+owner: session-34562
 <!-- state:end -->
 
 ## Journal
@@ -34,3 +34,4 @@ owner: session-21541
 | 7 | 2026-10-27 | Per-vehicle sound presets | `52f3df4` | presets de mix voiture/moto, maître partagé, migration de l'ancien mix ; 2 tests, tsc ok, 60/60, build ok |
 | 8 | 2026-10-27 | Wet surface lookups allocate in the physics hot path | `303f4c1` | table WET_SURFACES précalculée, grip inchangé, test d'identité ; tsc ok, 61/61 |
 | 9 | 2026-10-27 | Recent stunt replay | `0e3c584` | replay V, mémoire bornée 120 poses, interpolation, simulation gelée ; 3 tests, tsc ok, 64/64, build ok (vérif navigateur à faire) |
+| 10 | 2026-10-28 | Ombres portées sur la piste et la ville | `e84020f` | Ombres : la passe du soleil ne dépose rien sur l'asphalte (A/B à 129 px sur 416 000). Remplacé par des décalques d'ancrage (ombre de contact + reflet) et une peinture vernie. |
