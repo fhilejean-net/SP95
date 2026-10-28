@@ -40,6 +40,32 @@ const WHEEL_RADIUS_MIN_RATIO = 0.055;
 const WHEEL_RADIUS_MAX_RATIO = 0.22;
 /** Une pièce muette (jante, écrou) tient dans le pneu ; une aile dépasse. */
 const WHEEL_CONTAINMENT = 1.02;
+/**
+ * Réflexions : le ciel et les néons de la piste arrivent par l'environnement.
+ * Au-dessus de 1, la peinture prend des reflets francs sans cramer les chromes.
+ */
+const ENV_INTENSITY = 1.35;
+/** Peinture vernie : une couche de clearcoat par-dessus la couleur de base. */
+const PAINT_MATERIAL = /paint|body|colou?r|carrosserie|peinture/i;
+const PAINT_CLEARCOAT = 1;
+const PAINT_CLEARCOAT_ROUGHNESS = 0.055;
+
+/**
+ * Convertit une peinture en matériau physique verni. Les autres matières
+ * (pneus, jantes, verre) sont rendues telles quelles : un clearcoat sur un pneu
+ * le rend huileux.
+ */
+function glossPaint(material: THREE.Material): THREE.Material {
+  if (!(material instanceof THREE.MeshStandardMaterial)) return material;
+  if (material.transparent || !PAINT_MATERIAL.test(material.name ?? '')) return material;
+  const paint = new THREE.MeshPhysicalMaterial();
+  paint.copy(material as unknown as THREE.MeshPhysicalMaterial);
+  paint.name = material.name;
+  paint.clearcoat = PAINT_CLEARCOAT;
+  paint.clearcoatRoughness = PAINT_CLEARCOAT_ROUGHNESS;
+  paint.envMapIntensity = ENV_INTENSITY;
+  return paint;
+}
 
 function meshList(root: THREE.Object3D): THREE.Mesh[] {
   const out: THREE.Mesh[] = [];
@@ -313,14 +339,21 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
     const geometry = geometries.get(mesh)!;
     const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const materials = sourceMaterials.map((material) => {
-      if (material instanceof THREE.MeshStandardMaterial) material.envMapIntensity = 1.1;
+      if (material instanceof THREE.MeshStandardMaterial) material.envMapIntensity = ENV_INTENSITY;
       return material;
     });
     const material = Array.isArray(mesh.material) ? materials : materials[0];
     const index = owner.get(mesh);
     if (index === undefined) {
       geometry.translate(shift.x, shift.y, shift.z);
-      const body = new THREE.Mesh(geometry, material);
+      // La peinture vernie : le clearcoat capte le ciel même quand la couleur
+      // de base est mate, ce qui distingue une carrosserie d'un aplat de
+      // plastique. Il ne s'applique qu'au maillage nommé comme la peinture, et
+      // jamais à un matériau transparent (vitres, optiques).
+      const glossed = Array.isArray(material)
+        ? material.map((entry) => glossPaint(entry))
+        : glossPaint(material);
+      const body = new THREE.Mesh(geometry, glossed);
       body.castShadow = true;
       body.receiveShadow = true;
       group.add(body);

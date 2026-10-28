@@ -53,12 +53,15 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer): Sk
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = 700;
-  sun.shadow.camera.left = -95;
-  sun.shadow.camera.right = 95;
-  sun.shadow.camera.top = 95;
-  sun.shadow.camera.bottom = -95;
-  sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.035;
+  // La fenêtre glisse avec la voiture (main.ts) : 64 m autour d'elle couvre les
+  // murs, gradins et bâtiments dans le champ, et resserre les texels du filtre
+  // de 9,3 à 6,2 cm — l'ombre de la caisse a un contour net au lieu d'un flou.
+  sun.shadow.camera.left = -64;
+  sun.shadow.camera.right = 64;
+  sun.shadow.camera.top = 64;
+  sun.shadow.camera.bottom = -64;
+  sun.shadow.bias = -0.00035;
+  sun.shadow.normalBias = 0.022;
   scene.add(sun);
   scene.add(sun.target);
 

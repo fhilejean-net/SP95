@@ -47,6 +47,7 @@ import { loadBikeVisual } from './render/bikeModel.ts';
 import { createSparks } from './render/sparks.ts';
 import { createTireSmoke } from './render/tireSmoke.ts';
 import { loadCarVisual } from './render/carModel.ts';
+import { createGrounding } from './render/grounding.ts';
 import { CARS, findCar, loadCarId, saveCarId, type CarDef, type CarId } from './game/cars.ts';
 import { QualityGovernor } from './render/quality.ts';
 import { ChaseCamera, cameraModeLabel } from './core/camera.ts';
@@ -141,6 +142,8 @@ function makeRenderer(lowFx: boolean): THREE.WebGLRenderer {
   renderer.setPixelRatio(lowFx ? 0.7 : Math.min(window.devicePixelRatio, cap));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = !lowFx;
+  // three a retiré PCFSoftShadowMap en r186 : PCFShadowMap est le seul filtre
+  // disponible, et le choisir explicitement évite l'avertissement par défaut.
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.92;
@@ -188,7 +191,12 @@ function refreshMenuBest(): void {
 
 async function boot(): Promise<void> {
   const coarse = matchMedia('(pointer: coarse)').matches;
-  const lowFx = new URLSearchParams(window.location.search).get('fx') === 'low';
+  const fxParam = new URLSearchParams(window.location.search).get('fx');
+  const lowFx = fxParam === 'low';
+  // `?fx=full` verrouille la qualité : le gouverneur ne baisse plus la
+  // résolution ni les ombres, quelle que soit la cadence mesurée. Sert aux
+  // machines qui tiennent la charge et aux captures de contrôle.
+  const lockedFx = fxParam === 'full';
   if (coarse) document.body.classList.add('touch');
   hudElement.classList.add('hidden');
   menu.classList.add('hidden');
@@ -204,6 +212,16 @@ async function boot(): Promise<void> {
 
   await setLoading(0.18, 'Ciel et éclairage…');
   const sky = createSky(scene, renderer);
+
+  // DIAGNOSTIC CYCLE 10 (temporaire) : compte les dessins réellement émis
+  // pendant la passe d'ombre — on reconnaît la passe à sa target.
+  let shadowPassDraws = 0;
+  const baseRenderBufferDirect = renderer.renderBufferDirect.bind(renderer);
+  renderer.renderBufferDirect = (cam, scn, geo, mat, obj, grp) => {
+    const map = sky.sun.shadow.map;
+    if (map && renderer.getRenderTarget() === map) shadowPassDraws++;
+    baseRenderBufferDirect(cam, scn, geo, mat, obj, grp);
+  };
   const materials = createEnvironmentMaterials();
 
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -381,6 +399,10 @@ async function boot(): Promise<void> {
   car.setWheelRadius(spec.wheelRadius);
   car.group.position.set(startPose.x, spawnY, startPose.z);
   scene.add(car.group);
+  // Ancrage au sol : ombre de contact et reflet d'asphalte sous le véhicule
+  // visible. Deux décalques qui suivent la voiture, pas une seconde scène.
+  const grounding = createGrounding(scene);
+  grounding.attach(car.group);
 
   const input = new InputManager(canvas);
   const hud = new Hud();
@@ -405,7 +427,7 @@ async function boot(): Promise<void> {
   applyVehicleMix();
   const drift = new DriftScore();
   const stunt = new StuntScore();
-  const governor = new QualityGovernor(renderer, renderer.getPixelRatio(), sky.sun);
+  const governor = lockedFx ? null : new QualityGovernor(renderer, renderer.getPixelRatio(), sky.sun);
 
   let mode: GameMode = 'menu';
   let freeSpawn: FreeSpawn = 'city';
@@ -522,6 +544,22 @@ async function boot(): Promise<void> {
     const ray = new RAPIER.Ray({ x, y: from, z }, { x: 0, y: -1, z: 0 });
     const hit = world.castRay(ray, 8, true, undefined, undefined, undefined, vehicle.body);
     return hit ? from - hit.timeOfImpact : fallback;
+  }
+
+  /**
+   * Cote du sol sous le véhicule, pour ses décalques d'ancrage. La sonde à rayon
+   * est la seule mesure exacte sur la dalle du circuit ; on la rafraîchit à
+   * 10 Hz au lieu de chaque image, l'asphalte ne bougeant pas sous lui-même.
+   */
+  let groundingClock = 0;
+  let groundingY = 0;
+  function updateGrounding(dt: number, source: THREE.Object3D): void {
+    groundingClock -= dt;
+    if (groundingClock <= 0) {
+      groundingClock = 0.1;
+      groundingY = surfaceUnder(source.position.x, source.position.z);
+    }
+    grounding.update(source, groundingY);
   }
 
   function setCarPose(x: number, z: number, heading: number): void {
@@ -972,6 +1010,7 @@ async function boot(): Promise<void> {
     carDef = def;
     saveCarId(def.id);
     scene.add(car.group);
+    grounding.attach(car.group);
     if (ridingBike) leaveBike();
     car.group.visible = true;
     rebuildVehicle();
@@ -1369,6 +1408,7 @@ async function boot(): Promise<void> {
         const group = replay.bike && bikeVisual ? bikeVisual.group : car.group;
         group.position.copy(carPosition);
         group.quaternion.copy(replayQuat);
+        updateGrounding(dt, group);
       }
       return;
     }
@@ -1447,6 +1487,7 @@ async function boot(): Promise<void> {
         telemetry.gear === -1,
       );
     }
+    updateGrounding(dt, ridingBike && bikeVisual ? bikeVisual.group : car.group);
 
     // Tire smoke and gravel dust. A wheel smokes once it slips, which is the
     // only honest signal that the tires are spinning up or sliding: straight
@@ -1679,7 +1720,7 @@ async function boot(): Promise<void> {
       fpsTime = 0;
     }
 
-    governor.update(dt);
+    governor?.update(dt);
     const controls = input.update(dt);
 
     if (input.consume('pause')) {
@@ -1743,6 +1784,90 @@ async function boot(): Promise<void> {
     requestAnimationFrame(frame);
   });
 
+  /**
+   * Diagnostic d'ombre, appelé depuis `__sp95.debug` : la carte du soleil existe
+   *-t-elle, et quels maillages la projettent / la reçoivent ? Le décompte se
+   * refait à chaque appel — le compteur ne doit pas se figer avant le chargement
+   * de la végétation ou du circuit.
+   */
+  function shadowProbe(): {
+    enabled: boolean;
+    casting: boolean;
+    mapReady: boolean;
+    sunVisible: boolean;
+    sunInScene: boolean;
+    casters: number;
+    castersInFrustum: number;
+    receivers: number;
+    /** Position du soleil (repère monde). */
+    light: [number, number, number];
+    /** Étendue de la caméra d'ombre, en mètres. */
+    extent: number;
+    /** La voiture tombe-t-elle dans le frustum d'ombre, en NDC ? */
+    carInside: [number, number, number];
+    /** Dessins cumulés émis dans la carte d'ombre depuis le démarrage. */
+    passDraws: number;
+  } {
+    let casters = 0;
+    let receivers = 0;
+    scene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      if (mesh.castShadow) casters++;
+      if (mesh.receiveShadow) receivers++;
+    });
+    // Ordre obligatoire : monde -> vue (matrixWorldInverse), puis vue -> NDC
+    // (projection). Les deux matrices ne commutent pas.
+    const shadow = sky.sun.shadow;
+    const ndc = carPosition.clone().applyMatrix4(shadow.camera.matrixWorldInverse);
+    ndc.applyMatrix4(shadow.camera.projectionMatrix);
+    // Combien des projeteurs passent la culling de la passe d'ombre, calculée
+    // exactement comme three : frustum = projection × inverse(vue).
+    const projScreen = new THREE.Matrix4().multiplyMatrices(
+      shadow.camera.projectionMatrix,
+      shadow.camera.matrixWorldInverse,
+    );
+    const frustum = new THREE.Frustum().setFromProjectionMatrix(projScreen);
+    let castersInFrustum = 0;
+    scene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.castShadow) return;
+      if (frustum.intersectsObject(mesh)) castersInFrustum++;
+    });
+    return {
+      enabled: renderer.shadowMap.enabled,
+      casting: sky.sun.castShadow,
+      mapReady: Boolean(shadow.map),
+      sunVisible: sky.sun.visible,
+      sunInScene: sky.sun.parent === scene,
+      casters,
+      castersInFrustum,
+      receivers,
+      light: [
+        Math.round(sky.sun.position.x),
+        Math.round(sky.sun.position.y),
+        Math.round(sky.sun.position.z),
+      ],
+      extent: shadow.camera.right,
+      carInside: [ndc.x, ndc.y, ndc.z].map((v) => Math.round(v * 100) / 100) as [
+        number,
+        number,
+        number,
+      ],
+      passDraws: shadowPassDraws,
+    };
+  }
+
+  // DIAGNOSTIC CYCLE 10 (temporaire) : accès direct à la scène pour sonder le
+  // programme compilé du récepteur — la passe d'ombre tourne mais l'image ne
+  // bouge pas, il reste à savoir si le matériau contient bien USE_SHADOWMAP.
+  (window as unknown as { __sp95three: unknown }).__sp95three = {
+    THREE,
+    scene,
+    renderer,
+    sun: sky.sun,
+  };
+
   window.__sp95 = {
     ready: true,
     map: MAP,
@@ -1783,6 +1908,12 @@ async function boot(): Promise<void> {
         drawCalls: renderer.info.render.calls,
         triangles: renderer.info.render.triangles,
         driftPending: drift.pending,
+        shadow: shadowProbe(),
+        // Permet au script de contrôle de comparer un frame avec et sans passe
+        // d'ombre sur la même scène (mesure du coût et de la présence réelle).
+        setShadows: (on: boolean) => {
+          renderer.shadowMap.enabled = on;
+        },
       };
     },
     get setup() {
@@ -1979,7 +2110,27 @@ declare global {
       readonly racePhase: string | null;
       readonly raceLap: number;
       readonly position: { x: number; y: number; z: number };
-      readonly debug: { fps: number; drawCalls: number; triangles: number; driftPending: number };
+      readonly debug: {
+        fps: number;
+        drawCalls: number;
+        triangles: number;
+        driftPending: number;
+        shadow: {
+          enabled: boolean;
+          casting: boolean;
+          mapReady: boolean;
+          sunVisible: boolean;
+          sunInScene: boolean;
+          casters: number;
+          castersInFrustum: number;
+          receivers: number;
+          light: [number, number, number];
+          extent: number;
+          carInside: [number, number, number];
+          passDraws: number;
+        };
+        setShadows: (on: boolean) => void;
+      };
       readonly setup: Setup;
       readonly surface: string;
       readonly gearFloat: number;
