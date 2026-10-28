@@ -127,25 +127,25 @@
     </div>
 
     <div id="pause" class="overlay hidden">
-      <div class="menu-card compact">
+      <div class="menu-card compact pause-card">
         <p class="eyebrow">Pause</p>
         <h2 class="logo small">SP95</h2>
+        <button id="btn-resume" class="primary wide">Reprendre<span class="key">Échap</span></button>
         <div class="menu-actions">
-          <button id="btn-resume" class="primary">Reprendre</button>
           <button id="btn-pause-tcs">Antipatinage · Actif</button>
           <button id="btn-pause-abs">ABS · Actif</button>
-          <button id="btn-pause-moto">Moto · supermotard stunt</button>
+          <button id="btn-pause-cars">Voitures · showroom</button>
+          <button id="btn-pause-garage">Atelier · freins, appui, pneus</button>
+          <button id="btn-pause-moto">Moto · supermotard</button>
+          <button id="btn-pause-sound">Son · mixage</button>
           <button id="btn-pause-free">Conduite libre</button>
           <button id="btn-pause-race" class="village-only">Course · 2 tours</button>
           <button id="btn-pause-col" class="village-only">Col · route de montagne</button>
           <button id="btn-pause-rally" class="village-only">Rallye · piste en terre</button>
           <button id="btn-pause-sommet" class="village-only">Sommet · aire de drift</button>
-          <button id="btn-pause-cars">Voitures · showroom</button>
-          <button id="btn-pause-garage">Atelier · préparation</button>
-          <button id="btn-pause-sound">Son · mixage</button>
-          <button id="btn-pause-menu">Menu principal</button>
         </div>
-        <p class="menu-footnote">Échap pour reprendre.</p>
+        <button id="btn-pause-menu" class="wide">Menu principal</button>
+        <p class="menu-footnote">Échap pour reprendre la piste.</p>
       </div>
     </div>
 
@@ -180,16 +180,18 @@
             <p class="eyebrow">Showroom</p>
             <h2 class="logo small">Voitures</h2>
           </div>
-          <p class="showroom-sub">Clique une carte pour l'essayer · flèches du clavier pour parcourir</p>
+          <p class="showroom-sub">
+            Une carte = une voiture · <b>flèches</b> pour parcourir · <b>Entrée</b> pour conduire
+          </p>
         </div>
         <div class="showroom-body">
           <div class="showroom-detail" id="showroom-detail"></div>
           <div class="showroom-list" id="showroom-list"></div>
         </div>
         <div class="showroom-foot">
-          <button id="btn-showroom-pick">Choisir cette voiture</button>
-          <button id="btn-showroom-drive" class="primary">Conduire</button>
-          <button id="btn-showroom-close">Terminer</button>
+          <button id="btn-showroom-pick">Prendre au garage</button>
+          <button id="btn-showroom-drive" class="primary">Conduire cette voiture</button>
+          <button id="btn-showroom-close">Fermer</button>
         </div>
       </div>
     </div>

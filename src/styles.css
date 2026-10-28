@@ -1323,3 +1323,14 @@ body.touch #stunt-panel {
     padding-top: 14px;
   }
 }
+
+/* --- Pause en groupes ---------------------------------------------------- */
+.pause-card { width: min(780px, 94vw); }
+.pause-card > .wide { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.pause-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; margin: 16px 0; }
+.pause-groups section { display: flex; flex-direction: column; gap: 8px; }
+.pause-groups h3 { margin: 0; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: rgba(255,255,255,.55); font-weight: 600; }
+.pause-groups .menu-actions { margin: 0; }
+.pause-groups button { display: flex; align-items: center; gap: 8px; }
+.pause-groups button small { margin-left: auto; color: rgba(255,255,255,.45); font-size: 10px; letter-spacing: .06em; }
+.pause-card .key { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,.12); font-size: 10px; letter-spacing: .08em; }

@@ -7,7 +7,15 @@ import { SPORT_DRIVETRAIN, torqueAtRpm } from '../physics/drivetrain.ts';
  * means the UI, the saved setup and the tests all agree on what a part does.
  */
 
-export type SetupKey = 'engine' | 'exhaust' | 'weight' | 'suspension' | 'tires' | 'steering';
+export type SetupKey =
+  | 'engine'
+  | 'exhaust'
+  | 'weight'
+  | 'suspension'
+  | 'tires'
+  | 'steering'
+  | 'brakes'
+  | 'aero';
 
 export type Setup = Record<SetupKey, number>;
 
@@ -91,6 +99,27 @@ export const CATEGORIES: SetupCategory[] = [
       { label: 'Kit grand angle', detail: '66° de braquage · crémaillère rapide' },
     ],
   },
+  {
+    key: 'brakes',
+    label: 'Freins',
+    hint: 'Disques, plaquettes et étriers : la distance qui sépare de la barrière.',
+    options: [
+      { label: 'Série', detail: 'Étriers flottants, plaquettes routières' },
+      { label: 'Plaquettes performance', detail: '+18 % de couple de freinage, moins de fade' },
+      { label: 'Étriers 6 pistons', detail: '+38 % · disques rainurés, durites aviation' },
+      { label: 'Kit piste', detail: '+55 % · carbone-céramique, attaque très franche' },
+    ],
+  },
+  {
+    key: 'aero',
+    label: 'Appui',
+    hint: "L'aéro plaque la voiture : plus d'appui, plus de vitesse de passage.",
+    options: [
+      { label: 'Série', detail: 'Carrosserie de route' },
+      { label: 'Aileron arrière', detail: '+35 % d’appui · un peu plus de traînée' },
+      { label: 'Kit piste complet', detail: '+80 % d’appui · splitter, diffuseur, aileron' },
+    ],
+  },
 ];
 
 export interface SetupPreset {
@@ -100,12 +129,72 @@ export interface SetupPreset {
 
 /** One-click starting points; every part stays editable afterwards. */
 export const PRESETS: SetupPreset[] = [
-  { label: 'Série', setup: { engine: 0, exhaust: 0, weight: 0, suspension: 0, tires: 0, steering: 0 } },
-  { label: 'Drift', setup: { engine: 1, exhaust: 1, weight: 1, suspension: 4, tires: 2, steering: 1 } },
-  { label: 'Piste', setup: { engine: 3, exhaust: 2, weight: 2, suspension: 2, tires: 1, steering: 0 } },
+  {
+    label: 'Série',
+    setup: {
+      engine: 0,
+      exhaust: 0,
+      weight: 0,
+      suspension: 0,
+      tires: 0,
+      steering: 0,
+      brakes: 0,
+      aero: 0,
+    },
+  },
+  {
+    label: 'Drift',
+    setup: {
+      engine: 1,
+      exhaust: 1,
+      weight: 1,
+      suspension: 4,
+      tires: 2,
+      steering: 1,
+      brakes: 1,
+      aero: 0,
+    },
+  },
+  {
+    label: 'Piste',
+    setup: {
+      engine: 3,
+      exhaust: 2,
+      weight: 2,
+      suspension: 2,
+      tires: 1,
+      steering: 0,
+      brakes: 2,
+      aero: 2,
+    },
+  },
   // Tours chrono : slicks, caisse allégée, tout pour la seconde au tour.
-  { label: 'Chrono', setup: { engine: 2, exhaust: 2, weight: 2, suspension: 2, tires: 4, steering: 0 } },
-  { label: 'Tout-terrain', setup: { engine: 2, exhaust: 1, weight: 0, suspension: 3, tires: 3, steering: 1 } },
+  {
+    label: 'Chrono',
+    setup: {
+      engine: 2,
+      exhaust: 2,
+      weight: 2,
+      suspension: 2,
+      tires: 4,
+      steering: 0,
+      brakes: 3,
+      aero: 2,
+    },
+  },
+  {
+    label: 'Tout-terrain',
+    setup: {
+      engine: 2,
+      exhaust: 1,
+      weight: 0,
+      suspension: 3,
+      tires: 3,
+      steering: 1,
+      brakes: 1,
+      aero: 0,
+    },
+  },
 ];
 
 export const DEFAULT_SETUP: Setup = {
@@ -115,6 +204,8 @@ export const DEFAULT_SETUP: Setup = {
   suspension: 0,
   tires: 0,
   steering: 0,
+  brakes: 0,
+  aero: 0,
 };
 
 const ENGINE = [
@@ -156,6 +247,16 @@ const STEERING = [
   { maxSteer: 1.15, steerRate: 4.2 },
 ];
 
+/** Multiples du couple de freinage d'origine. */
+const BRAKES = [1, 1.18, 1.38, 1.55];
+
+/** Appui et traînée, en multiples de la carrosserie de route. */
+const AERO = [
+  { mu: 1.0, downforce: 1.0, drag: 1.0 },
+  { mu: 1.04, downforce: 1.35, drag: 1.02 },
+  { mu: 1.08, downforce: 1.8, drag: 1.05 },
+];
+
 function pick<T>(list: T[], index: number): T {
   return list[Math.max(0, Math.min(list.length - 1, index | 0))] ?? list[0];
 }
@@ -166,6 +267,8 @@ export function resolveSpec(setup: Setup, base: VehicleSpec = STOCK_SPEC): Vehic
   const suspension = pick(SUSPENSION, setup.suspension);
   const tires = pick(TIRES, setup.tires);
   const steering = pick(STEERING, setup.steering);
+  const brakeScale = pick(BRAKES, setup.brakes ?? 0);
+  const aero = pick(AERO, setup.aero ?? 0);
   const mass = base.mass - pick(MASS, setup.weight);
 
   // Every part is a proportion of the car it is bolted to, so the same Stage 3
@@ -191,13 +294,15 @@ export function resolveSpec(setup: Setup, base: VehicleSpec = STOCK_SPEC): Vehic
     rideHeight: base.rideHeight + (suspension.rideHeight - stock.rideHeight),
     wheelTravel: base.wheelTravel * (suspension.travel / stock.travel),
     wheelRadius: base.wheelRadius * (tires.radius / grip.radius),
-    muFront: base.muFront * (tires.muFront / grip.muFront),
-    muRear: base.muRear * (tires.muRear / grip.muRear),
+    muFront: base.muFront * (tires.muFront / grip.muFront) * aero.mu,
+    muRear: base.muRear * (tires.muRear / grip.muRear) * aero.mu,
+    downforceArea: base.downforceArea * aero.downforce,
+    dragArea: base.dragArea * aero.drag,
     peakSlipAngle: base.peakSlipAngle * (tires.peakSlipAngle / grip.peakSlipAngle),
     looseGrip: tires.looseGrip,
     maxSteer: base.maxSteer * (steering.maxSteer / lock.maxSteer),
     steerRate: base.steerRate * (steering.steerRate / lock.steerRate),
-    brakeTorque: base.brakeTorque * (mass / base.mass),
+    brakeTorque: base.brakeTorque * (mass / base.mass) * brakeScale,
   };
 }
 

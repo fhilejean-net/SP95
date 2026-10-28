@@ -2,8 +2,6 @@ import RAPIER from '@dimforge/rapier3d-compat';
 
 /** Normale minimale pour qu'un rayon soit un appui au sol, pas une face de mur. */
 const GROUND_NORMAL_MIN = 0.55;
-/** Marge acceptée sous le rayon quand la cote analytique du sol sert de filet. */
-const FLOOR_SNAP_MARGIN = 0.4;
 /** Vitesse maximale du débattement, en m/s : amortit les marches du trimesh. */
 const SUSPENSION_RATE = 5.5;
 import { Drivetrain, SPORT_DRIVETRAIN } from './drivetrain.ts';
@@ -466,12 +464,15 @@ export class Bike {
       // roue qui rate le trimesh faisait tomber la moto sous l'asphalte.
       let reach = hit && hit.normal.y >= GROUND_NORMAL_MIN ? hit.timeOfImpact : -1;
       let normal = hit ? vec3(hit.normal.x, hit.normal.y, hit.normal.z) : null;
+      // La cote analytique n'accepte un appui que si le sol est *sous* la roue :
+      // en bord d'herbe, la surface du modèle remontait au-dessus du pneu et la
+      // moto était recalée vers le haut d'un coup.
       if (reach < 0 && !lifted) {
         const floor = this.floorAt ? this.floorAt(mountWorld.x, mountWorld.z) : null;
         if (floor !== null) {
           const drop = mountWorld.y - floor;
-          if (drop <= this.maxLength + wheel.radius + FLOOR_SNAP_MARGIN) {
-            reach = Math.max(0, drop);
+          if (drop >= 0 && drop <= this.maxLength + wheel.radius) {
+            reach = drop;
             normal = { x: 0, y: 1, z: 0 };
           }
         }
@@ -529,6 +530,9 @@ export class Bike {
         springForce += BUMP_K * over;
       }
       springForce = clamp(springForce, 0, this.maxSpringForce);
+      // Sur le flanc, les ressorts poussent moins fort : la moto se pose au lieu
+      // de rebondir.
+      if (up.y <= 0.5) springForce = Math.min(springForce, this.spec.mass * 3.2);
 
       const wheelForward = rotateAxis(forward, up, wheel.steer);
       const wheelRight = cross(wheelForward, up);

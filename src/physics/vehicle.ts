@@ -37,8 +37,6 @@ export const NEUTRAL_INPUT: VehicleInput = { throttle: 0, brake: 0, steer: 0, ha
 
 /** Normale minimale pour qu'un rayon soit un appui au sol, pas une face de mur. */
 const GROUND_NORMAL_MIN = 0.55;
-/** Marge acceptée sous le rayon quand la cote analytique du sol sert de filet. */
-const FLOOR_SNAP_MARGIN = 0.4;
 /**
  * Vitesse maximale du débattement, en m/s. Une arête du trimesh qui manque le
  * rayon de quelques centimètres détendait la suspension d'un coup et la caisse
@@ -605,16 +603,21 @@ export class Vehicle {
       // la hauteur du sol : le prendre pour un appui faisait sauter la caisse.
       let reach = hit && hit.normal.y >= GROUND_NORMAL_MIN ? hit.timeOfImpact : -1;
       let contactNormal = hit ? vec3(hit.normal.x, hit.normal.y, hit.normal.z) : null;
+      // Une voiture sur le toit ne doit pas s'appuyer sur ses roues : sans cette
+      // garde, le filet analytique renvoyait un contact et la caisse rebondissait
+      // indéfiniment.
+      const inverted = up.y <= 0.5;
       if (reach < 0) {
-        // Filet de sécurité : la grille de collision de la piste a des trous, et
-        // le châssis ne collisionne qu'avec les murs — sans cette cote, la
-        // voiture traversait l'asphalte et tombait dans le vide. Elle couvre
-        // toute l'emprise du circuit, trous compris.
+        // Filet de sécurité : la trame de collision a des trous et le châssis ne
+        // collisionne qu'avec les murs. La cote analytique n'accepte un appui que
+        // si le sol est *sous* la roue : en bord d'herbe la surface du modèle
+        // remontait au-dessus du pneu, la roue était recalée vers le haut et la
+        // voiture s'envolait.
         const floor = this.floorAt ? this.floorAt(mountWorld.x, mountWorld.z) : null;
         if (floor !== null) {
           const drop = mountWorld.y - floor;
-          if (drop <= maxRay + FLOOR_SNAP_MARGIN) {
-            reach = Math.max(0, drop);
+          if (drop >= 0 && drop <= maxRay) {
+            reach = drop;
             contactNormal = { x: 0, y: 1, z: 0 };
           }
         }
@@ -665,6 +668,9 @@ export class Vehicle {
         springForce += BUMP_K * over + BUMP_K_HARD * over * over;
       }
       springForce = clamp(springForce, 0, this.maxSpringForce);
+      // Sur le toit, les ressorts poussent moins fort : la caisse se pose au lieu
+      // de rebondir comme un ballon.
+      if (inverted) springForce = Math.min(springForce, this.spec.mass * 3.2);
 
       // Wheel frame, steered around the body's up axis.
       const wheelForward = rotateAxis(forward, up, wheel.steer);
