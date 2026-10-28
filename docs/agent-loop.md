@@ -14,11 +14,11 @@ modifie pas le bloc d'état à la main.
 <!-- state:start -->
 status: idle
 task: —
-cycle: 10
+cycle: 11
 started: —
-heartbeat: 2026-10-28T07:43:11Z
-commit: e84020f
-owner: session-34562
+heartbeat: 2026-10-28T20:08:13Z
+commit: b9eec72
+owner: session-9642
 <!-- state:end -->
 
 ## Journal
@@ -35,3 +35,4 @@ owner: session-34562
 | 8 | 2026-10-27 | Wet surface lookups allocate in the physics hot path | `303f4c1` | table WET_SURFACES précalculée, grip inchangé, test d'identité ; tsc ok, 61/61 |
 | 9 | 2026-10-27 | Recent stunt replay | `0e3c584` | replay V, mémoire bornée 120 poses, interpolation, simulation gelée ; 3 tests, tsc ok, 64/64, build ok (vérif navigateur à faire) |
 | 10 | 2026-10-28 | Ombres portées sur la piste et la ville | `e84020f` | Ombres : la passe du soleil ne dépose rien sur l'asphalte (A/B à 129 px sur 416 000). Remplacé par des décalques d'ancrage (ombre de contact + reflet) et une peinture vernie. |
+| 11 | 2026-10-28 | Animate wheels, steering and rider inside the replay | `b9eec72` | Roues, direction, frein et inclinaison enregistrés avec chaque pose et rejoués ; sonde navigateur : physique gelée, roues qui tournent |

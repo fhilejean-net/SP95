@@ -71,12 +71,13 @@ commit hash so the history stays readable.
   *Done when:* a test asserts every marker sits in the run-off on both sides and faces the
   approaching car, and a screenshot shows the 150/100/50 m boards before the first corner.
 
-- [ ] **Animate wheels, steering and rider inside the replay** — `S`. Cycle 9 replays the body
+- [x] ~~**Animate wheels, steering and rider inside the replay**~~ — `S`. Cycle 9 replays the body
   poses only, so the car slides along its own path with frozen wheels and the rider never leans.
   Record the visual bits with each frame (wheel spin, steer, lean, brake) and feed them to
   `updateCarVisual` / `bikeVisual.setPose` during playback.
   *Done when:* a focused test shows the extra fields round-trip per frame and interpolate during
   playback, and a manual replay shows the wheels turning and the rider leaning.
+  *Cycle 11:* `b9eec72` — Roues, direction, frein et inclinaison enregistrés avec chaque pose et rejoués ; sonde navigateur : physique gelée, roues qui tournent
 
 ## Ideas (not scheduled)
 
