@@ -75,7 +75,7 @@ function median(values: number[]): number {
   return values[values.length >> 1];
 }
 
-export function buildRoadSurface(meshes: THREE.Mesh[]): RoadSurface {
+export function buildRoadSurface(meshes: THREE.Mesh[], collar = 0): RoadSurface {
   const point = new THREE.Vector3();
   const xs: number[] = [];
   const ys: number[] = [];
@@ -243,6 +243,30 @@ export function buildRoadSurface(meshes: THREE.Mesh[]): RoadSurface {
         limited.set(key, Math.max(middle - MAX_STEP, Math.min(middle + MAX_STEP, height)));
       }
       smoothed = limited;
+    }
+
+    // 3b. Collet : la plaque déborde de `collar` cases autour du dernier nœud
+    // connu, à sa cote. Une roue qui sort du treillis lit alors encore la piste
+    // au lieu de l'estimation par cases du modèle — qui remontait au niveau de
+    // l'herbe voisine, surélevait la caisse de trente centimètres et la faisait
+    // décoller au premier virage. C'est aussi ce qui rend le treillis lisible en
+    // debug : plus de zone sans plaque le long de la piste.
+    if (collar > 0) {
+      const extra = new Map<number, { height: number; distance: number }>();
+      for (const [key, height] of smoothed) {
+        const [i, j] = nodeCell(key);
+        for (let dz = -collar; dz <= collar; dz++) {
+          for (let dx = -collar; dx <= collar; dx++) {
+            if (dx === 0 && dz === 0) continue;
+            const other = nodeKey(i + dx, j + dz);
+            if (smoothed.has(other)) continue;
+            const distance = Math.max(Math.abs(dx), Math.abs(dz));
+            const best = extra.get(other);
+            if (!best || distance < best.distance) extra.set(other, { height, distance });
+          }
+        }
+      }
+      for (const [key, entry] of extra) smoothed.set(key, entry.height);
     }
 
     // 4. Quads : trois coins suffisent, le quatrième prend leur moyenne. Un bord

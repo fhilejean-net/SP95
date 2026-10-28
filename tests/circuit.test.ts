@@ -133,3 +133,15 @@ test('grass and kerbs belong to the same ground as the asphalt', () => {
   assert.ok(area(road.vertices, road.indices) > 300, `aire ${area(road.vertices, road.indices).toFixed(0)} m²`);
   assert.ok(road.maxGrade < 20, `pente à la couture ${road.maxGrade.toFixed(1)} %`);
 });
+
+test('the collision plate spreads a collar around the track', () => {
+  // Hors du treillis, la roue lisait l'estimation par cases du modèle : la
+  // caisse montait au niveau de l'herbe et décollait en virage. Le collet pose
+  // une plaque à la cote du bord sur trois cases (neuf mètres) autour.
+  const track = slab([0, 12], [0, 12], () => 0);
+  const bare = buildRoadSurface([track]);
+  const padded = buildRoadSurface([track], 3);
+  const grown = area(padded.vertices, padded.indices) / area(bare.vertices, bare.indices);
+  assert.ok(grown > 2, `la plaque n'a grandi que de ${grown.toFixed(1)}×`);
+  assert.equal(padded.maxGrade, 0, `pente du collet ${padded.maxGrade.toFixed(1)} %`);
+});

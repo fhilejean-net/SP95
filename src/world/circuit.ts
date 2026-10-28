@@ -397,7 +397,7 @@ export async function buildCircuit(
   // pour que l'asphalte gagne là où les deux se recouvrent. Avant, seule la
   // première existait : herbe et vibreurs n'avaient aucune collision et la
   // voiture tombait dans le décor du dessous.
-  const road = buildRoadSurface(asphaltMeshes);
+  const road = buildRoadSurface(asphaltMeshes, 3);
   const roadQuery = createRoadQuery(road);
   console.log(
     `Piste : ${road.triangles} triangles lissés sur ${road.decks} tabliers, pente max ` +
@@ -863,6 +863,7 @@ export async function buildCircuit(
   // l'asphalte ; sans elle, une roue qui sort de la piste ne trouve plus rien.
   const offTrack = buildRoadSurface(
     [...looseMeshes, ...groundMeshes.filter((mesh) => !asphaltMeshes.includes(mesh))],
+    1,
   );
   const offTrackTriangles = appendFlatRoad(offTrack, GROUND_GROUP, 0.06);
   console.log(
