@@ -371,8 +371,8 @@ async function boot(): Promise<void> {
    * ensuite. Elle sert de filet aux rayons de roue — la grille de collision de
    * la piste a des trous, et sans elle la voiture traversait l'asphalte.
    */
-  const floorLookup = (x: number, z: number): number | null =>
-    circuitFloor(x, z) ?? groundAt(x, z);
+  const floorLookup = (x: number, z: number, reference?: number): number | null =>
+    circuitFloor(x, z, reference) ?? groundAt(x, z);
   /** Profondeur sous le sol au-delà de laquelle on repose la caisse sur place. */
   const FALL_RECOVERY_DEPTH = 8;
   let carVehicle: Vehicle = new Vehicle(

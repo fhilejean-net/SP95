@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { buildFlatRoad } from '../src/world/circuit.ts';
+import { buildRoadSurface } from '../src/world/roadSurface.ts';
 
 /** Une dalle : des colonnes de sommets espacées, comme les carreaux du modèle. */
 function slab(xs: number[], zs: number[], height: (x: number, z: number) => number): THREE.Mesh {
@@ -75,7 +75,7 @@ test('une longue dalle est couverte en entier, sans escalier', () => {
   // Trente mètres sur douze, quatre sommets : aucune case intermédiaire. C'est
   // exactement le carreau sur lequel la trame régulière laissait un trou, et la
   // voiture tombait sous la piste.
-  const road = buildFlatRoad([slab([0, 30], [0, 12], () => 4)]);
+  const road = buildRoadSurface([slab([0, 30], [0, 12], () => 4)]);
   assert.ok(road.triangles >= 16, `${road.triangles} triangles sur la dalle`);
   assert.ok(Math.abs(area(road.vertices, road.indices) - 360) < 1e-3, 'toute la dalle est couverte');
   assert.equal(road.maxGrade, 0);
@@ -87,7 +87,7 @@ test('la couture entre deux tuiles d’un tablier est rattrapée', () => {
   // la couture est gardé, et aucune marche ne reste.
   const left = slab([0, 2, 4, 6, 8, 10], [0, 12], () => 2);
   const right = slab([10, 12, 14, 16, 18, 20], [0, 12], () => 2);
-  const road = buildFlatRoad([left, right]);
+  const road = buildRoadSurface([left, right]);
   assert.ok(
     area(road.vertices, road.indices) > 200,
     `aire couverte ${area(road.vertices, road.indices).toFixed(0)} m² sur 240`,
@@ -101,20 +101,20 @@ test('les vibreurs sont moyennés : la voiture ne saute plus dessus', () => {
   const kerb = slab(xs, [0, 12], (x) => (x % 4 === 0 ? 0.15 : -0.15));
   const grade = rawGrade(kerb);
   assert.ok(grade > 14, `pente brute ${grade.toFixed(1)} %`);
-  const road = buildFlatRoad([kerb]);
+  const road = buildRoadSurface([kerb]);
   assert.ok(road.maxGrade < grade * 0.5, `pente lissée ${road.maxGrade.toFixed(1)} %`);
 });
 
 test('la montée du tour traverse le lissage', () => {
   // 6 % sur vingt mètres, sommets espacés : le lissage ne doit pas l'aplatir.
-  const road = buildFlatRoad([slab([0, 20, 40], [0, 12], (x) => x * 0.06)]);
+  const road = buildRoadSurface([slab([0, 20, 40], [0, 12], (x) => x * 0.06)]);
   assert.ok(Math.abs(road.maxGrade - 6) < 0.5, `pente ${road.maxGrade.toFixed(2)} %`);
 });
 
 test('les deux tabliers du croisement en huit gardent chacun leur cote', () => {
   const below = slab([0, 30], [0, 12], () => 0);
   const above = slab([0, 30], [0, 12], () => 8);
-  const road = buildFlatRoad([below, above]);
+  const road = buildRoadSurface([below, above]);
   const heights = new Set<number>();
   for (let i = 1; i < road.vertices.length; i += 3) {
     heights.add(Math.round(road.vertices[i] * 10) / 10);

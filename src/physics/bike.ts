@@ -131,7 +131,7 @@ export class Bike {
   private telemetry: VehicleTelemetry;
   private readonly surfaceAt: (x: number, z: number) => SurfaceGrip;
   /** Cote analytique du sol : elle existe même là où le trimesh a un trou. */
-  private readonly floorAt: ((x: number, z: number) => number | null) | null;
+  private readonly floorAt: ((x: number, z: number, reference?: number) => number | null) | null;
   private popCooldown = 0;
   private bailTimer = 0;
   /** Time the rider has held the brake at a standstill: he walks it back. */
@@ -153,7 +153,7 @@ export class Bike {
       heading: number;
       surfaceAt?: (x: number, z: number) => SurfaceGrip;
       /** Hauteur du sol, en X/Z : filet quand le rayon de roue ne touche rien. */
-      floorAt?: (x: number, z: number) => number | null;
+      floorAt?: (x: number, z: number, reference?: number) => number | null;
     },
     spec: BikeSpec,
   ) {
@@ -468,7 +468,7 @@ export class Bike {
       // en bord d'herbe, la surface du modèle remontait au-dessus du pneu et la
       // moto était recalée vers le haut d'un coup.
       if (reach < 0 && !lifted) {
-        const floor = this.floorAt ? this.floorAt(mountWorld.x, mountWorld.z) : null;
+        const floor = this.floorAt ? this.floorAt(mountWorld.x, mountWorld.z, mountWorld.y) : null;
         if (floor !== null) {
           const drop = mountWorld.y - floor;
           if (drop >= 0 && drop <= this.maxLength + wheel.radius) {

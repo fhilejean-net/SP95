@@ -296,7 +296,7 @@ export class Vehicle {
   private telemetry: VehicleTelemetry;
   private readonly surfaceAt: (x: number, z: number) => SurfaceGrip;
   /** Cote analytique du sol : elle existe même là où le trimesh a un trou. */
-  private readonly floorAt: ((x: number, z: number) => number | null) | null;
+  private readonly floorAt: ((x: number, z: number, reference?: number) => number | null) | null;
   /** Ground under the car, for telemetry and audio. */
   surface: SurfaceGrip = ASPHALT;
   private flippedTimer = 0;
@@ -333,7 +333,7 @@ export class Vehicle {
       /** Ground lookup, in world X/Z. Defaults to dry asphalt everywhere. */
       surfaceAt?: (x: number, z: number) => SurfaceGrip;
       /** Hauteur du sol, en X/Z : filet quand le rayon de roue ne touche rien. */
-      floorAt?: (x: number, z: number) => number | null;
+      floorAt?: (x: number, z: number, reference?: number) => number | null;
     },
     spec: VehicleSpec = STOCK_SPEC,
   ) {
@@ -613,7 +613,9 @@ export class Vehicle {
         // si le sol est *sous* la roue : en bord d'herbe la surface du modèle
         // remontait au-dessus du pneu, la roue était recalée vers le haut et la
         // voiture s'envolait.
-        const floor = this.floorAt ? this.floorAt(mountWorld.x, mountWorld.z) : null;
+        // La cote est demandée *sous le moyeu* : sous le pont, la roue doit lire
+        // le tablier bas et non celui qui passe sept mètres au-dessus.
+        const floor = this.floorAt ? this.floorAt(mountWorld.x, mountWorld.z, mountWorld.y) : null;
         if (floor !== null) {
           const drop = mountWorld.y - floor;
           if (drop >= 0 && drop <= maxRay) {
