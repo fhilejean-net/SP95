@@ -60,34 +60,39 @@ export const MIN_CORNER_RADIUS = 22;
 
 /**
  * Points de contrôle du tour, dans le sens de la course (départ vers +z).
- * Le ovale fait ~2,2 km : ligne droite des stands à l'ouest, esses au nord,
- * enchaînement rapide à l'est, épingle au sud. Les sections non consécutives
- * restent à plus de 300 m les unes des autres : aucune paroi ne peut se
- * retrouver au milieu d'un autre morceau de piste.
+ *
+ * Le tracé n'est pas un ovale : il est engendré par une **demi-boucle** de
+ * lignes droites et d'arcs qui tourne de 180° pile, puis recopiée par symétrie
+ * centrale autour de son milieu. La copie repart exactement du point d'arrivée
+ * avec le bon cap : la boucle est fermée par construction, pas par réglage.
+ *
+ * La demi-boucle enchaîne quatre droites et deux gauches (90, 60, 70, 50, 80 et
+ * 50°) séparés par de courtes lignes droites. Le tour complet compte douze
+ * virages — huit à droite, quatre à gauche — de 38 à 69 m de rayon, sur 2 031 m.
  */
 export const CONTROL_POINTS: [number, number][] = [
-  [0, -400], // ligne de départ-arrivée
-  [0, -250],
-  [0, -100],
-  [12, -45], // T1, entrée à droite
-  [55, -10],
-  [110, 5],
-  [165, -5], // esse gauche
-  [208, -48], // esse droite
-  [258, -58], // esse gauche
-  [308, -58], // T4, gauche rapide
-  [352, -98], // raccord
-  [372, -155], // T5, droite
-  [372, -225],
-  [352, -300], // T6, gauche
-  [368, -370], // T7, droite
-  [335, -440], // T7, droite
-  [280, -485],
-  [215, -530], // approche de l'épingle
-  [150, -540], // épingle
-  [90, -515],
-  [50, -475],
-  [20, -440], // sortie vers la ligne
+  [0, -558], [0, -536], [0, -514], [0, -492], [0, -470], [0, -448],
+  [0, -426], [0, -404], [0, -382], [0, -360], [0, -338], [0, -316],
+  [0, -294], [0, -272], [0, -250], [0, -228],
+  [4.4, -204.5], [16.4, -183.9], [33, -169.6], [53.2, -161],
+  [75, -159], [97, -159], [119, -158.9], [140.4, -154.2],
+  [159, -142.7], [173.8, -123.9], [184.8, -104.9], [198.8, -85.6],
+  [217.5, -74.3], [239.2, -71], [262.9, -74.8], [286.6, -78.4],
+  [308.4, -76], [328.4, -67.2], [347.1, -52.2], [365.5, -36.8],
+  [385.3, -27.7], [407, -29.2], [427.2, -41.9], [445.6, -57.3],
+  [463.2, -73.6], [475.5, -94], [480.7, -115.3], [481, -137.3],
+  [481, -159.3], [481, -181.3], [481, -205.3], [481, -227.3],
+  [481, -249.3], [481, -271.3], [481, -293.3], [481, -315.3],
+  [481, -337.3], [481, -359.3], [481, -381.3], [481, -403.3],
+  [481, -425.3], [481, -447.3], [481, -469.3], [481, -491.3],
+  [481, -513.3], [476.6, -536.8], [464.6, -557.4], [446.3, -572.8],
+  [425.9, -580.8], [404, -582.4], [382, -582.4], [360, -582.5],
+  [336.9, -588.7], [319.1, -601.4], [305.2, -620.9], [294.2, -639.9],
+  [279.1, -658.3], [259.6, -668.3], [237.9, -670], [214.2, -665.9],
+  [190.4, -662.9], [168.8, -666.4], [147.7, -677.6], [129.3, -693],
+  [110.6, -708], [89.7, -714.3], [66.6, -709], [47.7, -694.3],
+  [29.3, -678.9], [13, -661.4], [2.9, -639.7], [0, -618],
+  [0, -596], [0, -574],
 ];
 
 function catmull(p0: number, p1: number, p2: number, p3: number, t: number): number {

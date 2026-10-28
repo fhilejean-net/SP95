@@ -6,7 +6,7 @@ const VILLAGE_WORLD_SIZE = 2000;
 /** La carte du circuit est calée sur sa dalle : 2,4 km de côté. */
 const SUZUKA_WORLD_SIZE = 2400;
 /** Le circuit SP95 tient dans 1,6 km : sa piste fait 1,5 km de tour. */
-const FLAT_WORLD_SIZE = 1600;
+const FLAT_WORLD_SIZE = 2000;
 
 /** Taille du monde de chaque carte. */
 export function worldSizeFor(map: MapId): number {
@@ -18,7 +18,7 @@ export function worldSizeFor(map: MapId): number {
 /** ~7 m de maille sur la ville, ~6 m sur la dalle de Suzuka, 8 m à plat. */
 export function terrainSegmentsFor(map: MapId): number {
   if (map === 'suzuka') return 420;
-  if (map === 'sp95') return 200;
+  if (map === 'sp95') return 250;
   return 300;
 }
 
@@ -44,6 +44,9 @@ export const TERRAIN_SPAN = WORLD_SIZE + WORLD_BORDER * 2;
  * et l'herbe n'a pas le grip pour la grimper.
  */
 export function borderHeight(x: number, z: number): number {
+  // Le circuit SP95 est clos par ses murs : aucun rempart de terrain ne doit
+  // dresser une falaise sombre à l'horizon de la carte plate.
+  if (FLAT_MAP) return 0;
   const half = WORLD_SIZE / 2;
   const r = Math.max(Math.abs(x), Math.abs(z));
   if (r <= half) return 0;

@@ -271,6 +271,8 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
   });
   const seatMat = new THREE.MeshStandardMaterial({ roughness: 0.65, vertexColors: false });
   const whiteMat = new THREE.MeshStandardMaterial({ color: 0xe9e9e4, roughness: 0.6 });
+  const redMat = new THREE.MeshStandardMaterial({ color: 0xa8141c, roughness: 0.62 });
+  const pitAsphalt = new THREE.MeshStandardMaterial({ map: createAsphaltTexture(), roughness: 0.93 });
 
   let triangles = 0;
   const add = (mesh: THREE.Mesh, shadows: 'both' | 'receive' | 'none' = 'receive'): void => {
@@ -298,18 +300,28 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
     return mesh;
   };
 
-  // --- Pit lane : une dalle, un long bâtiment, huit garages -----------------
-  const pad = new THREE.Mesh(new THREE.PlaneGeometry(46, 300), concreteMat);
+  // --- Pit lane : une dalle, une voie des stands, un bâtiment, huit garages -
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(46, 260), concreteMat);
   pad.rotation.x = -Math.PI / 2;
-  pad.position.set(-42, ROAD_LIFT, -290);
+  pad.position.set(-42, ROAD_LIFT, -410);
   add(pad, 'receive');
 
-  box(15, 8.4, 118, -33, 4.2, -300, concreteMat, 0, 'both');
-  box(15.8, 0.7, 120, -33, 8.6, -300, darkMat, 0, 'both');
+  // La voie des stands court entre le bord de piste et le mur : elle est
+  // peinte, le sol physique reste le terrain plat.
+  const pitLane = new THREE.Mesh(new THREE.PlaneGeometry(8.6, 250), pitAsphalt);
+  pitLane.rotation.x = -Math.PI / 2;
+  pitLane.position.set(-13.2, ROAD_LIFT + 0.004, -390);
+  add(pitLane, 'receive');
+  for (let z = -508; z < -266; z += 8) {
+    box(0.18, 0.02, 4, -13.2, ROAD_LIFT + 0.01, z, whiteMat, 0, 'none');
+  }
+
+  box(15, 8.4, 118, -33, 4.2, -420, concreteMat, 0, 'both');
+  box(15.8, 0.7, 120, -33, 8.6, -420, darkMat, 0, 'both');
   // Bandeau vitré au-dessus des garages, puis les portes.
-  box(0.2, 1.7, 112, -25.4, 6.1, -300, glassMat, 0, 'none');
+  box(0.2, 1.7, 112, -25.4, 6.1, -420, glassMat, 0, 'none');
   for (let i = 0; i < 8; i++) {
-    const z = -354 + i * 13.6;
+    const z = -474 + i * 13.2;
     box(0.35, 3.9, 8.4, -25.4, 1.95, z, darkMat, 0, 'none');
     box(0.25, 0.22, 8.4, -25.15, 0.11, z, whiteMat, 0, 'none');
   }
@@ -318,24 +330,33 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
     new THREE.PlaneGeometry(18, 3.4),
     new THREE.MeshBasicMaterial({ map: boardTexture('SP95', '#a3141c', '#f4f1e8') }),
   );
-  sign.position.set(-25.2, 8.2, -300);
+  sign.position.set(-25.2, 8.2, -420);
   sign.rotation.y = Math.PI / 2;
   scene.add(sign);
 
-  // --- Tribune principale, face à la ligne --------------------------------
+  // --- Tribune principale : les gradins montent *vers l'extérieur* --------
+  // La première version montait vers la piste : le public tournait le dos au
+  // circuit et le toit passait au-dessus des sièges du premier rang.
   const steps = 10;
   const stepDepth = 2.1;
+  const front = -24;
+  const standZ = -300;
   for (let row = 0; row < steps; row++) {
-    box(stepDepth, 0.62 + row * 0.62, 92, -24 + row * stepDepth, (0.62 + row * 0.62) / 2, -190, concreteMat);
+    const height = 0.62 + row * 0.62;
+    box(stepDepth, height, 92, front - (row + 0.5) * stepDepth, height / 2, standZ, concreteMat);
   }
-  // Gradins : une marche de béton, une assise de couleur par rangée.
+  // Assises : une par place, couleur par rangée.
   const seats = new THREE.InstancedMesh(new THREE.BoxGeometry(0.46, 0.34, 0.5), seatMat, steps * 46);
   const matrix = new THREE.Matrix4();
   const color = new THREE.Color();
   let seat = 0;
   for (let row = 0; row < steps; row++) {
     for (let column = 0; column < 46; column++) {
-      matrix.makeTranslation(-22.9 + row * stepDepth, 0.62 + row * 0.62 + 0.17, -236 + column * 2);
+      matrix.makeTranslation(
+        front - (row + 1) * stepDepth + 0.55,
+        0.62 + row * 0.62 + 0.17,
+        standZ - 45 + column * 2,
+      );
       seats.setMatrixAt(seat, matrix);
       color.set(row % 3 === 0 ? 0xb02026 : 0xd8d6cd);
       seats.setColorAt(seat, color);
@@ -345,18 +366,73 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
   seats.castShadow = false;
   seats.receiveShadow = true;
   scene.add(seats);
-  // Toit de tribune et ses poteaux.
-  box(24, 0.5, 94, -29, 9.6, -190, metalMat);
-  for (const z of [-232, -190, -148]) box(0.6, 9.6, 0.6, -40, 4.8, z, metalMat);
+  // Bandeau publicitaire sur la face avant, tourné vers la piste.
+  const banner = new THREE.Mesh(
+    new THREE.PlaneGeometry(92, 2.2),
+    new THREE.MeshBasicMaterial({ map: boardTexture('GRAND STAND', '#a3141c', '#f4f1e8') }),
+  );
+  banner.position.set(front + 0.06, 2.15, standZ);
+  banner.rotation.y = Math.PI / 2;
+  scene.add(banner);
+  // Escaliers d'accès, de chaque côté de la tribune.
+  for (const z of [standZ - 47, standZ + 47]) {
+    box(6, 0.5, 2.4, front - 3, 3.2, z, concreteMat);
+  }
+  // Toit de tribune, posé au-dessus des gradins, et ses poteaux à l'arrière.
+  box(22, 0.5, 94, front - 5 * stepDepth, 9.6, standZ, metalMat);
+  for (const z of [standZ - 38, standZ, standZ + 38]) box(0.6, 9.6, 0.6, front - 19, 4.8, z, metalMat);
 
-  // --- Tour de contrôle et postes de commissaires --------------------------
-  box(7, 15, 7, -52, 7.5, -360, concreteMat);
-  box(11, 2.4, 11, -52, 16, -360, glassMat, 0, 'none');
-  for (const [x, z] of [
-    [30, -500], [355, -420], [390, -180], [330, 40], [180, 35], [-12, -120],
-  ]) {
-    box(3.4, 2.7, 3.4, x, 1.35, z, whiteMat);
-    box(4.2, 0.25, 4.2, x, 2.8, z, darkMat);
+  // --- Tour de contrôle ----------------------------------------------------
+  box(7, 15, 7, -52, 7.5, -470, concreteMat);
+  box(11, 2.4, 11, -52, 16, -470, glassMat, 0, 'none');
+
+  // --- Postes de commissaires ---------------------------------------------
+  // La position se calcule depuis l'axe, côté *extérieur* du virage, à huit
+  // mètres derrière le mur. La version précédente écrivait six coordonnées à
+  // la main : deux tombaient sur l'asphalte.
+  const marshalHut = (
+    x: number,
+    z: number,
+    yaw: number,
+    facing: { x: number; z: number },
+  ): void => {
+    box(4.6, 0.18, 4.8, x, 0.09, z, concreteMat, yaw, 'receive');
+    box(3.6, 2.5, 3.4, x, 1.25, z, whiteMat, yaw);
+    box(3.7, 0.38, 3.5, x, 2.55, z, redMat, yaw);
+    box(0.16, 0.8, 1.4, x + facing.x * 1.72, 1.75, z + facing.z * 1.72, glassMat, yaw, 'none');
+    box(0.16, 1.85, 0.9, x - facing.x * 1.72, 0.95, z - facing.z * 1.72, darkMat, yaw, 'none');
+    box(4.8, 0.22, 4.6, x, 2.86, z, darkMat, yaw);
+    box(0.12, 2.1, 0.12, x + 1.5, 3.9, z + 1.3, metalMat);
+    box(0.08, 1.6, 0.08, x - 1.6, 3.6, z - 1.2, metalMat);
+    // Sacs de sable devant l'ouverture, côté piste.
+    for (let i = -1; i <= 1; i++) {
+      box(0.8, 0.28, 0.45, x + facing.x * 2.1 + i * 0.95, 0.14, z + facing.z * 2.1, darkMat, yaw);
+    }
+  };
+  for (const fraction of [0.06, 0.18, 0.3, 0.42, 0.55, 0.68, 0.8, 0.92]) {
+    const sample = TRACK.samples[Math.floor(fraction * TRACK.samples.length) % TRACK.samples.length];
+    const right = rightOf(sample);
+    const outward = sample.curvature > 1e-4 ? -1 : 1;
+    const distance = WALL_OFFSET + 8;
+    const x = sample.x + right.x * distance * outward;
+    const z = sample.z + right.z * distance * outward;
+    marshalHut(x, z, Math.atan2(sample.tx, sample.tz), {
+      x: -right.x * outward,
+      z: -right.z * outward,
+    });
+  }
+
+  // --- Grille de départ : six emplacements en quinconce --------------------
+  for (let slot = 0; slot < 6; slot++) {
+    const distance = (TRACK.length - 14 - slot * 11) % TRACK.length;
+    const sample = TRACK.samples[Math.floor((distance / TRACK.length) * TRACK.samples.length) % TRACK.samples.length];
+    const right = rightOf(sample);
+    const lateral = slot % 2 === 0 ? -3.4 : 3.4;
+    const x = sample.x + right.x * lateral;
+    const z = sample.z + right.z * lateral;
+    const yaw = Math.atan2(sample.tx, sample.tz);
+    box(2.8, 0.02, 0.22, x, ROAD_LIFT + 0.012, z, whiteMat, yaw, 'none');
+    box(0.22, 0.02, 1.4, x, ROAD_LIFT + 0.012, z, whiteMat, yaw, 'none');
   }
 
   // --- Panneaux publicitaires, sur le haut du mur -------------------------
@@ -374,16 +450,19 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
     for (let i = boardIndex * 5; i < wallSamples.length; i += stride) {
       const sample = wallSamples[i % wallSamples.length];
       const right = rightOf(sample);
-      const sign = geometry.clone();
       const yaw = Math.atan2(sample.tx, sample.tz);
-      const position = new THREE.Vector3(
-        sample.x + right.x * (WALL_OFFSET + 0.05),
-        1.8,
-        sample.z + right.z * (WALL_OFFSET + 0.05),
-      );
-      sign.rotateY(yaw + Math.PI / 2);
-      sign.translate(position.x, position.y, position.z);
-      parts.push(sign);
+      for (const side of [-1, 1]) {
+        const sign = geometry.clone();
+        const position = new THREE.Vector3(
+          sample.x + right.x * (WALL_OFFSET + 0.05) * side,
+          1.8,
+          sample.z + right.z * (WALL_OFFSET + 0.05) * side,
+        );
+        // La face du panneau regarde la piste, des deux côtés du mur.
+        sign.rotateY(yaw + (side > 0 ? Math.PI / 2 : -Math.PI / 2));
+        sign.translate(position.x, position.y, position.z);
+        parts.push(sign);
+      }
     }
     if (parts.length === 0) return;
     const merged = mergeGeometries(parts);
@@ -695,31 +774,62 @@ export function buildFlatCircuit(
   const start = wallSamples[0];
   const right = rightOf(start);
   const gantryMat = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.5, metalness: 0.5 });
+  // Les mâts se plantent derrière le mur : sur le dégagement, une voiture
+  // sortie large les traverserait sans rien toucher.
+  const GANTRY_HALF = WALL_OFFSET + 2.5;
   for (const side of [-1, 1]) {
-    const x = start.x + right.x * (HALF_WIDTH + 4) * side;
-    const z = start.z + right.z * (HALF_WIDTH + 4) * side;
+    const x = start.x + right.x * GANTRY_HALF * side;
+    const z = start.z + right.z * GANTRY_HALF * side;
     const mast = new THREE.Mesh(new THREE.BoxGeometry(0.7, 7.6, 0.7), gantryMat);
     mast.position.set(x, 3.8, z);
     mast.castShadow = true;
     scene.add(mast);
   }
-  const beam = new THREE.Mesh(new THREE.BoxGeometry((HALF_WIDTH + 4.4) * 2, 1.1, 0.9), gantryMat);
+  // La poutre doit être *en travers* de la piste : sa largeur locale suit X,
+  // donc le cap de la piste suffit. Le +π/2 de la première version la posait
+  // dans l'axe de la ligne droite, comme un rail au-dessus des voitures.
+  const gantryYaw = Math.atan2(start.tx, start.tz);
+  const beam = new THREE.Mesh(new THREE.BoxGeometry((GANTRY_HALF + 0.4) * 2, 1.1, 0.9), gantryMat);
   beam.position.set(
-    start.x - start.tx * START_LINE,
+    start.x + start.tx * START_LINE,
     7.2,
-    start.z - start.tz * START_LINE,
+    start.z + start.tz * START_LINE,
   );
-  beam.rotation.y = Math.atan2(start.tx, start.tz) + Math.PI / 2;
+  beam.rotation.y = gantryYaw;
   beam.castShadow = true;
   scene.add(beam);
-  const gantrySign = new THREE.Mesh(
-    new THREE.PlaneGeometry(11, 1.6),
-    new THREE.MeshBasicMaterial({ map: boardTexture('SP95  ·  CIRCUIT', '#12141a', '#f2efe6'), side: THREE.DoubleSide }),
-  );
-  gantrySign.position.copy(beam.position);
-  gantrySign.position.y = 6.5;
-  gantrySign.rotation.y = Math.atan2(start.tx, start.tz) + Math.PI;
-  scene.add(gantrySign);
+  // Cinq feux de départ sous la poutre, face à la voiture.
+  const lightMat = new THREE.MeshStandardMaterial({
+    color: 0x2a0a0a,
+    emissive: 0x3a0505,
+    roughness: 0.35,
+  });
+  for (let i = 0; i < 5; i++) {
+    const offset = (i - 2) * 1.15;
+    const light = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.52, 0.2), lightMat);
+    light.position.set(
+      beam.position.x + Math.cos(gantryYaw) * offset,
+      6.4,
+      beam.position.z - Math.sin(gantryYaw) * offset,
+    );
+    light.rotation.y = gantryYaw + Math.PI;
+    scene.add(light);
+  }
+  // Deux faces dos à dos, chacune tournée vers l'extérieur : le panneau se lit
+  // à l'endroit dans les deux sens. Une seule face en DoubleSide montrait son
+  // dos — donc son texte en miroir — à la voiture qui arrivait.
+  const gantryMaterial = new THREE.MeshBasicMaterial({
+    map: boardTexture('SP95  ·  CIRCUIT', '#12141a', '#f2efe6'),
+  });
+  for (const [turn, shift] of [[0, 0.02], [Math.PI, -0.02]] as const) {
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(11, 1.6), gantryMaterial);
+    face.position.copy(beam.position);
+    face.position.y = 6.5;
+    face.position.x += Math.sin(gantryYaw) * shift;
+    face.position.z += Math.cos(gantryYaw) * shift;
+    face.rotation.y = gantryYaw + turn;
+    scene.add(face);
+  }
 
   const scenery = buildScenery(scene, options.anisotropy, options.lowFx);
   triangles += scenery;

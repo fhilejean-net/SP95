@@ -20,7 +20,7 @@ import {
 
 test('le tour est fermé, à l’échelle d’un circuit, et sans trou dans son axe', () => {
   assert.ok(TRACK.samples.length > 400, `${TRACK.samples.length} échantillons`);
-  assert.ok(TRACK.length > 1400 && TRACK.length < 1800, `longueur ${TRACK.length.toFixed(0)} m`);
+  assert.ok(TRACK.length > 1500 && TRACK.length < 2100, `longueur ${TRACK.length.toFixed(0)} m`);
   // Pas constant : deux échantillons voisins ne peuvent pas laisser de fente
   // dans la bande d'asphalte, et le dernier rejoint le premier.
   for (let i = 0; i < TRACK.samples.length; i++) {
@@ -46,6 +46,34 @@ test('aucun virage n’est plus serré qu’une épingle jouable', () => {
     worst >= MIN_CORNER_RADIUS,
     `rayon ${worst.toFixed(1)} m à l’échantillon ${where}`,
   );
+});
+
+test('le tour tourne des deux côtés, pas seulement autour d’un ovale', () => {
+  // Une boucle convexe ne donne que des virages dans le même sens : c'était le
+  // défaut du premier tracé. On regroupe les échantillons courbes en virages et
+  // on exige les deux signes.
+  const signs: number[] = [];
+  let current: number | null = null;
+  let calm = 0;
+  for (const sample of TRACK.samples) {
+    if (cornerRadius(sample) < 160) {
+      calm = 0;
+      if (current === null) current = Math.sign(sample.curvature);
+    } else if (current !== null) {
+      calm++;
+      if (calm > 8) {
+        signs.push(current);
+        current = null;
+        calm = 0;
+      }
+    }
+  }
+  if (current !== null) signs.push(current);
+  const left = signs.filter((sign) => sign < 0).length;
+  const right = signs.filter((sign) => sign > 0).length;
+  assert.ok(signs.length >= 7, `${signs.length} virages seulement`);
+  assert.ok(left >= 3, `${left} virages à gauche`);
+  assert.ok(right >= 3, `${right} virages à droite`);
 });
 
 test('les sections éloignées du tour ne se frôlent jamais', () => {
