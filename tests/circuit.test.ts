@@ -121,3 +121,15 @@ test('les deux tabliers du croisement en huit gardent chacun leur cote', () => {
   }
   assert.deepEqual([...heights].sort((a, b) => a - b), [0, 8]);
 });
+
+test('grass and kerbs belong to the same ground as the asphalt', () => {
+  // 0,15 m de vibreur et 0,2 m d'herbe à côté de l'asphalte : une seule plaque
+  // roulable, sans marche. Avant, seule l'asphalte avait un collider.
+  const track = slab([0, 6, 12], [0, 12], () => 0);
+  const kerb = slab([12, 16], [0, 12], () => 0.15);
+  const grass = slab([16, 40], [0, 12], () => 0.2);
+  const road = buildRoadSurface([track, kerb, grass]);
+  assert.ok(road.triangles > 20, `${road.triangles} triangles`);
+  assert.ok(area(road.vertices, road.indices) > 300, `aire ${area(road.vertices, road.indices).toFixed(0)} m²`);
+  assert.ok(road.maxGrade < 20, `pente à la couture ${road.maxGrade.toFixed(1)} %`);
+});

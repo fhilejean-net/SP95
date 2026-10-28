@@ -890,3 +890,22 @@ test('the all-terrain tires are the ones that grip in the dirt', () => {
     `rally ${effective(rally).toFixed(2)} vs road ${effective(road).toFixed(2)}`,
   );
 });
+
+test('a car that ends up under the track is put back on the surface', async () => {
+  // Atterrissage sur deux roues : les rayons des roues ne portent plus rien et
+  // le châssis, qui ne collisionne qu'avec les murs, passait sous l'asphalte.
+  const world = await makeWorld();
+  world.timestep = 1 / 60;
+  const slab = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(60, 0.3, 60).setCollisionGroups((GROUP_GROUND << 16) | GROUP_GROUND),
+    slab,
+  );
+  const rx7 = CARS.find((c) => c.id === 'rx7')!;
+  const car = new Vehicle(world, { x: 0, y: -1, z: 0, heading: 0, floorAt: () => 0 }, rx7.spec);
+  for (let i = 0; i < 30; i++) {
+    car.step(TICK, NEUTRAL_INPUT, world);
+    world.step();
+  }
+  assert.ok(car.position.y > 0.2, `the car stayed under the track (y=${car.position.y.toFixed(2)})`);
+});

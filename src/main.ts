@@ -374,7 +374,7 @@ async function boot(): Promise<void> {
   const floorLookup = (x: number, z: number, reference?: number): number | null =>
     circuitFloor(x, z, reference) ?? groundAt(x, z);
   /** Profondeur sous le sol au-delà de laquelle on repose la caisse sur place. */
-  const FALL_RECOVERY_DEPTH = 8;
+  const FALL_RECOVERY_DEPTH = 2;
   let carVehicle: Vehicle = new Vehicle(
     world,
     {

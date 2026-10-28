@@ -391,11 +391,12 @@ export async function buildCircuit(
   root.updateMatrixWorld(true);
   scene.add(root);
 
-  // 2b. Piste lissée : la surface que lisent les roues est reconstruite sur une
-  // trame régulière de 3 m à partir des triangles d'asphalte, puis filtrée
-  // (médiane puis moyenne). Les marches de quantification du fichier et les
-  // coutures entre tuiles disparaissent ; un quad qui franchit une couture
-  // emprunte son coin manquant au maillage voisin, donc pas de trou.
+  // 2b. Deux plaques, une seule couche visible. L'asphalte et les vibreurs
+  // gardent leur trame, celle qui a été réglée sur la piste ; l'herbe, le bac à
+  // gravier et le reste du sol forment une seconde trame, posée 6 cm plus bas
+  // pour que l'asphalte gagne là où les deux se recouvrent. Avant, seule la
+  // première existait : herbe et vibreurs n'avaient aucune collision et la
+  // voiture tombait dans le décor du dessous.
   const road = buildRoadSurface(asphaltMeshes);
   const roadQuery = createRoadQuery(road);
   console.log(
@@ -835,11 +836,17 @@ export async function buildCircuit(
    * manquer ni rebondir : restitution nulle, friction d'asphalte.
    */
   /** Pose la trame lissée comme surface roulable. */
-  const appendFlatRoad = (surface: RoadSurface, groups: number): number => {
+  const appendFlatRoad = (surface: RoadSurface, groups: number, drop = 0): number => {
     if (surface.triangles === 0) return 0;
     const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    // `drop` enfonce une plaque sous l'autre : la roue lit toujours la plus
+    // haute, donc l'asphalte passe avant l'herbe à leur recouvrement.
+    const vertices =
+      drop === 0
+        ? surface.vertices
+        : surface.vertices.map((value, index) => (index % 3 === 1 ? value - drop : value));
     world.createCollider(
-      RAPIER.ColliderDesc.trimesh(surface.vertices, surface.indices)
+      RAPIER.ColliderDesc.trimesh(vertices, surface.indices)
         .setFriction(0.95)
         .setRestitution(0)
         .setCollisionGroups(groups),
@@ -852,6 +859,16 @@ export async function buildCircuit(
   // surface brute du modèle (marches de quantification), ni une dalle plate (la
   // piste monte et descend), ni l'herbe (ses collines passaient à travers).
   const groundTriangles = appendFlatRoad(road, GROUND_GROUP);
+  // Le reste du sol : herbe, gravier, vibreurs lointains. Même trame, 6 cm sous
+  // l'asphalte ; sans elle, une roue qui sort de la piste ne trouve plus rien.
+  const offTrack = buildRoadSurface(
+    [...looseMeshes, ...groundMeshes.filter((mesh) => !asphaltMeshes.includes(mesh))],
+  );
+  const offTrackTriangles = appendFlatRoad(offTrack, GROUND_GROUP, 0.06);
+  console.log(
+    `Circuit : sol hors piste ${offTrackTriangles} triangles d'herbe et de gravier ` +
+      `(${offTrack.decks} tabliers, pente max ${offTrack.maxGrade.toFixed(1)} %)`,
+  );
   // Le châssis est membre de GROUP_WORLD et filtre sur GROUP_WORLD (voir
   // CHASSIS_UPRIGHT) : les murs doivent porter exactement ce couple.
   const wallTriangles = appendTrimesh(

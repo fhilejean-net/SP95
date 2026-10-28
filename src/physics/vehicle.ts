@@ -254,6 +254,14 @@ const ROLLED_UP_DOT = 0.6;
  * match the body a driver sees rather than the floor pan.
  */
 const CHASSIS_LIFT = 0.12;
+/**
+ * Profondeur sous la surface au-delà de laquelle la caisse est reposée sur la
+ * piste. Les roues sont des rayons : quand la voiture atterrit sur deux roues,
+ * aucun rayon ne porte et le châssis, qui ne collisionne qu'avec les murs,
+ * traverse l'asphalte. On la remet sur la surface au lieu de la laisser tomber
+ * dans le décor du dessous. 0,6 m : un saut normal n'est jamais *sous* la piste.
+ */
+const RESCUE_DEPTH = 0.6;
 
 /**
  * Amortissement des suspensions, en facteur de la spécification. Les
@@ -484,6 +492,19 @@ export class Vehicle {
 
   /** Called once per fixed physics tick. */
   step(dt: number, input: VehicleInput, world: RAPIER.World): void {
+
+    // Filet anti-passage sous la piste (voir RESCUE_DEPTH). Il tourne avant les
+    // rayons : une caisse déjà sous la surface n'a plus aucun contact à trouver.
+    if (this.floorAt) {
+      const under = this.body.translation();
+      const floor = this.floorAt(under.x, under.z, under.y);
+      if (floor !== null && under.y < floor - RESCUE_DEPTH) {
+        const rest = this.spec.rideHeight + this.spec.wheelRadius - 0.12 + 0.04;
+        this.body.setTranslation({ x: under.x, y: floor + rest, z: under.z }, true);
+        const v = this.body.linvel();
+        this.body.setLinvel({ x: v.x, y: Math.max(0, v.y), z: v.z }, true);
+      }
+    }
     const q = this.rotation;
     const pos = this.position;
     const up = upOf(q);
