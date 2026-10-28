@@ -59,6 +59,11 @@ export class Hud {
   private lastRpm = -1;
   /** Le panneau des tours sert aussi de chrono en conduite libre chronométrée. */
   private chrono = false;
+  /** Tracé de la piste dessinée par le jeu, s'il y en a une sur cette carte. */
+  private circuit: { x: number; z: number }[] | null = null;
+  /** Centre du cadrage de la mini-carte (0,0 = repère du monde de la ville). */
+  private mapOffsetX = 0;
+  private mapOffsetZ = 0;
 
   constructor() {
     this.minimapBase = document.createElement('canvas');
@@ -70,6 +75,30 @@ export class Hud {
     this.drawMinimapBase();
   }
 
+  /**
+   * Cadre la mini-carte sur une piste dessinée par le jeu et en trace l'axe.
+   * Sans ça, la carte du circuit héritait de l'échelle de la ville et la piste
+   * n'y occupait que quelques pixels, hors du cadre.
+   */
+  setCircuit(samples: { x: number; z: number }[]): void {
+    this.circuit = samples;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const point of samples) {
+      if (point.x < minX) minX = point.x;
+      if (point.x > maxX) maxX = point.x;
+      if (point.z < minZ) minZ = point.z;
+      if (point.z > maxZ) maxZ = point.z;
+    }
+    this.mapOffsetX = (minX + maxX) / 2;
+    this.mapOffsetZ = (minZ + maxZ) / 2;
+    this.mapScale =
+      (this.minimap.width - 18) / (Math.max(maxX - minX, maxZ - minZ) + 90);
+    this.drawMinimapBase();
+  }
+
   private drawMinimapBase(): void {
     const ctx = this.minimapBase.getContext('2d');
     if (!ctx) return;
@@ -77,6 +106,39 @@ export class Hud {
     const cy = this.mapCenter;
     const s = this.mapScale;
     ctx.clearRect(0, 0, this.minimapBase.width, this.minimapBase.height);
+
+    // Piste dessinée par le jeu : un trait double, la ligne de départ en tête.
+    if (this.circuit) {
+      ctx.beginPath();
+      for (let i = 0; i < this.circuit.length; i++) {
+        const point = this.circuit[i];
+        const x = cx + (point.x - this.mapOffsetX) * s;
+        const y = cy + (point.z - this.mapOffsetZ) * s;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(226,232,240,0.85)';
+      ctx.lineWidth = 7;
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(18,20,24,0.92)';
+      ctx.lineWidth = 4.2;
+      ctx.stroke();
+      const start = this.circuit[0];
+      ctx.beginPath();
+      ctx.arc(
+        cx + (start.x - this.mapOffsetX) * s,
+        cy + (start.z - this.mapOffsetZ) * s,
+        3.4,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fillStyle = '#f2a33c';
+      ctx.fill();
+      return;
+    }
 
     // La carte du circuit n'a que son emprise : sa dalle, en pointillés. Rien
     // d'autre n'existe autour, la mini-carte de la ville ne doit pas s'y
@@ -321,8 +383,8 @@ export class Hud {
     ctx.drawImage(this.minimapBase, 0, 0);
 
     if (nextCheckpoint) {
-      const px = cx + nextCheckpoint.x * s;
-      const py = cy + nextCheckpoint.z * s;
+      const px = cx + (nextCheckpoint.x - this.mapOffsetX) * s;
+      const py = cy + (nextCheckpoint.z - this.mapOffsetZ) * s;
       const pulse = 3.5 + Math.sin(performance.now() / 220) * 1.2;
       ctx.beginPath();
       ctx.arc(px, py, pulse + 2.5, 0, Math.PI * 2);
@@ -335,7 +397,7 @@ export class Hud {
     }
 
     ctx.save();
-    ctx.translate(cx + x * s, cy + z * s);
+    ctx.translate(cx + (x - this.mapOffsetX) * s, cy + (z - this.mapOffsetZ) * s);
     ctx.rotate(-yaw);
     ctx.beginPath();
     ctx.moveTo(0, -6);

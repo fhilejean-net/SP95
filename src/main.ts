@@ -19,6 +19,7 @@ import {
   SPAWN,
   SUMMIT_START,
   buildRaceCheckpoints,
+  setTrackSurface,
   surfaceAt,
   isWetRoad,
   setWetRoad,
@@ -34,7 +35,9 @@ import {
 } from './world/terrain.ts';
 import { NEIGHBOURHOODS, buildCity, syncProps } from './world/city.ts';
 import { buildCircuit, circuitFloor, type CircuitHandles } from './world/circuit.ts';
-import { MAP_ID, mapUrl, type MapId } from './game/maps.ts';
+import { buildFlatCircuit } from './world/flatCircuit.ts';
+import { TRACK, trackSurfaceAt } from './world/trackLayout.ts';
+import { MAPS, MAP_ID, mapUrl, type MapId } from './game/maps.ts';
 import { BUILDINGS } from './world/buildings.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
 import { buildPuddles, type PuddleField } from './world/puddles.ts';
@@ -103,6 +106,11 @@ type FreeSpawn = 'city' | 'col' | 'rally' | 'summit' | 'circuit';
 /** La carte de la session : la ville, ou le circuit seul sur la sienne. */
 const MAP = MAP_ID;
 const SUZUKA_MAP = MAP === 'suzuka';
+/** La piste dessinée par le jeu : plate de bout en bout, sans dalle importée. */
+const FLAT_MAP = MAP === 'sp95';
+/** Les deux cartes de circuit : pas de ville, pas de course à la ceinture. */
+const TRACK_MAP = SUZUKA_MAP || FLAT_MAP;
+const TRACK_LABEL = SUZUKA_MAP ? 'Circuit · Suzuka' : FLAT_MAP ? 'Circuit · SP95' : undefined;
 
 /**
  * Cadence visée, en images par seconde. Le jeu rendait à la fréquence de
@@ -178,10 +186,10 @@ function readBestLap(): number | null {
 }
 
 function refreshMenuBest(): void {
-  // Sur la carte du circuit il n'y a pas de course à la ceinture : le meilleur
+  // Sur une carte de circuit il n'y a pas de course à la ceinture : le meilleur
   // tour affiché serait celui d'une autre carte.
-  if (SUZUKA_MAP) {
-    menuBest.textContent = 'Circuit de Suzuka — la piste 2001 sur sa propre carte.';
+  if (TRACK_MAP) {
+    menuBest.textContent = `${MAPS[MAP].name} — ${MAPS[MAP].blurb}`;
     return;
   }
   const best = readBestLap();
@@ -256,12 +264,37 @@ async function boot(): Promise<void> {
       },
       'sp95.chrono.suzuka',
     );
+  } else if (FLAT_MAP) {
+    await setLoading(0.26, 'Construction du circuit SP95…');
+    const flat = buildFlatCircuit(scene, world, {
+      anisotropy: renderer.capabilities.getMaxAnisotropy(),
+      lowFx,
+    });
+    circuit = flat;
+    console.log(
+      `Circuit SP95 : ${flat.triangles} triangles, ${flat.walls} murs, ` +
+        `${Math.round(flat.length)} m de piste, collider en ${flat.buildMs} ms`,
+    );
+    // Même règle que Suzuka : la ligne est posée huit mètres devant le départ,
+    // le premier franchissement lance le tour chronométré.
+    const lineForward = forwardFromHeading(circuit.spawn.heading);
+    chrono = new Chrono(
+      {
+        x: circuit.spawn.x + lineForward.x * CHRONO_LINE_OFFSET,
+        z: circuit.spawn.z + lineForward.z * CHRONO_LINE_OFFSET,
+        heading: circuit.spawn.heading,
+      },
+      'sp95.chrono.sp95',
+    );
   }
 
-  await setLoading(SUZUKA_MAP ? 0.42 : 0.3, 'Génération du terrain…');
+  await setLoading(TRACK_MAP ? 0.42 : 0.3, 'Génération du terrain…');
   // Le terrain déborde du monde jouable et s'y redresse en barrière (voir
   // layout.borderHeight) : on ne peut plus sortir de la carte.
   const terrain = buildTerrain(scene, world, materials);
+  // Le circuit SP95 fournit lui-même son revêtement : la physique doit lire
+  // l'asphalte de la piste et l'herbe du reste, pas la grille de la ville.
+  setTrackSurface(FLAT_MAP ? trackSurfaceAt : null);
   /** Sol de jeu sous une roue : la dalle du circuit passe avant le terrain. */
   const groundAt = (x: number, z: number) =>
     Math.max(terrain.sample(x, z), circuitFloor(x, z) ?? -Infinity);
@@ -319,7 +352,7 @@ async function boot(): Promise<void> {
   /** Dry colour of each street-kit road tile, so the wet tint can be undone. */
   const streetKitDryColors = new Map<THREE.MeshStandardMaterial, THREE.Color>();
 
-  if (!SUZUKA_MAP) {
+  if (!TRACK_MAP) {
     await setLoading(0.52, 'Tracé des routes…');
     buildRoads(scene, materials);
     buildGradedRoads(scene, materials);
@@ -419,6 +452,9 @@ async function boot(): Promise<void> {
 
   const input = new InputManager(canvas);
   const hud = new Hud();
+  // La mini-carte de la piste : son propre cadrage, sinon le tour tient dans
+  // quelques pixels au centre de l'échelle de la ville.
+  if (FLAT_MAP) hud.setCircuit(TRACK.samples);
   hud.setRedline(spec.redlineRpm);
   hud.setVehicle('car');
   setTcs(tcsEnabled, false);
@@ -612,8 +648,8 @@ async function boot(): Promise<void> {
     // Sur la carte du circuit il n'y a qu'une piste : les départs de la ville y
     // retombent sur la ligne droite des stands, et la course sur la ceinture n'y
     // existe pas.
-    const target: FreeSpawn = SUZUKA_MAP ? 'circuit' : spawn;
-    const wanted: GameMode = next === 'race' && SUZUKA_MAP ? 'free' : next;
+    const target: FreeSpawn = TRACK_MAP ? 'circuit' : spawn;
+    const wanted: GameMode = next === 'race' && TRACK_MAP ? 'free' : next;
     mode = wanted;
     freeSpawn = target;
     paused = false;
@@ -625,7 +661,7 @@ async function boot(): Promise<void> {
     timedLap = Boolean(chrono) && wanted === 'free' && target === 'circuit';
     if (timedLap) chrono?.reset();
     hud.setChrono(timedLap);
-    hud.setMode(wanted, SUZUKA_MAP ? 'Circuit · Suzuka' : undefined);
+    hud.setMode(wanted, TRACK_LABEL);
     input.clear();
     audio.init();
     configureAudio();
@@ -658,7 +694,7 @@ async function boot(): Promise<void> {
       setCarPose(startPose.x, startPose.z, startPose.heading);
       drift.reset();
       lastSpeed = 0;
-      hud.flash('Circuit de Suzuka', { duration: 1600 });
+      hud.flash(FLAT_MAP ? 'Circuit SP95' : 'Circuit de Suzuka', { duration: 1600 });
     } else {
       spawnFree();
       hud.flash('Conduite libre', { duration: 1100 });
@@ -1083,17 +1119,23 @@ async function boot(): Promise<void> {
   }
 
   /**
-   * Le menu de la carte du circuit ne propose que ce qui y existe : la piste,
+   * Le menu d'une carte de circuit ne propose que ce qui y existe : la piste,
    * l'atelier, le son et le retour en ville. Les départs de la ville (course,
-   * col, rallye, sommet) sont masqués par la classe `map-suzuka`.
+   * col, rallye, sommet) sont masqués par la classe `map-track`.
    */
-  function applySuzukaMenu(): void {
-    document.body.classList.add('map-suzuka');
+  function applyTrackMenu(): void {
+    document.body.classList.add('map-track');
+    if (SUZUKA_MAP) document.body.classList.add('map-suzuka');
+    if (FLAT_MAP) document.body.classList.add('map-sp95');
     const labels: Record<string, string> = {
       'btn-free': 'Piste · ligne des stands',
       'btn-pause-free': 'Piste · ligne des stands',
       'btn-circuit': 'Retour en ville',
     };
+    if (FLAT_MAP) {
+      labels['btn-flat'] = 'Relancer la piste';
+      labels['btn-pause-flat'] = 'Circuit · SP95';
+    }
     for (const [id, label] of Object.entries(labels)) {
       const button = document.getElementById(id);
       if (button) button.textContent = label;
@@ -1114,7 +1156,14 @@ async function boot(): Promise<void> {
   // Le circuit a sa propre carte : le bouton y bascule, et en revient.
   document
     .getElementById('btn-circuit')
-    ?.addEventListener('click', () => openMap(SUZUKA_MAP ? 'ville' : 'suzuka'));
+    ?.addEventListener('click', () => openMap(TRACK_MAP ? 'ville' : 'suzuka'));
+  // La piste plate du jeu, joignable depuis n'importe quelle carte.
+  document
+    .getElementById('btn-flat')
+    ?.addEventListener('click', () => (FLAT_MAP ? startMode('free', 'circuit') : openMap('sp95')));
+  document
+    .getElementById('btn-pause-flat')
+    ?.addEventListener('click', () => (FLAT_MAP ? startMode('free', 'circuit') : openMap('sp95')));
   document.getElementById('btn-pause-col')?.addEventListener('click', () => startMode('free', 'col'));
   document.getElementById('btn-rally')?.addEventListener('click', () => startMode('free', 'rally'));
   document.getElementById('btn-pause-rally')?.addEventListener('click', () => startMode('free', 'rally'));
@@ -1203,7 +1252,7 @@ async function boot(): Promise<void> {
 
   refreshMenuBest();
   setCarPose(startPose.x, startPose.z, startPose.heading);
-  if (SUZUKA_MAP) applySuzukaMenu();
+  if (TRACK_MAP) applyTrackMenu();
   await setLoading(1, 'Prêt');
   await new Promise((resolve) => setTimeout(resolve, 220));
   loading.classList.add('done');
@@ -2196,7 +2245,9 @@ async function boot(): Promise<void> {
     startCol: () => startMode('free', 'col'),
     // Le circuit vit sur sa carte : au clic on y bascule, au lieu de traverser
     // la ville. Les scripts de capture ouvrent l'URL avec `?map=suzuka`.
-    startCircuit: () => (SUZUKA_MAP ? startMode('free', 'circuit') : openMap('suzuka')),
+    startCircuit: () => (TRACK_MAP ? startMode('free', 'circuit') : openMap('suzuka')),
+    // Ouvrir (ou relancer) la piste plate dessinée par le jeu.
+    startFlat: () => (FLAT_MAP ? startMode('free', 'circuit') : openMap('sp95')),
     startRally: () => startMode('free', 'rally'),
     startSummit: () => startMode('free', 'summit'),
     teleport: (x: number, z: number, heading: number) => setCarPose(x, z, heading),
@@ -2330,6 +2381,7 @@ declare global {
       startRace: () => void;
       startCol: () => void;
       startCircuit: () => void;
+      startFlat?: () => void;
       startRally: () => void;
       startSummit: () => void;
       teleport: (x: number, z: number, heading: number) => void;

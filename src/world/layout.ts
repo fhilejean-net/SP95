@@ -5,15 +5,21 @@ import { MAP_ID, type MapId } from '../game/maps.ts';
 const VILLAGE_WORLD_SIZE = 2000;
 /** La carte du circuit est calée sur sa dalle : 2,4 km de côté. */
 const SUZUKA_WORLD_SIZE = 2400;
+/** Le circuit SP95 tient dans 1,6 km : sa piste fait 1,5 km de tour. */
+const FLAT_WORLD_SIZE = 1600;
 
 /** Taille du monde de chaque carte. */
 export function worldSizeFor(map: MapId): number {
-  return map === 'suzuka' ? SUZUKA_WORLD_SIZE : VILLAGE_WORLD_SIZE;
+  if (map === 'suzuka') return SUZUKA_WORLD_SIZE;
+  if (map === 'sp95') return FLAT_WORLD_SIZE;
+  return VILLAGE_WORLD_SIZE;
 }
 
-/** ~7 m de maille sur la ville, ~6 m sur le circuit : sa dalle est plus fine. */
+/** ~7 m de maille sur la ville, ~6 m sur la dalle de Suzuka, 8 m à plat. */
 export function terrainSegmentsFor(map: MapId): number {
-  return map === 'suzuka' ? 420 : 300;
+  if (map === 'suzuka') return 420;
+  if (map === 'sp95') return 200;
+  return 300;
 }
 
 export const WORLD_SIZE = worldSizeFor(MAP_ID);
@@ -53,6 +59,12 @@ export function villageFeaturesOn(map: MapId): boolean {
 }
 
 export const VILLAGE_MAP = villageFeaturesOn(MAP_ID);
+/**
+ * La carte au sol strictement plat : le circuit SP95. Son relief vaut zéro
+ * partout, donc aucune pente ne peut sortir du terrain et la piste n'a pas
+ * besoin d'une seconde couche de collision.
+ */
+export const FLAT_MAP = MAP_ID === 'sp95';
 
 export type SurfaceKind = 'asphalte' | 'terre' | 'herbe';
 
@@ -558,6 +570,9 @@ function segmentHit(
 
 /** Terrain as the mountain road finds it, before the road is cut into it. */
 export function naturalHeightAt(x: number, z: number): number {
+  // Le circuit SP95 est plat par contrat : pas de collines, pas de bord relevé
+  // dans le monde jouable. Le seul relief est la barrière du bord, très loin.
+  if (FLAT_MAP) return 0;
   const base = baseHeight(x, z);
   // La carte du circuit n'a ni route à longer, ni massif à contourner : son
   // relief se réduit aux collines et à la ceinture de montagnes du bord.
@@ -860,11 +875,28 @@ export function surfaceAt(x: number, z: number): SurfaceInfo {
   return wetRoad ? WET_SURFACES[info.kind] : info;
 }
 
+/**
+ * Revêtement fourni par une piste dessinée par le jeu (le circuit SP95).
+ *
+ * `surfaceAt` appartient à ce module mais la piste vit dans le sien : sans ce
+ * point d'entrée, la grille devrait connaître chaque tracé. Il est posé après
+ * la construction de la piste, avant le premier pas de physique.
+ */
+let trackSurfaceSource: ((x: number, z: number) => SurfaceKind | null) | null = null;
+
+export function setTrackSurface(
+  source: ((x: number, z: number) => SurfaceKind | null) | null,
+): void {
+  trackSurfaceSource = source;
+}
+
 function drySurfaceAt(x: number, z: number): SurfaceInfo {
   // Le circuit a son propre revêtement : bac à gravier compris, il n'y a pas de
   // rayon à tirer dans les cailloux pour savoir si la roue accroche.
   const circuit = CIRCUIT.active ? CIRCUIT.surface?.(x, z) : null;
   if (circuit) return SURFACES[circuit];
+  const authored = trackSurfaceSource?.(x, z);
+  if (authored) return SURFACES[authored];
   // Sa carte n'a pas d'autre route : hors dalle, c'est l'herbe, où que la ville
   // aurait posé son bitume.
   if (!VILLAGE_MAP) return SURFACES.herbe;

@@ -7,7 +7,7 @@
  * ville, y compris une valeur inconnue.
  */
 
-export type MapId = 'ville' | 'suzuka';
+export type MapId = 'ville' | 'suzuka' | 'sp95';
 
 export interface MapInfo {
   id: MapId;
@@ -27,6 +27,11 @@ export const MAPS: Record<MapId, MapInfo> = {
     name: 'Circuit de Suzuka',
     blurb: 'Le tracé 2001 seul, sur son plateau de campagne.',
   },
+  sp95: {
+    id: 'sp95',
+    name: 'Circuit SP95',
+    blurb: 'La piste dessinée par le jeu : plate de bout en bout, murs solides.',
+  },
 };
 
 export const DEFAULT_MAP: MapId = 'ville';
@@ -34,7 +39,7 @@ export const DEFAULT_MAP: MapId = 'ville';
 /** Carte demandée dans une query string ; la ville pour tout le reste. */
 export function mapFromSearch(search: string): MapId {
   const asked = new URLSearchParams(search).get('map');
-  return asked === 'suzuka' ? 'suzuka' : DEFAULT_MAP;
+  return asked === 'suzuka' || asked === 'sp95' ? asked : DEFAULT_MAP;
 }
 
 /** URL de `href` (absolue) pointant sur la carte demandée. */
