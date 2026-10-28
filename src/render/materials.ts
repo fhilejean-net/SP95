@@ -73,6 +73,41 @@ function loadGroundTexture(
   return tex;
 }
 
+/**
+ * Asphalte photographié : la tuile de rue fournie avec le projet ne garde que
+ * sa zone d'asphalte propre (ni ligne, ni bordure), découpée et compressée en
+ * WebP (51 kB au lieu des 14 Mo du GLB d'origine).
+ */
+export function createRoadTextures(anisotropy: number, repeat: number): {
+  map: THREE.Texture;
+  normalMap: THREE.Texture;
+  roughnessMap: THREE.Texture;
+} {
+  const load = (file: string, srgb: boolean): THREE.Texture => {
+    const base = import.meta.env.BASE_URL ?? '/';
+    const texture = new THREE.TextureLoader().load(`${base}textures/road/${file}`);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    texture.anisotropy = anisotropy;
+    texture.repeat.set(repeat, 1);
+    return texture;
+  };
+  return {
+    map: load('asphalt_albedo.webp', true),
+    normalMap: load('asphalt_normal.webp', false),
+    roughnessMap: load('asphalt_rough.webp', false),
+  };
+}
+
+/** Touffe d'herbe : quelques brins découpés dans la planche fournie. */
+export function createGrassTuftTexture(anisotropy: number): THREE.Texture {
+  const base = import.meta.env.BASE_URL ?? '/';
+  const texture = new THREE.TextureLoader().load(`${base}textures/grass/tuft.png`);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = anisotropy;
+  return texture;
+}
+
 /** Grass, with the normal and roughness maps that came with it. */
 export function createGrassTextures(repeat: number): {
   map: THREE.Texture;

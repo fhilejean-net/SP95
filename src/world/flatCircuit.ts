@@ -18,7 +18,12 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GROUP_WORLD } from '../physics/vehicle.ts';
-import { createAsphaltTexture, createConcreteTexture } from '../render/materials.ts';
+import {
+  createAsphaltTexture,
+  createConcreteTexture,
+  createGrassTuftTexture,
+  createRoadTextures,
+} from '../render/materials.ts';
 import {
   HALF_WIDTH,
   KERB_WIDTH,
@@ -246,6 +251,95 @@ function boardTexture(text: string, background: string, ink: string): THREE.Canv
 }
 
 /**
+ * Panneau de sponsor : fond plein, coin de couleur, marque et accroche. Le
+ * dessin est net à 6 m de haut et coûte une canvas de 1024 × 160 par marque.
+ */
+function sponsorTexture(options: {
+  name: string;
+  tagline: string;
+  background: string;
+  ink: string;
+  accent: string;
+}): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 160;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = options.background;
+  ctx.fillRect(0, 0, 1024, 160);
+  // Coin oblique, comme une virgule de logo.
+  ctx.fillStyle = options.accent;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(176, 0);
+  ctx.lineTo(104, 160);
+  ctx.lineTo(0, 160);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, 1020, 156);
+  ctx.fillStyle = options.ink;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 80px system-ui, sans-serif';
+  ctx.fillText(options.name, 208, 64);
+  ctx.globalAlpha = 0.78;
+  ctx.font = '600 32px system-ui, sans-serif';
+  ctx.fillText(options.tagline, 212, 124);
+  ctx.globalAlpha = 1;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  return texture;
+}
+
+/**
+ * Bandeau du portique : nom du circuit à gauche, quatre écuries à droite,
+ * chacune avec sa couleur et ses initiales.
+ */
+function gantryBannerTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 2048;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#11141b';
+  ctx.fillRect(0, 0, 2048, 256);
+  ctx.fillStyle = '#a3141c';
+  ctx.fillRect(0, 0, 2048, 12);
+  ctx.fillRect(0, 244, 2048, 12);
+  ctx.fillStyle = '#f3f0e6';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 116px system-ui, sans-serif';
+  ctx.fillText('CIRCUIT SP95', 54, 104);
+  ctx.fillStyle = '#a9a69d';
+  ctx.font = '600 38px system-ui, sans-serif';
+  ctx.fillText('GRAND PRIX DE LA PLAINE', 58, 188);
+  const teams = [
+    { initials: 'RV', colour: '#b3131b', ink: '#f6f2e6' },
+    { initials: 'AZ', colour: '#1d8f6f', ink: '#f6f2e6' },
+    { initials: 'BL', colour: '#2b57a8', ink: '#f6f2e6' },
+    { initials: 'OR', colour: '#e2a119', ink: '#191a1c' },
+  ];
+  teams.forEach((team, index) => {
+    const x = 1252 + index * 192;
+    ctx.fillStyle = team.colour;
+    ctx.beginPath();
+    ctx.roundRect(x, 54, 160, 148, 16);
+    ctx.fill();
+    ctx.fillStyle = team.ink;
+    ctx.font = 'bold 72px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(team.initials, x + 80, 124);
+  });
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  return texture;
+}
+
+/**
  * Grand stands, atelier, pneus, arbres et panneaux : tout est bâti ici, à la
  * cote zéro, et aucun de ces objets ne porte de collision — ils sont derrière
  * les murs, ou hors d'atteinte.
@@ -390,24 +484,82 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
   // La position se calcule depuis l'axe, côté *extérieur* du virage, à huit
   // mètres derrière le mur. La version précédente écrivait six coordonnées à
   // la main : deux tombaient sur l'asphalte.
+  const extinguisher = new THREE.CylinderGeometry(0.11, 0.11, 0.52, 10);
+  const extinguisherMat = new THREE.MeshStandardMaterial({ color: 0xa3141c, roughness: 0.5 });
+  const flagMat = new THREE.MeshStandardMaterial({
+    color: 0xb01a1f,
+    roughness: 0.75,
+    side: THREE.DoubleSide,
+  });
   const marshalHut = (
     x: number,
     z: number,
     yaw: number,
     facing: { x: number; z: number },
   ): void => {
-    box(4.6, 0.18, 4.8, x, 0.09, z, concreteMat, yaw, 'receive');
-    box(3.6, 2.5, 3.4, x, 1.25, z, whiteMat, yaw);
-    box(3.7, 0.38, 3.5, x, 2.55, z, redMat, yaw);
-    box(0.16, 0.8, 1.4, x + facing.x * 1.72, 1.75, z + facing.z * 1.72, glassMat, yaw, 'none');
-    box(0.16, 1.85, 0.9, x - facing.x * 1.72, 0.95, z - facing.z * 1.72, darkMat, yaw, 'none');
-    box(4.8, 0.22, 4.6, x, 2.86, z, darkMat, yaw);
-    box(0.12, 2.1, 0.12, x + 1.5, 3.9, z + 1.3, metalMat);
-    box(0.08, 1.6, 0.08, x - 1.6, 3.6, z - 1.2, metalMat);
-    // Sacs de sable devant l'ouverture, côté piste.
-    for (let i = -1; i <= 1; i++) {
-      box(0.8, 0.28, 0.45, x + facing.x * 2.1 + i * 0.95, 0.14, z + facing.z * 2.1, darkMat, yaw);
+    // Repère local du poste : `across` va vers la piste, `along` suit l'axe.
+    const along = { x: facing.z, z: -facing.x };
+    const at = (
+      across: number,
+      side: number,
+      y: number,
+      width: number,
+      height: number,
+      depth: number,
+      material: THREE.Material,
+      shadows: 'both' | 'receive' | 'none' = 'both',
+    ): void => {
+      box(
+        width,
+        height,
+        depth,
+        x + facing.x * across + along.x * side,
+        y,
+        z + facing.z * across + along.z * side,
+        material,
+        yaw,
+        shadows,
+      );
+    };
+    // Dalle, soubassement béton, corps blanc, bandeau rouge, toit à redans.
+    at(0, 0, 0.11, 5, 0.22, 5.2, concreteMat, 'receive');
+    at(0, 0, 0.42, 3.72, 0.84, 3.62, concreteMat);
+    at(0, 0, 1.62, 3.6, 2.4, 3.5, whiteMat);
+    at(0, 0, 2.72, 3.7, 0.34, 3.6, redMat);
+    at(0, 0, 2.98, 4.3, 0.18, 4.3, darkMat);
+    // Redan sur le toit, côté piste, et parapet arrière.
+    at(1.98, 0, 3.2, 0.18, 0.4, 4.3, concreteMat);
+    at(-1.98, 0, 3.1, 0.18, 0.24, 4.3, concreteMat);
+    at(0, 2.05, 3.1, 4.3, 0.24, 0.18, concreteMat);
+    at(0, -2.05, 3.1, 4.3, 0.24, 0.18, concreteMat);
+    // Baie vitrée en bandeau, ses montants et son appui.
+    at(1.83, 0, 1.86, 0.1, 0.86, 3.05, glassMat, 'none');
+    for (const side of [-1.1, 0, 1.1]) at(1.87, side, 1.86, 0.09, 0.9, 0.1, darkMat);
+    at(1.9, 0, 1.4, 0.15, 0.1, 3.1, whiteMat);
+    // Porte à l'arrière, avec deux marches.
+    at(0, -1.79, 0.95, 1.05, 1.9, 0.1, darkMat);
+    at(0, -2.14, 0.14, 1.5, 0.28, 0.5, concreteMat);
+    at(0, -2.5, 0.07, 1.5, 0.14, 0.5, concreteMat);
+    // Sacs de sable devant l'ouverture, sur deux rangs.
+    for (let row = 0; row < 2; row++) {
+      for (let i = -2; i <= 2; i++) {
+        at(2.28 + row * 0.42, i * 0.66 + row * 0.33, 0.16 + row * 0.29, 0.66, 0.3, 0.5, darkMat);
+      }
     }
+    // Extincteur, mât et drapeau, antenne radio.
+    const bottle = new THREE.Mesh(extinguisher, extinguisherMat);
+    bottle.position.set(x + facing.x * 1.55 + along.x * 1.5, 0.26, z + facing.z * 1.55 + along.z * 1.5);
+    scene.add(bottle);
+    box(0.09, 3.3, 0.09, x + facing.x * 1.5 + along.x * 1.4, 4.6, z + facing.z * 1.5 + along.z * 1.4, metalMat);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 0.6), flagMat);
+    flag.position.set(
+      x + facing.x * 1.5 + along.x * 1.95,
+      5.55,
+      z + facing.z * 1.5 + along.z * 1.95,
+    );
+    flag.rotation.y = yaw + Math.PI / 2;
+    scene.add(flag);
+    box(0.06, 1.5, 0.06, x - facing.x * 1.3 + along.x * 1.1, 3.8, z - facing.z * 1.3 + along.z * 1.1, metalMat);
   };
   for (const fraction of [0.06, 0.18, 0.3, 0.42, 0.55, 0.68, 0.8, 0.92]) {
     const sample = TRACK.samples[Math.floor(fraction * TRACK.samples.length) % TRACK.samples.length];
@@ -435,16 +587,24 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
     box(0.22, 0.02, 1.4, x, ROAD_LIFT + 0.012, z, whiteMat, yaw, 'none');
   }
 
-  // --- Panneaux publicitaires, sur le haut du mur -------------------------
+  // --- Panneaux publicitaires, devant la face intérieure du mur -----------
+  // La face est posée 9 cm *devant* le mur (dont la face intérieure est à
+  // WALL_OFFSET - WALL_THICK/2). L'ancienne version la plantait 5 cm derrière
+  // cette face, donc dans l'épaisseur du mur : les deux plans se disputaient le
+  // tampon de profondeur, et tout le panneau clignotait au loin.
   const boards = [
-    { map: boardTexture('SP95', '#a3141c', '#f4f1e8'), step: 26 },
-    { map: boardTexture('TURBO', '#f2f0e8', '#1a1c20'), step: 26 },
-    { map: boardTexture('PISTON', '#e8b422', '#191a1c'), step: 26 },
+    { map: sponsorTexture({ name: 'VELOCE', tagline: 'SCUDERIA · MODENA', background: '#8f1017', ink: '#f6f2e6', accent: '#e8b422' }), step: 25 },
+    { map: sponsorTexture({ name: 'NORTHWIND', tagline: 'AIR SYSTEMS', background: '#e9e7df', ink: '#17202c', accent: '#2b57a8' }), step: 31 },
+    { map: sponsorTexture({ name: 'APEX OIL', tagline: 'FULL SYNTHETIC', background: '#14161b', ink: '#f4d34a', accent: '#f4d34a' }), step: 27 },
+    { map: sponsorTexture({ name: 'KERB+', tagline: 'RACE ENGINEERING', background: '#10241d', ink: '#eaf3ec', accent: '#1d8f6f' }), step: 35 },
+    { map: sponsorTexture({ name: 'ORBITA', tagline: 'TYRES · GRIP 0', background: '#1d2a44', ink: '#f2f4f8', accent: '#c2272d' }), step: 29 },
   ];
   const wallSamples = resample(WALL_STEP);
+  const boardLateral = WALL_OFFSET - WALL_THICK / 2 - 0.09;
+  const postParts: THREE.BufferGeometry[] = [];
   boards.forEach((board, boardIndex) => {
-    const geometry = new THREE.PlaneGeometry(7, 1.3);
-    const material = new THREE.MeshStandardMaterial({ map: board.map, roughness: 0.7, side: THREE.DoubleSide });
+    const geometry = new THREE.PlaneGeometry(6.4, 1.15);
+    const material = new THREE.MeshStandardMaterial({ map: board.map, roughness: 0.6, metalness: 0.05 });
     const parts: THREE.BufferGeometry[] = [];
     const stride = Math.max(1, Math.round(board.step / WALL_STEP));
     for (let i = boardIndex * 5; i < wallSamples.length; i += stride) {
@@ -452,16 +612,20 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
       const right = rightOf(sample);
       const yaw = Math.atan2(sample.tx, sample.tz);
       for (const side of [-1, 1]) {
-        const sign = geometry.clone();
-        const position = new THREE.Vector3(
-          sample.x + right.x * (WALL_OFFSET + 0.05) * side,
-          1.8,
-          sample.z + right.z * (WALL_OFFSET + 0.05) * side,
-        );
-        // La face du panneau regarde la piste, des deux côtés du mur.
-        sign.rotateY(yaw + (side > 0 ? Math.PI / 2 : -Math.PI / 2));
-        sign.translate(position.x, position.y, position.z);
-        parts.push(sign);
+        const face = geometry.clone();
+        const x = sample.x + right.x * boardLateral * side;
+        const z = sample.z + right.z * boardLateral * side;
+        // Face tournée vers la piste, de chaque côté du mur ; une seule face,
+        // pas de DoubleSide : le dos ne se lit jamais.
+        face.rotateY(yaw + (side > 0 ? Math.PI / 2 : -Math.PI / 2));
+        face.translate(x, 1.78, z);
+        parts.push(face);
+        for (const along of [-2.5, 2.5]) {
+          const post = new THREE.BoxGeometry(0.11, 1.2, 0.11);
+          post.rotateY(yaw + (side > 0 ? Math.PI / 2 : -Math.PI / 2));
+          post.translate(x + sample.tx * along, 1.2, z + sample.tz * along);
+          postParts.push(post);
+        }
       }
     }
     if (parts.length === 0) return;
@@ -473,6 +637,192 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
     scene.add(mesh);
     triangles += merged.index ? merged.index.count / 3 : merged.attributes.position.count / 3;
   });
+  if (postParts.length > 0) {
+    const merged = mergeGeometries(postParts);
+    postParts.forEach((part) => part.dispose());
+    if (merged) {
+      const posts = new THREE.Mesh(merged, metalMat);
+      posts.receiveShadow = true;
+      scene.add(posts);
+      triangles += merged.index ? merged.index.count / 3 : merged.attributes.position.count / 3;
+    }
+  }
+
+  // --- Tribunes secondaires dans les virages lents ------------------------
+  // Une tribune est construite dans un repère local (front à x = 0, gradins
+  // vers -x) puis tournée pour regarder la piste. Elle se pose sur le
+  // dégagement extérieur, à quinze mètres derrière le mur.
+  const secondaryStand = (
+    sample: TrackSample,
+    outward: 1 | -1,
+    length: number,
+    rows: number,
+  ): void => {
+    const right = rightOf(sample);
+    const distance = WALL_OFFSET + 16;
+    const cx = sample.x + right.x * distance * outward;
+    const cz = sample.z + right.z * distance * outward;
+    const yaw = Math.atan2(outward * right.z, -outward * right.x);
+    const group = new THREE.Group();
+    group.position.set(cx, 0, cz);
+    group.rotation.y = yaw;
+    const stepDepth = 2.1;
+    for (let row = 0; row < rows; row++) {
+      const height = 0.62 + row * 0.62;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(stepDepth, height, length), concreteMat);
+      step.position.set(-(row + 0.5) * stepDepth, height / 2, 0);
+      step.castShadow = true;
+      step.receiveShadow = true;
+      group.add(step);
+      triangles += 12;
+    }
+    const seats = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.46, 0.34, 0.5),
+      seatMat,
+      rows * Math.floor(length / 2),
+    );
+    let seat = 0;
+    for (let row = 0; row < rows; row++) {
+      for (let column = 0; column < Math.floor(length / 2); column++) {
+        matrix.makeTranslation(
+          -(row + 1) * stepDepth + 0.55,
+          0.62 + row * 0.62 + 0.17,
+          -length / 2 + 1 + column * 2,
+        );
+        seats.setMatrixAt(seat, matrix);
+        color.set(row % 3 === 0 ? 0xb02026 : 0xd8d6cd);
+        seats.setColorAt(seat, color);
+        seat++;
+      }
+    }
+    seats.receiveShadow = true;
+    group.add(seats);
+    const banner = new THREE.Mesh(
+      new THREE.PlaneGeometry(length * 0.98, 1.7),
+      new THREE.MeshBasicMaterial({ map: boardTexture('SP95', '#12303f', '#f2efe6') }),
+    );
+    banner.position.set(0.06, 2, 0);
+    banner.rotation.y = Math.PI / 2;
+    group.add(banner);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(rows * stepDepth + 4, 0.45, length), metalMat);
+    roof.position.set(-(rows * stepDepth) / 2 - 1, 8.2, 0);
+    roof.castShadow = true;
+    group.add(roof);
+    for (const z of [-length / 2 + 4, length / 2 - 4]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.55, 8.2, 0.55), metalMat);
+      post.position.set(-rows * stepDepth - 1, 4.1, z);
+      group.add(post);
+    }
+    scene.add(group);
+    triangles += 40;
+  };
+  let placedStands = 0;
+  for (let i = 0; i < TRACK.samples.length && placedStands < 3; i += 2) {
+    const sample = TRACK.samples[i];
+    if (Math.abs(sample.curvature) < 1 / 62) continue;
+    // Une tribune tous les 350 m au moins, sur l'extérieur du virage.
+    if (TRACK.samples.slice(0, i).some((other, index) => {
+      if (index % 2 !== 0) return false;
+      if (Math.abs(other.curvature) < 1 / 62) return false;
+      return Math.abs(other.distance - sample.distance) < 350;
+    })) continue;
+    secondaryStand(sample, sample.curvature > 0 ? -1 : 1, 46, 7);
+    placedStands++;
+  }
+
+  // --- Barrières Tecpro au pied des murs des courbes rapides --------------
+  // Décoratives : les murs restent la limite physique, les blocs sont posés
+  // contre leur face intérieure, là où une voiture sortie large arrive.
+  const tecproSpots: { x: number; z: number; yaw: number }[] = [];
+  for (const sample of wallSamples) {
+    if (Math.abs(sample.curvature) < 1 / 120) continue;
+    const right = rightOf(sample);
+    const outward = sample.curvature > 0 ? -1 : 1;
+    const lateral = outward * (WALL_OFFSET - WALL_THICK / 2 - 0.34);
+    tecproSpots.push({
+      x: sample.x + right.x * lateral,
+      z: sample.z + right.z * lateral,
+      yaw: Math.atan2(sample.tx, sample.tz),
+    });
+  }
+  if (tecproSpots.length > 0) {
+    const blocks = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.6, 0.94, 2.9),
+      new THREE.MeshStandardMaterial({ roughness: 0.52, metalness: 0.05 }),
+      tecproSpots.length,
+    );
+    const quaternion = new THREE.Quaternion();
+    const position = new THREE.Vector3();
+    const scale = new THREE.Vector3(1, 1, 1);
+    tecproSpots.forEach((spot, index) => {
+      quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), spot.yaw);
+      position.set(spot.x, 0.47, spot.z);
+      matrix.compose(position, quaternion, scale);
+      blocks.setMatrixAt(index, matrix);
+      blocks.setColorAt(index, color.set(index % 2 === 0 ? 0xe6e2d6 : 0xb02328));
+    });
+    blocks.castShadow = false;
+    blocks.receiveShadow = true;
+    scene.add(blocks);
+    triangles += tecproSpots.length * 12;
+  }
+
+  // --- Touffes d'herbe, en cartes croisées ---------------------------------
+  // Le paquet fourni contient 204 000 triangles de brins : ici, une seule
+  // touffe de deux quads, instanciée. Cinq cents touffes coûtent un appel.
+  if (!lowFx) {
+    const tuft = new THREE.PlaneGeometry(1.6, 0.85);
+    tuft.translate(0, 0.42, 0);
+    const crossed = mergeGeometries([tuft, tuft.clone().rotateY(Math.PI / 2)]);
+    if (crossed) {
+      const tufts = new THREE.InstancedMesh(
+        crossed,
+        new THREE.MeshStandardMaterial({
+          map: createGrassTuftTexture(anisotropy),
+          transparent: true,
+          alphaTest: 0.45,
+          roughness: 0.92,
+          side: THREE.DoubleSide,
+        }),
+        520,
+      );
+      let seed = 7717;
+      const random = (): number => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 4294967296;
+      };
+      // Repère local à ce bloc : les variables du même nom vivent dans la
+      // section Tecpro, juste au-dessus.
+      const tuftRotation = new THREE.Quaternion();
+      const tuftPosition = new THREE.Vector3();
+      const tuftScale = new THREE.Vector3(1, 1, 1);
+      let planted = 0;
+      for (let i = 0; i < wallSamples.length && planted < 520; i += 2) {
+        const sample = wallSamples[i];
+        const right = rightOf(sample);
+        for (const side of [-1, 1]) {
+          if (random() > 0.55) continue;
+          const lateral = side * (WALL_OFFSET + 3.2 + random() * 16);
+          const x = sample.x + right.x * lateral + (random() - 0.5) * 3;
+          const z = sample.z + right.z * lateral + (random() - 0.5) * 3;
+          const yaw = random() * Math.PI;
+          const size = 0.7 + random() * 0.9;
+          tuftRotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+          tuftPosition.set(x, 0, z);
+          tuftScale.set(size, size, size);
+          matrix.compose(tuftPosition, tuftRotation, tuftScale);
+          tufts.setMatrixAt(planted, matrix);
+          tufts.setColorAt(planted, color.setHSL(0.25 + random() * 0.05, 0.32, 0.3 + random() * 0.1));
+          planted++;
+          if (planted >= 520) break;
+        }
+      }
+      tufts.count = planted;
+      tufts.receiveShadow = false;
+      scene.add(tufts);
+      triangles += planted * 4;
+    }
+  }
 
   // --- Pneus empilés derrière les murs des virages serrés -----------------
   const tyreSpots: { x: number; z: number; yaw: number }[] = [];
@@ -577,12 +927,20 @@ export function buildFlatCircuit(
   options: FlatCircuitOptions,
 ): FlatCircuitHandles {
   const started = performance.now();
-  const asphaltTexture = createAsphaltTexture();
-  asphaltTexture.anisotropy = options.anisotropy;
+  // Asphalte photographié : deux répétitions sur la largeur (7 m de tuile),
+  // onze mètres le long de l'axe. La normale et la rugosité viennent du même
+  // relevé, ce qui donne le grain sans une texture procédurale de plus.
+  const roadTextures = createRoadTextures(options.anisotropy, 3);
   const asphaltMat = new THREE.MeshStandardMaterial({
-    map: asphaltTexture,
-    roughness: 0.93,
-    metalness: 0.02,
+    map: roadTextures.map,
+    normalMap: roadTextures.normalMap,
+    // Le relevé est clair et très marqué : on le ramène au gris sombre de la
+    // piste et on garde un grain discret, sinon l'asphalte lit comme du béton.
+    normalScale: new THREE.Vector2(0.18, 0.18),
+    color: new THREE.Color(0.44, 0.46, 0.5),
+    roughnessMap: roadTextures.roughnessMap,
+    roughness: 1,
+    metalness: 0.03,
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
@@ -614,9 +972,11 @@ export function buildFlatCircuit(
   // Bords plus sombres : deux bandes étroites, même texture, teinte basse. Elles
   // donnent la largeur de la piste à distance sans éclaircir le centre.
   const edgeMat = new THREE.MeshStandardMaterial({
-    map: asphaltTexture,
+    map: roadTextures.map,
+    normalMap: roadTextures.normalMap,
     color: new THREE.Color(EDGE_SHADE, EDGE_SHADE, EDGE_SHADE * 1.06),
-    roughness: 0.95,
+    roughness: 0.96,
+    metalness: 0.01,
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
@@ -746,7 +1106,9 @@ export function buildFlatCircuit(
       scale.set(1, 1, span + WALL_OVERLAP);
       matrix.compose(position, quaternion, scale);
       walls.setMatrixAt(wallIndex, matrix);
-      caps.setMatrixAt(wallIndex, matrix.setPosition(position.x, WALL_HEIGHT + 0.02, position.z));
+      // Le chapeau repose *sur* le mur : à 2 cm au-dessus du centre, sa moitié
+      // basse entrait dans la boîte du mur et clignotait.
+      caps.setMatrixAt(wallIndex, matrix.setPosition(position.x, WALL_HEIGHT + 0.09, position.z));
       capColor.set(wallIndex % 2 === 0 ? 0xd8d5cc : 0xb02a2c);
       caps.setColorAt(wallIndex, capColor);
       wallIndex++;
@@ -773,7 +1135,7 @@ export function buildFlatCircuit(
   // --- Portique de départ ------------------------------------------------
   const start = wallSamples[0];
   const right = rightOf(start);
-  const gantryMat = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.5, metalness: 0.5 });
+  const gantryMat = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.55, metalness: 0.45 });
   // Les mâts se plantent derrière le mur : sur le dégagement, une voiture
   // sortie large les traverserait sans rien toucher.
   const GANTRY_HALF = WALL_OFFSET + 2.5;
@@ -815,16 +1177,15 @@ export function buildFlatCircuit(
     light.rotation.y = gantryYaw + Math.PI;
     scene.add(light);
   }
-  // Deux faces dos à dos, chacune tournée vers l'extérieur : le panneau se lit
-  // à l'endroit dans les deux sens. Une seule face en DoubleSide montrait son
-  // dos — donc son texte en miroir — à la voiture qui arrivait.
-  const gantryMaterial = new THREE.MeshBasicMaterial({
-    map: boardTexture('SP95  ·  CIRCUIT', '#12141a', '#f2efe6'),
-  });
-  for (const [turn, shift] of [[0, 0.02], [Math.PI, -0.02]] as const) {
-    const face = new THREE.Mesh(new THREE.PlaneGeometry(11, 1.6), gantryMaterial);
+  // Deux faces dos à dos, chacune sur une face de la poutre : à 2 cm du centre,
+  // elles étaient *dans* la poutre (90 cm d'épaisseur) et invisibles. Le
+  // bandeau porte le nom du circuit et quatre écuries.
+  const BEAM_DEPTH = 0.9;
+  const gantryMaterial = new THREE.MeshBasicMaterial({ map: gantryBannerTexture() });
+  for (const [turn, shift] of [[0, BEAM_DEPTH / 2 + 0.02], [Math.PI, -(BEAM_DEPTH / 2 + 0.02)]] as const) {
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(24, 2.1), gantryMaterial);
     face.position.copy(beam.position);
-    face.position.y = 6.5;
+    face.position.y = 6.35;
     face.position.x += Math.sin(gantryYaw) * shift;
     face.position.z += Math.cos(gantryYaw) * shift;
     face.rotation.y = gantryYaw + turn;
