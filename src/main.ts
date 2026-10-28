@@ -111,6 +111,8 @@ const SUZUKA_MAP = MAP === 'suzuka';
  * (ou `?fps=0`, qui rend la main à l'écran) choisit autre chose.
  */
 const FRAME_TARGET = readFrameTarget();
+/** `?collide` affiche le maillage de collision dès le chargement (F9 le bascule). */
+const COLLIDE_VIEW = new URLSearchParams(window.location.search).has('collide');
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const loading = document.getElementById('loading') as HTMLDivElement;
@@ -1169,6 +1171,17 @@ async function boot(): Promise<void> {
   window.addEventListener('pointerdown', unlockAudio, { once: true });
   window.addEventListener('keydown', unlockAudio, { once: true });
 
+  // F9 : le maillage de collision sous les yeux. C'est l'outil de diagnostic des
+  // trous de piste — un endroit où le treillis manque est un endroit où la
+  // voiture passe à travers.
+  window.addEventListener('keydown', (event) => {
+    if (event.code !== 'F9') return;
+    event.preventDefault();
+    hud.flash(toggleCollisionView() ? 'Collisions affichées' : 'Collisions masquées', {
+      duration: 1600,
+    });
+  });
+
   window.addEventListener('resize', () => {
     const width = window.innerWidth;
     const height = window.innerHeight;
@@ -1918,6 +1931,59 @@ async function boot(): Promise<void> {
     sun: sky.sun,
   };
 
+  /**
+   * Affiche le maillage exact que lisent les roues : la plaque d'asphalte en
+   * cyan (fil de fer), l'herbe et le gravier en ambre. Un trou dans le treillis
+   * est un trou de collision — c'est là que la voiture tombe. `?collide` au
+   * chargement, F9 en jeu, `__sp95.setCollisionView()` depuis un script.
+   */
+  let collisionView: THREE.Group | null = null;
+  function toggleCollisionView(on?: boolean): boolean {
+    if (!collisionView) {
+      collisionView = new THREE.Group();
+      collisionView.name = 'collision-view';
+      const debug = (globalThis as unknown as {
+        __sp95Circuit?: {
+          flatRoad?: { vertices: Float32Array; indices: Uint32Array };
+          offTrack?: { vertices: Float32Array; indices: Uint32Array };
+        };
+      }).__sp95Circuit;
+      const addSurface = (
+        surface: { vertices: Float32Array; indices: Uint32Array } | undefined,
+        color: number,
+        wireframe: boolean,
+        lift: number,
+      ): void => {
+        if (!surface || surface.indices.length === 0) return;
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(surface.vertices.slice(), 3));
+        geometry.setIndex(new THREE.BufferAttribute(surface.indices.slice(), 1));
+        // Quelques centimètres au-dessus de la surface visible, pour ne pas
+        // clignoter contre elle.
+        geometry.translate(0, lift, 0);
+        collisionView!.add(
+          new THREE.Mesh(
+            geometry,
+            new THREE.MeshBasicMaterial({
+              color,
+              wireframe,
+              transparent: true,
+              opacity: wireframe ? 0.9 : 0.14,
+              depthWrite: false,
+              side: THREE.DoubleSide,
+            }),
+          ),
+        );
+      };
+      addSurface(debug?.flatRoad, 0x36e0ff, true, 0.03);
+      addSurface(debug?.offTrack, 0xffb347, false, 0.05);
+      scene.add(collisionView);
+    }
+    collisionView.visible = on ?? !collisionView.visible;
+    return collisionView.visible;
+  }
+  if (COLLIDE_VIEW) toggleCollisionView(true);
+
   window.__sp95 = {
     ready: true,
     map: MAP,
@@ -1964,6 +2030,7 @@ async function boot(): Promise<void> {
         setShadows: (on: boolean) => {
           renderer.shadowMap.enabled = on;
         },
+        setCollisionView: (on?: boolean) => toggleCollisionView(on),
       };
     },
     get setup() {
@@ -2121,6 +2188,10 @@ async function boot(): Promise<void> {
     openShowroom: () => openShowroom(),
     resetChrono: () => chrono?.reset(),
     startFree: () => startMode('free'),
+    get collisionView() {
+      return collisionView?.visible ?? false;
+    },
+    setCollisionView: (on?: boolean) => toggleCollisionView(on),
     startRace: () => startMode('race'),
     startCol: () => startMode('free', 'col'),
     // Le circuit vit sur sa carte : au clic on y bascule, au lieu de traverser
@@ -2144,6 +2215,9 @@ async function boot(): Promise<void> {
 declare global {
   interface Window {
     __sp95?: {
+    /** Vue des collisions (F9 / `?collide`). */
+    readonly collisionView?: boolean;
+    setCollisionView?: (on?: boolean) => boolean;
       ready: boolean;
       readonly map: string;
       /** Écart max du terrain de secours au-dessus de la dalle (négatif = ok). */

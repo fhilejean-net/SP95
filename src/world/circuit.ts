@@ -980,6 +980,7 @@ export async function buildCircuit(
     floorAt,
     roadHeightAt: roadQuery,
     flatRoad: road,
+    offTrack,
     spawn,
     plate: {
       cx: CIRCUIT.cx,

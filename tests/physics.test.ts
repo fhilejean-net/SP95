@@ -909,3 +909,35 @@ test('a car that ends up under the track is put back on the surface', async () =
   }
   assert.ok(car.position.y > 0.2, `the car stayed under the track (y=${car.position.y.toFixed(2)})`);
 });
+
+test('a landing behaves the same at 0, 60, 120 and 200 km/h', async () => {
+  // Le cas rapporté : la voiture retombe sur deux roues, aucun rayon ne porte et
+  // elle finissait sous la piste. On rejoue exactement ça à quatre vitesses,
+  // avec 20° de roulis : la hauteur finale doit rester la même.
+  const rx7 = CARS.find((c) => c.id === 'rx7')!;
+  const land = async (kmh: number): Promise<number> => {
+    const world = await makeWorld();
+    world.timestep = 1 / 60;
+    const slab = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(600, 0.3, 600).setCollisionGroups((GROUP_GROUND << 16) | GROUP_GROUND),
+      slab,
+    );
+    // La plaque est à 0,3 m : `floorAt` renvoie sa surface.
+    const car = new Vehicle(world, { x: 0, y: 2.4, z: 0, heading: 0, floorAt: () => 0.3 }, rx7.spec);
+    car.body.setLinvel({ x: 0, y: -5, z: -(kmh / 3.6) }, true);
+    const half = 0.35 / 2;
+    car.body.setRotation({ x: 0, y: 0, z: Math.sin(half), w: Math.cos(half) }, true);
+    for (let i = 0; i < 240; i++) {
+      car.step(TICK, NEUTRAL_INPUT, world);
+      world.step();
+    }
+    return car.position.y;
+  };
+  const rest = await land(0);
+  for (const kmh of [60, 120, 200]) {
+    const y = await land(kmh);
+    assert.ok(y > 0.55, `at ${kmh} km/h the car ended under the track (y=${y.toFixed(2)})`);
+    assert.ok(y < rest + 1.5, `at ${kmh} km/h the car jumped (y=${y.toFixed(2)})`);
+  }
+});
