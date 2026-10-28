@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   CONTROL_POINTS,
+  KERB_WIDTH,
   MIN_CORNER_RADIUS,
   TRACK,
   buildTrack,
@@ -84,6 +85,37 @@ test('les vibreurs ne sortent que dans les virages', () => {
   assert.ok(kerbs.length < TRACK.samples.length * 0.75, 'trop de vibreurs');
   for (const sample of kerbs) {
     assert.ok(cornerRadius(sample) < 160, `vibreur en ligne droite à ${sample.distance.toFixed(0)} m`);
+  }
+});
+
+test('le mur fait le tour sans jamais mordre sur l’asphalte', () => {
+  // Les boîtes de mur ont un point commun d'un échantillon à l'autre : le
+  // seul risque est un mur trop près de l'axe, ou un anneau qui ne se referme
+  // pas. Les deux se mesurent ici, sans Rapier ni WebGL.
+  const samples = TRACK.samples;
+  for (const side of [-1, 1]) {
+    let previous: { x: number; z: number } | null = null;
+    let first: { x: number; z: number } | null = null;
+    let closest = Infinity;
+    for (const sample of samples) {
+      const x = sample.x - sample.tz * TRACK.wallOffset * side;
+      const z = sample.z + sample.tx * TRACK.wallOffset * side;
+      closest = Math.min(closest, Math.abs(lateralOffset(x, z)));
+      if (!first) first = { x, z };
+      if (previous) {
+        const step = Math.hypot(x - previous.x, z - previous.z);
+        assert.ok(step < 6, `mur étiré de ${step.toFixed(1)} m`);
+      }
+      previous = { x, z };
+    }
+    assert.ok(
+      closest > TRACK.halfWidth + KERB_WIDTH + 4,
+      `mur à ${closest.toFixed(1)} m de l’axe`,
+    );
+    assert.ok(
+      previous && first && Math.hypot(previous.x - first.x, previous.z - first.z) < 6,
+      'anneau de murs ouvert',
+    );
   }
 });
 
