@@ -73,7 +73,7 @@ function replayViewLabel(view: ReplayView): string {
 import { InputManager } from './core/input.ts';
 import { Hud, type GameMode } from './game/hud.ts';
 import { DriftScore } from './game/drift.ts';
-import { ReplayBuffer, samplePoses, type ReplayPose } from './game/replay.ts';
+import { ReplayBuffer, samplePoses, type ReplayPose, type VisualPose } from './game/replay.ts';
 import { StuntScore } from './game/stunt.ts';
 import { BAVETTE_ANGLE } from './physics/wheelie.ts';
 import { Race } from './game/race.ts';
@@ -1305,8 +1305,11 @@ async function boot(): Promise<void> {
       return;
     }
 
+    const telemetry = vehicle.telemetryState;
+
     // A rolling memory of poses for the replay. It never stores the physics
-    // state, so playing a replay back cannot feed the simulation.
+    // state, so playing a replay back cannot feed the simulation. The visual
+    // bits ride along: without them the model would slide with frozen wheels.
     const pose = vehicle.state;
     replayMemory.record(
       {
@@ -1320,11 +1323,21 @@ async function boot(): Promise<void> {
         vx: pose.velocity.x,
         vy: pose.velocity.y,
         vz: pose.velocity.z,
+        visual: {
+          wheels: telemetry.wheels.map((wheel) => ({
+            suspension: wheel.suspensionLength,
+            steer: wheel.steer,
+            spin: wheel.spinAngle,
+          })),
+          brake: telemetry.brake,
+          reverse: telemetry.gear === -1,
+          lean: bike?.lean ?? 0,
+          pitch: bike?.pitch ?? 0,
+        },
       },
       performance.now() / 1000,
     );
 
-    const telemetry = vehicle.telemetryState;
     const speed = telemetry.speed;
     const crash = lastSpeed - speed > 4.2 && lastSpeed > 9 && performance.now() / 1000 - lastCrashTime > 0.4;
     if (crash) {
@@ -1507,6 +1520,62 @@ async function boot(): Promise<void> {
 /** Quaternion de travail de l'interpolation du rendu. */
   const prevQuat = new THREE.Quaternion();
 
+  /**
+   * États de roue réutilisés par le replay : il tourne à 60 Hz, une allocation
+   * par frame et par roue finirait par se voir sur les machines modestes.
+   */
+  const replayWheels = [0, 1, 2, 3].map(() => ({
+    suspensionLength: 0,
+    steer: 0,
+    spinAngle: 0,
+    contact: true,
+  }));
+
+  /** Applique une frame de replay à la voiture, roues et feux compris. */
+  function applyCarReplay(visual: VisualPose): void {
+    for (let i = 0; i < replayWheels.length; i++) {
+      const wheel = visual.wheels[i];
+      if (!wheel) continue;
+      const target = replayWheels[i];
+      target.suspensionLength = wheel.suspension;
+      target.steer = wheel.steer;
+      target.spinAngle = wheel.spin;
+    }
+    updateCarVisual(
+      car,
+      carPosition,
+      replayQuat,
+      replayWheels,
+      visual.brake > 0.1,
+      visual.reverse,
+    );
+  }
+
+  /** Applique une frame de replay à la moto : inclinaison, suspension, spin. */
+  function applyBikeReplay(visual: VisualPose): void {
+    if (!bikeVisual) return;
+    const front = visual.wheels[0];
+    const rear = visual.wheels[1];
+    const rest = bike?.restLength ?? 0.3;
+    bikeVisual.setPose({
+      lean: visual.lean,
+      pitch: visual.pitch,
+      steer: front?.steer ?? 0,
+      rearSuspension: rear?.suspension ?? rest,
+      frontSuspension: front?.suspension ?? rest,
+      restLength: rest,
+      wheelRadius: bikeSpec.wheelRadius,
+      // Le replay est joué sur une piste plate : aucune pente à relire.
+      slopePitch: 0,
+      slopeRoll: 0,
+      accel: 0,
+      brake: visual.brake,
+      time: performance.now() / 1000,
+    });
+    bikeVisual.setSpin(front?.spin ?? 0, rear?.spin ?? 0);
+    bikeVisual.setBrake(visual.brake > 0.1);
+  }
+
   function updateVisuals(dt: number): void {
     if (replay) {
       const pose = samplePoses(replay.poses, replay.elapsed);
@@ -1517,6 +1586,10 @@ async function boot(): Promise<void> {
         const group = replay.bike && bikeVisual ? bikeVisual.group : car.group;
         group.position.copy(carPosition);
         group.quaternion.copy(replayQuat);
+        if (pose.visual) {
+          if (replay.bike && bikeVisual) applyBikeReplay(pose.visual);
+          else applyCarReplay(pose.visual);
+        }
       }
       return;
     }
@@ -2218,6 +2291,19 @@ async function boot(): Promise<void> {
     },
     get wheelSpin() {
       return car.wheels.map((wheel) => wheel.rotation.x);
+    },
+    /**
+     * Ce que la lecture du replay montre à l'instant présent : les scripts de
+     * contrôle s'en servent pour attendre la portion roulée avant de mesurer.
+     */
+    get replayState() {
+      const current = replay ? samplePoses(replay.poses, replay.elapsed) : null;
+      return {
+        active: Boolean(replay),
+        elapsed: replay?.elapsed ?? 0,
+        frames: replay?.poses.length ?? 0,
+        visual: current?.visual ?? null,
+      };
     },
     get wheels() {
       return vehicle.telemetryState.wheels.map((wheel) => ({

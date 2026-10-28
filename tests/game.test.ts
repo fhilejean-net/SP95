@@ -119,6 +119,56 @@ test('playback interpolates between poses and clamps the ends', () => {
   assert.equal(samplePoses(poses, 99)?.x, 10);
 });
 
+test('a replay frame carries wheels, brake and lean, and they interpolate', () => {
+  const buffer = new ReplayBuffer(10, 0.1);
+  const visual = (spin: number) => ({
+    wheels: [
+      { suspension: 0.12, steer: 0.2, spin },
+      { suspension: 0.12, steer: 0.2, spin },
+      { suspension: 0.14, steer: 0, spin },
+      { suspension: 0.14, steer: 0, spin },
+    ],
+    brake: 0,
+    reverse: false,
+    lean: 0,
+    pitch: 0,
+  });
+  buffer.record({ ...pose(0), visual: visual(0) }, 0);
+  buffer.record(
+    {
+      ...pose(10),
+      visual: {
+        ...visual(8),
+        wheels: [
+          { suspension: 0.16, steer: 0.4, spin: 8 },
+          { suspension: 0.16, steer: 0.4, spin: 8 },
+          { suspension: 0.18, steer: 0, spin: 8 },
+          { suspension: 0.18, steer: 0, spin: 8 },
+        ],
+        brake: 1,
+        lean: 0.4,
+        pitch: 0.2,
+      },
+    },
+    1,
+  );
+  // The fields survive the snapshot untouched.
+  const frames = buffer.snapshot();
+  assert.equal(frames[1].visual?.wheels[0].spin, 8);
+  assert.equal(frames[0].visual?.wheels.length, 4);
+
+  const mid = samplePoses(frames, 0.5);
+  assert.ok(mid?.visual);
+  assert.equal(mid.visual.wheels[0].spin, 4);
+  assert.equal(mid.visual.brake, 0.5);
+  assert.ok(Math.abs(mid.visual.lean - 0.2) < 1e-9, `lean=${mid.visual.lean}`);
+  assert.ok(Math.abs(mid.visual.wheels[2].suspension - 0.16) < 1e-9);
+
+  // Clamped ends keep their own frame, not the neighbour's.
+  assert.equal(samplePoses(frames, -1)?.visual?.wheels[0].spin, 0);
+  assert.equal(samplePoses(frames, 9)?.visual?.wheels[0].spin, 8);
+});
+
 test('wet road lowers grip on every surface, stays dry by default', () => {
   assert.equal(isWetRoad(), false);
   const dry = surfaceAt(0, 0);

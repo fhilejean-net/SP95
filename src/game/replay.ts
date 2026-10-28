@@ -19,6 +19,36 @@ export interface PoseSample {
   vx?: number;
   vy?: number;
   vz?: number;
+  /** Wheel, brake and lean state at that instant. */
+  visual?: VisualPose;
+}
+
+/** One wheel, as the renderer needs it. */
+export interface WheelPose {
+  /** Suspension length, metres. */
+  suspension: number;
+  /** Steering angle, radians. */
+  steer: number;
+  /** Spin angle, radians. */
+  spin: number;
+}
+
+/**
+ * What the model animates but the physics pose does not carry. Recorded next
+ * to each pose so a replay moves like the drive it replays instead of sliding
+ * along its own path with frozen wheels.
+ */
+export interface VisualPose {
+  /** Front then rear on a bike, FL/FR/RL/RR on a car. */
+  wheels: WheelPose[];
+  /** Brake input, 0..1. */
+  brake: number;
+  /** Reverse gear engaged. */
+  reverse: boolean;
+  /** Bike lean, radians. */
+  lean: number;
+  /** Bike wheelie pitch, radians. */
+  pitch: number;
 }
 
 export interface ReplayPose extends PoseSample {
@@ -133,7 +163,36 @@ export function samplePoses(poses: ReplayPose[], elapsed: number): ReplayPose | 
     vy: lerp(a.vy ?? 0, b.vy ?? 0, k),
     vz: lerp(a.vz ?? 0, b.vz ?? 0, k),
     ...blendQuat(a, b, k),
+    visual: blendVisual(a.visual, b.visual, k),
     t: elapsed,
+  };
+}
+
+/**
+ * Blends the animated bits with the same `k` as the pose. Spin only ever grows
+ * and the frames are 80 ms apart, so a plain lerp cannot wind a wheel back.
+ */
+function blendVisual(
+  a: VisualPose | undefined,
+  b: VisualPose | undefined,
+  k: number,
+): VisualPose | undefined {
+  if (!a || !b) return a ?? b;
+  const count = Math.min(a.wheels.length, b.wheels.length);
+  const wheels: WheelPose[] = [];
+  for (let i = 0; i < count; i++) {
+    wheels.push({
+      suspension: lerp(a.wheels[i].suspension, b.wheels[i].suspension, k),
+      steer: lerp(a.wheels[i].steer, b.wheels[i].steer, k),
+      spin: lerp(a.wheels[i].spin, b.wheels[i].spin, k),
+    });
+  }
+  return {
+    wheels,
+    brake: lerp(a.brake, b.brake, k),
+    reverse: k < 0.5 ? a.reverse : b.reverse,
+    lean: lerp(a.lean, b.lean, k),
+    pitch: lerp(a.pitch, b.pitch, k),
   };
 }
 

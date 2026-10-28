@@ -64,6 +64,13 @@ commit hash so the history stays readable.
   *Done when:* a focused test verifies bounded recording and playback of the recorded poses, and a manual dev-server check confirms replay can be started and exited without affecting live vehicle state or score.
   *Cycle 9:* `0e3c584` — replay V, mémoire bornée 120 poses, interpolation, simulation gelée ; 3 tests, tsc ok, 64/64, build ok (vérif navigateur à faire)
 
+- [ ] **Braking markers before every corner** — `S`. The flat circuit now has kerbs and gravel
+  traps but no braking reference: boards at 150, 100 and 50 m before each corner entry would let
+  the player learn the lap instead of guessing. Built from the existing street-kit pieces, planted
+  in the run-off between kerb and wall, facing back along the track.
+  *Done when:* a test asserts every marker sits in the run-off on both sides and faces the
+  approaching car, and a screenshot shows the 150/100/50 m boards before the first corner.
+
 - [ ] **Animate wheels, steering and rider inside the replay** — `S`. Cycle 9 replays the body
   poses only, so the car slides along its own path with frozen wheels and the rider never leans.
   Record the visual bits with each frame (wheel spin, steer, lean, brake) and feed them to
