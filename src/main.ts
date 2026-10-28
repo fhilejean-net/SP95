@@ -417,7 +417,7 @@ async function boot(): Promise<void> {
   scene.add(car.group);
   // Ancrage au sol : ombre de contact et reflet d'asphalte sous le véhicule
   // visible. Deux décalques qui suivent la voiture, pas une seconde scène.
-  const grounding = createGrounding(scene);
+  const grounding = createGrounding(scene, sky.sunDirection);
   grounding.attach(car.group);
 
   const input = new InputManager(canvas);

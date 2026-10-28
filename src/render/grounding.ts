@@ -15,9 +15,15 @@ import * as THREE from 'three';
  */
 
 /** Opacité du disque d'ombre au contact. */
-const CONTACT_OPACITY = 0.66;
+const CONTACT_OPACITY = 0.8;
 /** Marge du disque autour de l'empreinte réelle du véhicule. */
-const CONTACT_PADDING = 1.3;
+const CONTACT_PADDING = 1.06;
+/** Opacité de l'ombre portée, plus large et plus pâle que le contact. */
+const CAST_OPACITY = 0.34;
+/** Marge du quad d'ombre portée. */
+const CAST_PADDING = 1.45;
+/** Recul de l'ombre portée par mètre de longueur de véhicule. */
+const SHADOW_REACH = 0.55;
 /** Hauteur des décalques au-dessus de la surface, contre le z-fighting. */
 const DECAL_LIFT = 0.03;
 /** Opacité du reflet. Au-delà de 0,3 l'asphalte a l'air d'un miroir. */
@@ -81,7 +87,7 @@ function trianglesOf(mesh: THREE.Mesh): number {
   return position ? position.count / 3 : 0;
 }
 
-export function createGrounding(scene: THREE.Scene): Grounding {
+export function createGrounding(scene: THREE.Scene, sunDirection: THREE.Vector3): Grounding {
   const root = new THREE.Group();
   root.name = 'grounding';
   root.matrixAutoUpdate = true;
@@ -98,8 +104,27 @@ export function createGrounding(scene: THREE.Scene): Grounding {
   // Un seul quad réutilisé : son échelle suit l'empreinte du véhicule.
   const contact = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), contactMaterial);
   contact.rotation.x = -Math.PI / 2;
-  contact.renderOrder = 2;
+  contact.renderOrder = 3;
   root.add(contact);
+
+  // Ombre portée : un second quad plus large, décalé à l'opposé du soleil. C'est
+  // lui qui donne une ombre de soleil rasant au lieu d'une simple tache sous la
+  // voiture — la carte d'ombres du moteur ne dépose rien sur cette piste.
+  const castMaterial = new THREE.MeshBasicMaterial({
+    map: texture,
+    color: 0x000000,
+    transparent: true,
+    opacity: CAST_OPACITY,
+    depthWrite: false,
+  });
+  const cast = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), castMaterial);
+  cast.rotation.x = -Math.PI / 2;
+  cast.renderOrder = 2;
+  root.add(cast);
+  /** Direction horizontale du soleil, normalisée une fois pour toutes. */
+  const sunFlat = new THREE.Vector3(sunDirection.x, 0, sunDirection.z);
+  if (sunFlat.lengthSq() < 1e-6) sunFlat.set(0.4, 0, 0.4);
+  sunFlat.normalize();
 
   // Le miroir porte sa propre échelle verticale négative : le quad d'ombre, lui,
   // doit rester tourné vers le ciel, sinon il est éliminé dos à la caméra.
@@ -181,6 +206,19 @@ export function createGrounding(scene: THREE.Scene): Grounding {
     contactMaterial.opacity = CONTACT_OPACITY * touch;
     contact.scale.set(footprint.width * CONTACT_PADDING, footprint.length * CONTACT_PADDING, 1);
     contact.visible = touch > 0.02;
+    // Recul de l'ombre portée, ramené dans le repère du véhicule puisque le
+    // groupe racine porte déjà son cap.
+    const cos = Math.cos(-yaw);
+    const sin = Math.sin(-yaw);
+    const reach = SHADOW_REACH * (footprint.length / 4.5);
+    cast.position.set(
+      -(sunFlat.x * cos - sunFlat.z * sin) * reach,
+      0.004,
+      -(sunFlat.x * sin + sunFlat.z * cos) * reach,
+    );
+    cast.scale.set(footprint.width * CAST_PADDING, footprint.length * CAST_PADDING, 1);
+    castMaterial.opacity = CAST_OPACITY * touch;
+    cast.visible = touch > 0.02;
     for (const material of reflectionMaterials) material.opacity = REFLECTION_OPACITY * touch;
     for (const mesh of reflection) mesh.visible = touch > 0.02;
   }
@@ -193,7 +231,10 @@ export function createGrounding(scene: THREE.Scene): Grounding {
   function dispose(): void {
     clearReflection();
     root.remove(contact);
+    root.remove(cast);
     contact.geometry.dispose();
+    cast.geometry.dispose();
+    castMaterial.dispose();
     contactMaterial.dispose();
     texture.dispose();
     scene.remove(root);

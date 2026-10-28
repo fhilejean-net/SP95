@@ -270,7 +270,7 @@ const MIN_LENGTH = 0.06;
 /** First-stage bump stop: firm, but it lets the body settle instead of jamming. */
 const BUMP_K = 90000;
 /** Second stage, only reached in a real impact. */
-const BUMP_K_HARD = 1_600_000;
+const BUMP_K_HARD = 260_000;
 /**
  * Reflected engine inertia, multiplied by the squared total gear ratio. It is
  * carried by the rear axle: a flywheel that keeps the back end from snapping

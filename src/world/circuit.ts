@@ -68,6 +68,10 @@ const DECAL_LIFT = 0.12;
  * suivantes étalent le raccord de CIRCUIT_FADE mètres autour d'elle.
  */
 const HOLE_PASSES = 3;
+/** Demi-côté de la dalle physique du circuit, en mètres (couvre toute la carte). */
+const FLOOR_HALF = 2000;
+/** Épaisseur de la dalle : assez pour qu'aucun châssis ne la traverse. */
+const FLOOR_HALF_THICKNESS = 3;
 const FADE_PASSES = Math.ceil(CIRCUIT_FADE / SAMPLE_STEP) + HOLE_PASSES;
 /**
  * Bande de cases ajoutée *autour* de l'emprise du modèle. Sans elle, le talus
@@ -298,6 +302,64 @@ interface FlatRoad {
  * montée du tour traverse le lissage ; les marches et les raccords de tuiles ne
  * la traversent plus.
  */
+/**
+ * Ramène toutes les surfaces roulantes à une seule cote et renvoie cette cote.
+ *
+ * Le modèle a des bosses de quantification et des collines que le lissage de la
+ * grille ne rattrapait pas : la voiture décollait sur des monticules invisibles.
+ * Une table rase supprime le problème à la source — piste, herbe et gravier
+ * sont au même niveau, et les normales sont recalculées vers le haut.
+ */
+/**
+ * Cote médiane d'un ensemble de surfaces, éventuellement autour d'un point.
+ *
+ * L'ancre compte : le modèle a des ponts et des collines, et la médiane de tout
+ * l'asphalte place la table rase vingt mètres trop haut, au-dessus du point de
+ * départ. On prend donc la cote de la ligne droite des stands, là où le joueur
+ * apparaît, et tout le circuit vient s'y poser.
+ */
+function surfaceLevel(
+  meshes: THREE.Mesh[],
+  near?: { x: number; z: number; radius: number },
+): number {
+  const point = new THREE.Vector3();
+  const levels: number[] = [];
+  for (const mesh of meshes) {
+    mesh.updateWorldMatrix(true, false);
+    const positions = mesh.geometry.attributes.position;
+    if (!positions) continue;
+    const step = Math.max(1, Math.floor(positions.count / 400));
+    for (let i = 0; i < positions.count; i += step) {
+      point.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+      if (near && Math.hypot(point.x - near.x, point.z - near.z) > near.radius) continue;
+      levels.push(point.y);
+    }
+  }
+  if (levels.length === 0) return near ? surfaceLevel(meshes) : 0;
+  levels.sort((a, b) => a - b);
+  return levels[Math.floor(levels.length / 2)];
+}
+
+function flattenSurfaces(meshes: THREE.Mesh[], level: number): void {
+  const point = new THREE.Vector3();
+  const inverse = new THREE.Matrix4();
+  for (const mesh of meshes) {
+    const positions = mesh.geometry.attributes.position;
+    if (!positions) continue;
+    inverse.copy(mesh.matrixWorld).invert();
+    for (let i = 0; i < positions.count; i++) {
+      point.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+      point.y = level;
+      point.applyMatrix4(inverse);
+      positions.setXYZ(i, point.x, point.y, point.z);
+    }
+    positions.needsUpdate = true;
+    mesh.geometry.computeVertexNormals();
+    mesh.geometry.computeBoundingBox();
+    mesh.geometry.computeBoundingSphere();
+  }
+}
+
 export function buildFlatRoad(meshes: THREE.Mesh[]): FlatRoad {
   const point = new THREE.Vector3();
   /** Sommets de tous les maillages, en coordonnées monde. */
@@ -667,6 +729,17 @@ export async function buildCircuit(
   // 2b. Piste plate : la surface que lisent les roues est reconstruite sur une
   // trame régulière, indépendamment de la géométrie du modèle (ses positions
   // sont quantifiées, on ne peut pas les réécrire sans casser le rendu).
+  // 2a. Circuit tout plat : toutes les surfaces roulantes à une seule cote.
+  const startWorld = new THREE.Vector3(START_LOCAL.x, 0, START_LOCAL.z).applyMatrix4(
+    root.matrixWorld,
+  );
+  const roadLevel = surfaceLevel(asphaltMeshes.length ? asphaltMeshes : groundMeshes, {
+    x: startWorld.x,
+    z: startWorld.z,
+    radius: 90,
+  });
+  flattenSurfaces([...groundMeshes, ...asphaltMeshes, ...looseMeshes], roadLevel);
+  console.log(`Piste : table rase à y = ${roadLevel.toFixed(2)} m`);
   const flatRoad = buildFlatRoad(asphaltMeshes);
   console.log(
     `Piste : collider lissé (topologie du modèle), ${flatRoad.triangles} triangles, ` +
@@ -1093,13 +1166,35 @@ export async function buildCircuit(
     return road.triangles;
   };
 
+  /**
+   * Dalle pleine et plate sous tout le circuit. Le trimesh de la piste avait des
+   * trous et des arêtes qui faisaient décoller la voiture ; une dalle ne peut ni
+   * manquer ni rebondir : restitution nulle, friction d'asphalte.
+   */
+  const appendFlatFloor = (level: number, groups: number): number => {
+    const body = world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(0, level - FLOOR_HALF_THICKNESS, 0),
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(FLOOR_HALF, FLOOR_HALF_THICKNESS, FLOOR_HALF)
+        .setFriction(0.95)
+        .setRestitution(0)
+        .setCollisionGroups(groups),
+      body,
+    );
+    return 12;
+  };
+
   // La piste du modèle rejoint le collider plat, pas le brut : ses bosses et son
-  // dévers faisaient sauter et retourner la voiture.
+  // dévers faisaient sauter et retourner la voiture. La dalle pleine passe
+  // dessous : plus aucun trou possible.
   const groundTriangles =
     appendTrimesh(
       [...surfaceMeshes].filter((mesh) => !asphaltMeshes.includes(mesh)),
       GROUND_GROUP,
-    ) + appendFlatRoad(flatRoad, GROUND_GROUP);
+    ) +
+    appendFlatRoad(flatRoad, GROUND_GROUP) +
+    appendFlatFloor(roadLevel, GROUND_GROUP);
   // Le châssis est membre de GROUP_WORLD et filtre sur GROUP_WORLD (voir
   // CHASSIS_UPRIGHT) : les murs doivent porter exactement ce couple.
   const wallTriangles = appendTrimesh(
