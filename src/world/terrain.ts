@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import {
   DIRT_TRACKS,
   DRIFT_PAD,
+  FLAT_MAP,
   MOUNTAIN_ROADS,
   RACE_START,
   RING,
@@ -78,9 +79,13 @@ export function buildTerrain(scene: THREE.Scene, world: RAPIER.World, mats: Envi
       color.copy(grass).lerp(dry, Math.min(1, t * 0.7 + s * 0.25));
       color.lerp(rock, s * 0.55);
       const noise = 0.96 + 0.08 * Math.sin(x * 0.37) * Math.cos(z * 0.31);
-      colors[i * 3] = color.r * noise;
-      colors[i * 3 + 1] = color.g * noise;
-      colors[i * 3 + 2] = color.b * noise;
+      // Circuit : l'herbe des dégagements est tondue en bandes de neuf mètres,
+      // comme un vrai terrain. Deux teintes très proches suffisent à casser
+      // l'aplat vert sans faire de damier.
+      const mow = FLAT_MAP ? (Math.sin(x * 0.35) > 0 ? 1.035 : 0.955) : 1;
+      colors[i * 3] = color.r * noise * mow;
+      colors[i * 3 + 1] = color.g * noise * mow;
+      colors[i * 3 + 2] = color.b * noise * mow;
     }
   }
 

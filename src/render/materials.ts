@@ -99,6 +99,157 @@ export function createRoadTextures(anisotropy: number, repeat: number): {
   };
 }
 
+/**
+ * Asphalte de piste, entièrement procédural.
+ *
+ * Le relevé photo avait deux défauts en jeu : ses graviers blancs
+ * scintillaient à distance (taches bleues sur la piste), et son échelle n'était
+ * pas carrée — le grain se retrouvait étiré sur la largeur. Ici albédo, normale
+ * et rugosité sortent du **même** champ de hauteur, sur une tuile carrée qui se
+ * raccorde sans couture. Les graviers sont assez gros pour se lire à 1 m, assez
+ * sombres pour ne pas clignoter au loin.
+ */
+export function createTrackSurfaceTextures(anisotropy: number, size = 512): {
+  map: THREE.DataTexture;
+  normalMap: THREE.DataTexture;
+  roughnessMap: THREE.DataTexture;
+} {
+  const heights = new Float32Array(size * size);
+
+  /** Bruit de valeur périodique : le bord de la tuile reprend son autre bord. */
+  const valueNoise = (frequency: number, seed: number): ((u: number, v: number) => number) => {
+    const rand = seededRandom(seed);
+    const grid = new Float32Array(frequency * frequency);
+    for (let i = 0; i < grid.length; i++) grid[i] = rand();
+    const at = (i: number, j: number): number =>
+      grid[(((j % frequency) + frequency) % frequency) * frequency + (((i % frequency) + frequency) % frequency)];
+    const smooth = (t: number): number => t * t * (3 - 2 * t);
+    return (u, v) => {
+      const x = u * frequency;
+      const y = v * frequency;
+      const x0 = Math.floor(x);
+      const y0 = Math.floor(y);
+      const fx = smooth(x - x0);
+      const fy = smooth(y - y0);
+      const a = at(x0, y0);
+      const b = at(x0 + 1, y0);
+      const c = at(x0, y0 + 1);
+      const d = at(x0 + 1, y0 + 1);
+      return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+    };
+  };
+
+  const octaves = [
+    { noise: valueNoise(4, 991), weight: 0.34 },
+    { noise: valueNoise(12, 733), weight: 0.26 },
+    { noise: valueNoise(48, 311), weight: 0.22 },
+    { noise: valueNoise(160, 97), weight: 0.18 },
+  ];
+  let lowest = Infinity;
+  let highest = -Infinity;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let value = 0;
+      for (const octave of octaves) value += octave.noise(x / size, y / size) * octave.weight;
+      heights[y * size + x] = value;
+      if (value < lowest) lowest = value;
+      if (value > highest) highest = value;
+    }
+  }
+  const span = Math.max(1e-6, highest - lowest);
+  for (let i = 0; i < heights.length; i++) heights[i] = (heights[i] - lowest) / span;
+
+  // Graviers : des grains de 1 à 3 px, posés avec repli sur les bords, donc
+  // sans couture. Ils donnent l'éclat clair de l'agrégat sous le liant.
+  const rand = seededRandom(613);
+  for (let stone = 0; stone < 6200; stone++) {
+    const cx = rand() * size;
+    const cy = rand() * size;
+    const radius = 0.6 + rand() * 1.7;
+    const amplitude = 0.08 + rand() * 0.3;
+    const reach = Math.ceil(radius);
+    for (let dy = -reach; dy <= reach; dy++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        const distance = Math.hypot(dx, dy) / radius;
+        if (distance > 1) continue;
+        const px = ((Math.floor(cx) + dx) % size + size) % size;
+        const py = ((Math.floor(cy) + dy) % size + size) % size;
+        const index = py * size + px;
+        heights[index] = Math.min(1, heights[index] + amplitude * (1 - distance * distance));
+      }
+    }
+  }
+
+  /** Grain fin d'un pixel, indépendant de la tuile. */
+  const speckle = (x: number, y: number): number => {
+    let n = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
+    n = Math.imul(n ^ (n >>> 13), 1274126177);
+    return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+  };
+  const clamp = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
+
+  const albedo = new Uint8Array(size * size * 4);
+  const normal = new Uint8Array(size * size * 4);
+  const roughness = new Uint8Array(size * size * 4);
+  const slope = 1.1;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const index = y * size + x;
+      const height = heights[index];
+      const grain = speckle(x, y);
+      // Agrégat : le sommet d'un gravier renvoie plus de lumière que le liant,
+      // mais très peu — un asphalte neigeux se lit comme du gravier, pas comme
+      // une piste. Le grain doit se deviner, pas clignoter.
+      const aggregate = Math.max(0, height - 0.62) * 42;
+      const value = 46 + (height - 0.5) * 20 + (grain - 0.5) * 9 + aggregate;
+      albedo[index * 4] = clamp(value * 0.98);
+      albedo[index * 4 + 1] = clamp(value);
+      albedo[index * 4 + 2] = clamp(value * 1.05);
+      albedo[index * 4 + 3] = 255;
+
+      const left = heights[y * size + ((x - 1 + size) % size)];
+      const right = heights[y * size + ((x + 1) % size)];
+      const down = heights[((y - 1 + size) % size) * size + x];
+      const up = heights[((y + 1) % size) * size + x];
+      let nx = (left - right) * slope;
+      let ny = (down - up) * slope;
+      const nz = 1;
+      const length = Math.hypot(nx, ny, nz);
+      nx /= length;
+      ny /= length;
+      normal[index * 4] = clamp((nx * 0.5 + 0.5) * 255);
+      normal[index * 4 + 1] = clamp((ny * 0.5 + 0.5) * 255);
+      normal[index * 4 + 2] = clamp((nz / length) * 0.5 * 255 + 127.5);
+      normal[index * 4 + 3] = 255;
+
+      // Piste sèche : très mate, avec juste ce qu'il faut de variation pour
+      // que le soleil ne la lisse pas en aplat.
+      const rough = 0.88 + (0.5 - height) * 0.07 + (grain - 0.5) * 0.025;
+      roughness[index * 4] = clamp(rough * 255);
+      roughness[index * 4 + 1] = clamp(rough * 255);
+      roughness[index * 4 + 2] = clamp(rough * 255);
+      roughness[index * 4 + 3] = 255;
+    }
+  }
+
+  const make = (data: Uint8Array, srgb: boolean): THREE.DataTexture => {
+    const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    texture.anisotropy = anisotropy;
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.needsUpdate = true;
+    return texture;
+  };
+  return {
+    map: make(albedo, true),
+    normalMap: make(normal, false),
+    roughnessMap: make(roughness, false),
+  };
+}
+
 /** Touffe d'herbe : quelques brins découpés dans la planche fournie. */
 export function createGrassTuftTexture(anisotropy: number): THREE.Texture {
   const base = import.meta.env.BASE_URL ?? '/';

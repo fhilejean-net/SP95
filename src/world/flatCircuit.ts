@@ -22,7 +22,8 @@ import {
   createAsphaltTexture,
   createConcreteTexture,
   createGrassTuftTexture,
-  createRoadTextures,
+  createGravelTexture,
+  createTrackSurfaceTextures,
 } from '../render/materials.ts';
 import {
   HALF_WIDTH,
@@ -30,6 +31,7 @@ import {
   ROAD_LIFT,
   TRACK,
   WALL_OFFSET,
+  cornerRadius,
   hasKerb,
   type TrackSample,
 } from './trackLayout.ts';
@@ -49,6 +51,27 @@ const EDGE_SHADE = 0.86;
 const KERB_SEGMENT = 2.4;
 /** Rayon en dessous duquel un mur reçoit des pneus empilés. */
 const TYRE_RADIUS = 75;
+/** Tuile carrée de l'asphalte, en mètres. */
+const ASPHALT_TILE = 6;
+/** Rayon sous lequel un virage reçoit un bac à gravier extérieur. */
+const GRAVEL_RADIUS = 110;
+/** Tuile du gravier, en mètres. */
+const GRAVEL_TILE = 5;
+/**
+ * Profil du vibreur, du bord de la piste vers l'extérieur : [décalage latéral,
+ * hauteur au-dessus du sol]. Un vibreur peint à plat ne se lit pas ; ce profil
+ * lui donne le bombé d'un vrai vibreur, sans rien changer à la physique — les
+ * roues roulent toujours sur le plan du terrain.
+ */
+const KERB_PROFILE: [number, number][] = [
+  [0, 0.022],
+  [0.32, 0.062],
+  [KERB_WIDTH - 0.32, 0.062],
+  [KERB_WIDTH, 0.03],
+];
+/** Trajectoire gommée : décalage latéral des colonnes, puis leur opacité. */
+const RACING_LINE_LATERAL = [-4.3, -2.6, -1.7, -0.7, 0.7, 1.7, 2.6, 4.3];
+const RACING_LINE_ALPHA = [0, 0.1, 0.42, 0.14, 0.14, 0.42, 0.1, 0];
 
 export interface FlatCircuitHandles {
   spawn: { x: number; z: number; heading: number };
@@ -178,6 +201,152 @@ function flatQuad(
   );
   for (let i = 0; i < 4; i++) colors.push(color.r, color.g, color.b);
   indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+}
+
+/**
+ * Trajectoire gommée : deux bandes sombres aux passages de roues, avec un
+ * dégradé d'alpha vers les bords. Une piste uniformément noire lit comme du
+ * plastique ; ces bandes sont la seule marque que le circuit garde du passage
+ * des voitures.
+ */
+function racingLineGeometry(samples: TrackSample[]): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+  const columns = RACING_LINE_LATERAL.length;
+  const tint = new THREE.Color(0x191b1e);
+  samples.forEach((sample, index) => {
+    const right = rightOf(sample);
+    for (let column = 0; column < columns; column++) {
+      const lateral = RACING_LINE_LATERAL[column];
+      positions.push(
+        sample.x + right.x * lateral,
+        ROAD_LIFT + 0.004,
+        sample.z + right.z * lateral,
+      );
+      colors.push(tint.r, tint.g, tint.b, RACING_LINE_ALPHA[column]);
+    }
+    if (index === samples.length - 1) return;
+    const base = index * columns;
+    for (let column = 0; column < columns - 1; column++) {
+      const a = base + column;
+      const b = a + 1;
+      const c = base + columns + column;
+      const d = c + 1;
+      indices.push(a, b, c, b, d, c);
+    }
+  });
+  // Fermeture de la boucle.
+  const last = (samples.length - 1) * columns;
+  for (let column = 0; column < columns - 1; column++) {
+    const a = last + column;
+    const b = a + 1;
+    indices.push(a, b, column, b, column + 1, column);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  // Un attribut de couleur à quatre canaux porte l'alpha du dégradé.
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 4));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/**
+ * Vibreurs en relief : quatre points de profil par échantillon, rouges et blancs
+ * alternés. Le sens de l'enroulement est calculé depuis la normale, sinon une
+ * des deux rangées regarde le sol et disparaît.
+ */
+function kerbGeometry(samples: TrackSample[]): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+  const red = new THREE.Color(0xa81f28);
+  const cream = new THREE.Color(0xd9d3c4);
+  for (let i = 0; i < samples.length; i++) {
+    const a = samples[i];
+    const b = samples[(i + 1) % samples.length];
+    if (!hasKerb(a) || !hasKerb(b)) continue;
+    const shade = Math.floor(a.distance / KERB_SEGMENT) % 2 === 0 ? red : cream;
+    const rightA = rightOf(a);
+    const rightB = rightOf(b);
+    for (const side of [-1, 1] as const) {
+      const base = positions.length / 3;
+      for (const [lateral, height] of KERB_PROFILE) {
+        const from = side * (HALF_WIDTH + lateral);
+        positions.push(
+          a.x + rightA.x * from, ROAD_LIFT + height, a.z + rightA.z * from,
+          b.x + rightB.x * from, ROAD_LIFT + height, b.z + rightB.z * from,
+        );
+        colors.push(shade.r, shade.g, shade.b, shade.r, shade.g, shade.b);
+      }
+      for (let k = 0; k < KERB_PROFILE.length - 1; k++) {
+        const i0 = base + k * 2;
+        const i1 = i0 + 1;
+        const i2 = i0 + 2;
+        const i3 = i0 + 3;
+        const p0 = positions.slice(i0 * 3, i0 * 3 + 3);
+        const p1 = positions.slice(i1 * 3, i1 * 3 + 3);
+        const p2 = positions.slice(i2 * 3, i2 * 3 + 3);
+        const ny =
+          (p1[2] - p0[2]) * (p2[0] - p0[0]) - (p1[0] - p0[0]) * (p2[2] - p0[2]);
+        if (ny >= 0) indices.push(i0, i1, i2, i1, i3, i2);
+        else indices.push(i0, i2, i1, i1, i2, i3);
+      }
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/**
+ * Bacs à gravier : une bande entre le vibreur et le mur, à l'extérieur des
+ * virages serrés. C'est ce qui manquait le plus au décor — de l'herbe jusqu'au
+ * mur fait tout de suite karting, alors qu'un bac à gravier lit comme un vrai
+ * circuit. Purement visuel : la physique garde son sol plat.
+ */
+function gravelGeometry(samples: TrackSample[]): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const from = HALF_WIDTH + KERB_WIDTH + 0.05;
+  const to = WALL_OFFSET - 0.45;
+  const width = (to - from) / GRAVEL_TILE;
+  for (let i = 0; i < samples.length; i++) {
+    const a = samples[i];
+    const b = samples[(i + 1) % samples.length];
+    if (cornerRadius(a) > GRAVEL_RADIUS || cornerRadius(b) > GRAVEL_RADIUS) continue;
+    const side = a.curvature > 0 ? -1 : 1;
+    const rightA = rightOf(a);
+    const rightB = rightOf(b);
+    const base = positions.length / 3;
+    const va = a.distance / GRAVEL_TILE;
+    const vb = (b.distance <= a.distance ? b.distance + TRACK.length : b.distance) / GRAVEL_TILE;
+    positions.push(
+      a.x + rightA.x * side * from, ROAD_LIFT + 0.003, a.z + rightA.z * side * from,
+      a.x + rightA.x * side * to, ROAD_LIFT + 0.003, a.z + rightA.z * side * to,
+      b.x + rightB.x * side * from, ROAD_LIFT + 0.003, b.z + rightB.z * side * from,
+      b.x + rightB.x * side * to, ROAD_LIFT + 0.003, b.z + rightB.z * side * to,
+    );
+    uvs.push(0, va, width, va, 0, vb, width, vb);
+    const p0 = positions.slice(base * 3, base * 3 + 3);
+    const p1 = positions.slice((base + 1) * 3, (base + 1) * 3 + 3);
+    const p2 = positions.slice((base + 2) * 3, (base + 2) * 3 + 3);
+    const ny =
+      (p1[2] - p0[2]) * (p2[0] - p0[0]) - (p1[0] - p0[0]) * (p2[2] - p0[2]);
+    if (ny >= 0) indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+    else indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
 /**
@@ -927,20 +1096,20 @@ export function buildFlatCircuit(
   options: FlatCircuitOptions,
 ): FlatCircuitHandles {
   const started = performance.now();
-  // Asphalte photographié : deux répétitions sur la largeur (7 m de tuile),
-  // onze mètres le long de l'axe. La normale et la rugosité viennent du même
-  // relevé, ce qui donne le grain sans une texture procédurale de plus.
-  const roadTextures = createRoadTextures(options.anisotropy, 3);
+  // Asphalte procédural, tuilé en carré : 6 m dans les deux sens. Le grain se
+  // lit à un mètre et ne scintille pas au loin, contrairement au relevé photo
+  // dont les graviers blancs clignotaient.
+  const roadTextures = createTrackSurfaceTextures(options.anisotropy);
+  for (const texture of [roadTextures.map, roadTextures.normalMap, roadTextures.roughnessMap]) {
+    texture.repeat.set((HALF_WIDTH * 2) / ASPHALT_TILE, 1);
+  }
   const asphaltMat = new THREE.MeshStandardMaterial({
     map: roadTextures.map,
     normalMap: roadTextures.normalMap,
-    // Le relevé est clair et très marqué : on le ramène au gris sombre de la
-    // piste et on garde un grain discret, sinon l'asphalte lit comme du béton.
-    normalScale: new THREE.Vector2(0.14, 0.14),
-    color: new THREE.Color(0.58, 0.6, 0.64),
-    // Pas de carte de rugosité : celle du relevé rendait l'asphalte lisse, donc
-    // miroir du ciel — d'où le voile blanc et les taches bleues sur la piste.
-    roughness: 0.94,
+    normalScale: new THREE.Vector2(0.32, 0.32),
+    roughnessMap: roadTextures.roughnessMap,
+    color: 0xffffff,
+    roughness: 1,
     metalness: 0.02,
     polygonOffset: true,
     polygonOffsetFactor: -2,
@@ -962,7 +1131,7 @@ export function buildFlatCircuit(
     from: -HALF_WIDTH,
     to: HALF_WIDTH,
     y: ROAD_LIFT,
-    tile: 11,
+    tile: ASPHALT_TILE,
   });
   const road = new THREE.Mesh(asphalt, asphaltMat);
   road.receiveShadow = true;
@@ -975,6 +1144,7 @@ export function buildFlatCircuit(
   const edgeMat = new THREE.MeshStandardMaterial({
     map: roadTextures.map,
     normalMap: roadTextures.normalMap,
+    normalScale: new THREE.Vector2(0.32, 0.32),
     color: new THREE.Color(EDGE_SHADE, EDGE_SHADE, EDGE_SHADE * 1.06),
     roughness: 0.96,
     metalness: 0.01,
@@ -987,7 +1157,7 @@ export function buildFlatCircuit(
       from: side * (HALF_WIDTH - 1.6),
       to: side * HALF_WIDTH,
       y: ROAD_LIFT + 0.002,
-      tile: 11,
+      tile: ASPHALT_TILE,
     });
     const mesh = new THREE.Mesh(strip, edgeMat);
     mesh.receiveShadow = true;
@@ -995,44 +1165,56 @@ export function buildFlatCircuit(
     triangles += strip.index ? strip.index.count / 3 : 0;
   }
 
-  // --- Vibreurs : rouges et blancs, seulement dans les virages ------------
-  const kerbPositions: number[] = [];
-  const kerbColors: number[] = [];
-  const kerbIndices: number[] = [];
-  const red = new THREE.Color(0xb9252a);
-  const cream = new THREE.Color(0xe8e4d8);
-  for (let i = 0; i < samples.length; i++) {
-    const sample = samples[i];
-    if (!hasKerb(sample)) continue;
-    const next = samples[(i + 1) % samples.length];
-    const span = Math.max(0.5, next.distance > sample.distance
-      ? next.distance - sample.distance
-      : TRACK.length - sample.distance);
-    const shade = Math.floor(sample.distance / KERB_SEGMENT) % 2 === 0 ? red : cream;
-    for (const side of [-1, 1]) {
-      flatQuad(
-        sample,
-        side * HALF_WIDTH,
-        side * (HALF_WIDTH + KERB_WIDTH),
-        ROAD_LIFT + 0.012,
-        span,
-        shade,
-        kerbPositions,
-        kerbColors,
-        kerbIndices,
-      );
-    }
-  }
-  if (kerbPositions.length > 0) {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(kerbPositions, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(kerbColors, 3));
-    geometry.setIndex(kerbIndices);
-    geometry.computeVertexNormals();
-    const kerbs = new THREE.Mesh(geometry, paintMat);
+  // --- Trajectoire gommée : deux bandes souples sur l'asphalte ------------
+  const racingLine = new THREE.Mesh(
+    racingLineGeometry(samples),
+    new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      roughness: 0.52,
+      metalness: 0.02,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    }),
+  );
+  racingLine.name = 'racing-line';
+  scene.add(racingLine);
+
+  // --- Vibreurs : rouges et blancs, en relief, dans les virages -----------
+  const kerbMesh = kerbGeometry(samples);
+  if (kerbMesh.index && kerbMesh.index.count > 0) {
+    const kerbMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.55,
+      metalness: 0.02,
+    });
+    const kerbs = new THREE.Mesh(kerbMesh, kerbMat);
     kerbs.receiveShadow = true;
     scene.add(kerbs);
-    triangles += kerbIndices.length / 3;
+    triangles += kerbMesh.index.count / 3;
+  } else {
+    kerbMesh.dispose();
+  }
+
+  // --- Bacs à gravier à l'extérieur des virages serrés --------------------
+  const gravelMesh = gravelGeometry(samples);
+  if (gravelMesh.index && gravelMesh.index.count > 0) {
+    const gravelTexture = createGravelTexture();
+    gravelTexture.anisotropy = options.anisotropy;
+    const gravelMat = new THREE.MeshStandardMaterial({
+      map: gravelTexture,
+      color: 0xa79b87,
+      roughness: 1,
+      metalness: 0,
+    });
+    const gravel = new THREE.Mesh(gravelMesh, gravelMat);
+    gravel.receiveShadow = true;
+    scene.add(gravel);
+    triangles += gravelMesh.index.count / 3;
+  } else {
+    gravelMesh.dispose();
   }
 
   // --- Lignes blanches de bord -------------------------------------------
@@ -1072,6 +1254,8 @@ export function buildFlatCircuit(
   concreteTexture.anisotropy = options.anisotropy;
   const wallMat = new THREE.MeshStandardMaterial({
     map: concreteTexture,
+    // Le béton nu sortait blanc pur sous le ciel : une teinte chaude le calme.
+    color: 0xd3d0c6,
     roughness: 0.85,
     metalness: 0.03,
   });
@@ -1079,6 +1263,13 @@ export function buildFlatCircuit(
   const caps = new THREE.InstancedMesh(
     new THREE.BoxGeometry(0.12, 0.16, 1),
     new THREE.MeshStandardMaterial({ roughness: 0.55 }),
+    wallSamples.length * 2,
+  );
+  // Plinthe sombre au pied du mur : sans elle le béton est un aplat clair du sol
+  // jusqu'au chapeau, et le mur ne lit pas comme un ouvrage.
+  const plinth = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(0.05, 0.3, 1),
+    new THREE.MeshStandardMaterial({ color: 0x2f312e, roughness: 0.96 }),
     wallSamples.length * 2,
   );
   const matrix = new THREE.Matrix4();
@@ -1112,6 +1303,15 @@ export function buildFlatCircuit(
       caps.setMatrixAt(wallIndex, matrix.setPosition(position.x, WALL_HEIGHT + 0.09, position.z));
       capColor.set(wallIndex % 2 === 0 ? 0xd8d5cc : 0xb02a2c);
       caps.setColorAt(wallIndex, capColor);
+      const inner = (WALL_OFFSET - WALL_THICK / 2 - 0.03) * side;
+      plinth.setMatrixAt(
+        wallIndex,
+        matrix.setPosition(
+          (a.x + rightA.x * inner + b.x + rightB.x * inner) / 2,
+          0.15,
+          (a.z + rightA.z * inner + b.z + rightB.z * inner) / 2,
+        ),
+      );
       wallIndex++;
 
       world.createCollider(
@@ -1130,7 +1330,9 @@ export function buildFlatCircuit(
   walls.receiveShadow = true;
   caps.count = wallIndex;
   caps.receiveShadow = true;
-  scene.add(walls, caps);
+  plinth.count = wallIndex;
+  plinth.receiveShadow = true;
+  scene.add(walls, caps, plinth);
   triangles += 12 * wallIndex * 2;
 
   // --- Portique de départ ------------------------------------------------
