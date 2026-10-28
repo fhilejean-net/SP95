@@ -135,11 +135,11 @@ function makeRenderer(lowFx: boolean): THREE.WebGLRenderer {
     powerPreference: 'high-performance',
     stencil: false,
   });
-  const mobile = matchMedia('(pointer: coarse)').matches;
-  // Past ~1.25 device pixels there is nothing left to see, but a lot of pixels
-  // left to shade: it is the first thing that makes weak GPUs drop the frame.
-  const cap = mobile ? 1 : 1.25;
-  renderer.setPixelRatio(lowFx ? 0.7 : Math.min(window.devicePixelRatio, cap));
+  // Past one device pixel per CSS pixel there is nothing left to see, but a lot
+  // of pixels left to shade: on a HiDPI screen 1.25 costs 56 % more fragments
+  // than 1.0 for a difference you cannot spot in motion. It is the first thing
+  // that makes a weak GPU drop the frame.
+  renderer.setPixelRatio(lowFx ? 0.7 : Math.min(window.devicePixelRatio, 1));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = !lowFx;
   // three a retiré PCFSoftShadowMap en r186 : PCFShadowMap est le seul filtre
@@ -367,9 +367,25 @@ async function boot(): Promise<void> {
     ? { x: circuit.spawn.x, z: circuit.spawn.z, heading: circuit.spawn.heading }
     : { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading };
   const spawnY = dropHeightAt(startPose.x, startPose.z) + rideHeightFor(spec);
+  /**
+   * Cote du sol pour la physique : la dalle du circuit d'abord, le terrain
+   * ensuite. Elle sert de filet aux rayons de roue — la grille de collision de
+   * la piste a des trous, et sans elle la voiture traversait l'asphalte.
+   */
+  const floorLookup = (x: number, z: number): number | null =>
+    circuitFloor(x, z) ?? groundAt(x, z);
+  /** Profondeur sous le sol au-delà de laquelle on repose la caisse sur place. */
+  const FALL_RECOVERY_DEPTH = 2.5;
   let carVehicle: Vehicle = new Vehicle(
     world,
-    { x: startPose.x, y: spawnY, z: startPose.z, heading: startPose.heading, surfaceAt },
+    {
+      x: startPose.x,
+      y: spawnY,
+      z: startPose.z,
+      heading: startPose.heading,
+      surfaceAt,
+      floorAt: floorLookup,
+    },
     spec,
   );
   /** Whichever vehicle is being ridden right now. */
@@ -703,6 +719,7 @@ async function boot(): Promise<void> {
         z: pose.z,
         heading: pose.heading,
         surfaceAt,
+        floorAt: floorLookup,
       },
       spec,
     );
@@ -727,7 +744,14 @@ async function boot(): Promise<void> {
     const y = groundAt(SUMMIT_START.x, SUMMIT_START.z) + bikeSpec.cgHeight;
     bike = new Bike(
       world,
-      { x: SUMMIT_START.x, y, z: SUMMIT_START.z, heading: SUMMIT_START.heading, surfaceAt },
+      {
+        x: SUMMIT_START.x,
+        y,
+        z: SUMMIT_START.z,
+        heading: SUMMIT_START.heading,
+        surfaceAt,
+        floorAt: floorLookup,
+      },
       bikeSpec,
     );
     bike.body.setEnabled(false);
@@ -743,7 +767,7 @@ async function boot(): Promise<void> {
     world.removeRigidBody(bike.body);
     bike = new Bike(
       world,
-      { x: position.x, y: position.y, z: position.z, heading, surfaceAt },
+      { x: position.x, y: position.y, z: position.z, heading, surfaceAt, floorAt: floorLookup },
       bikeSpec,
     );
     bike.body.setEnabled(ridingBike);
@@ -1198,6 +1222,21 @@ async function boot(): Promise<void> {
       steps++;
     }
     if (steps >= 8) accumulator = 0;
+
+    // Filet de dernier recours : si la caisse est passée sous la piste — un
+    // châssis qui traverse une dalle mince, un trou entre deux tuiles — on la
+    // repose sur place, au lieu de la laisser tomber dans le vide.
+    const state = vehicle.state;
+    const floor = floorLookup(state.position.x, state.position.z);
+    if (floor !== null && state.position.y < floor - FALL_RECOVERY_DEPTH) {
+      const yaw = Math.atan2(
+        2 * (state.rotation.w * state.rotation.y),
+        1 - 2 * state.rotation.y * state.rotation.y,
+      );
+      setCarPose(state.position.x, state.position.z, yaw);
+      hud.flash('Réapparition', { duration: 700 });
+      return;
+    }
 
     // A rolling memory of poses for the replay. It never stores the physics
     // state, so playing a replay back cannot feed the simulation.

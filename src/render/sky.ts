@@ -49,7 +49,13 @@ export function createSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer): Sk
 
   const sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
   sun.position.copy(sunDirection).multiplyScalar(400);
-  sun.castShadow = true;
+  // La passe d'ombre du soleil tourne mais ne dépose rien sur l'asphalte de ce
+  // rendu : mesure A/B sur la même scène, 129 pixels changent sur 416 000
+  // quand on la coupe. La carte coûtait donc une passe complète sur 500 000
+  // triangles par image pour rien. Les véhicules et le décor sont ancrés par
+  // les décalques de `grounding.ts` ; on rallume ici le jour où la carte
+  // écrira vraiment.
+  sun.castShadow = false;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = 700;

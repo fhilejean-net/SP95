@@ -35,6 +35,17 @@ export interface VehicleInput {
 
 export const NEUTRAL_INPUT: VehicleInput = { throttle: 0, brake: 0, steer: 0, handbrake: false };
 
+/** Normale minimale pour qu'un rayon soit un appui au sol, pas une face de mur. */
+const GROUND_NORMAL_MIN = 0.55;
+/** Marge acceptée sous le rayon quand la cote analytique du sol sert de filet. */
+const FLOOR_SNAP_MARGIN = 0.4;
+/**
+ * Vitesse maximale du débattement, en m/s. Une arête du trimesh qui manque le
+ * rayon de quelques centimètres détendait la suspension d'un coup et la caisse
+ * décollait : le débattement est maintenant borné par image.
+ */
+const SUSPENSION_RATE = 5.5;
+
 /**
  * What the wheels are rolling on. The physics only needs multipliers, so the
  * world can describe asphalt, gravel, grass or rock without the tire model
@@ -286,6 +297,8 @@ export class Vehicle {
   private steerAngle = 0;
   private telemetry: VehicleTelemetry;
   private readonly surfaceAt: (x: number, z: number) => SurfaceGrip;
+  /** Cote analytique du sol : elle existe même là où le trimesh a un trou. */
+  private readonly floorAt: ((x: number, z: number) => number | null) | null;
   /** Ground under the car, for telemetry and audio. */
   surface: SurfaceGrip = ASPHALT;
   private flippedTimer = 0;
@@ -321,11 +334,14 @@ export class Vehicle {
       color?: number;
       /** Ground lookup, in world X/Z. Defaults to dry asphalt everywhere. */
       surfaceAt?: (x: number, z: number) => SurfaceGrip;
+      /** Hauteur du sol, en X/Z : filet quand le rayon de roue ne touche rien. */
+      floorAt?: (x: number, z: number) => number | null;
     },
     spec: VehicleSpec = STOCK_SPEC,
   ) {
     this.spec = spec;
     this.surfaceAt = opts.surfaceAt ?? (() => ASPHALT);
+    this.floorAt = opts.floorAt ?? null;
     this.drivetrain = new Drivetrain({
       ...SPORT_DRIVETRAIN,
       peakTorque: spec.peakTorque,
@@ -584,7 +600,27 @@ export class Vehicle {
 
       wheel.steer = wheel.front ? -this.steerAngle : 0;
 
-      if (!hit) {
+      // Ce que le rayon a trouvé, ou ce que la cote analytique du sol promet.
+      // Un rayon qui accroche une face de mur (normale couchée) ne dit rien de
+      // la hauteur du sol : le prendre pour un appui faisait sauter la caisse.
+      let reach = hit && hit.normal.y >= GROUND_NORMAL_MIN ? hit.timeOfImpact : -1;
+      let contactNormal = hit ? vec3(hit.normal.x, hit.normal.y, hit.normal.z) : null;
+      if (reach < 0) {
+        // Filet de sécurité : la grille de collision de la piste a des trous, et
+        // le châssis ne collisionne qu'avec les murs — sans cette cote, la
+        // voiture traversait l'asphalte et tombait dans le vide. Elle couvre
+        // toute l'emprise du circuit, trous compris.
+        const floor = this.floorAt ? this.floorAt(mountWorld.x, mountWorld.z) : null;
+        if (floor !== null) {
+          const drop = mountWorld.y - floor;
+          if (drop <= maxRay + FLOOR_SNAP_MARGIN) {
+            reach = Math.max(0, drop);
+            contactNormal = { x: 0, y: 1, z: 0 };
+          }
+        }
+      }
+
+      if (reach < 0 || !contactNormal) {
         wheel.contact = false;
         wheel.load = 0;
         wheel.compression = 0;
@@ -599,15 +635,21 @@ export class Vehicle {
 
       wheel.contact = true;
       const contactPoint = {
-        x: ray.origin.x + ray.dir.x * hit.timeOfImpact,
-        y: ray.origin.y + ray.dir.y * hit.timeOfImpact,
-        z: ray.origin.z + ray.dir.z * hit.timeOfImpact,
+        x: ray.origin.x + ray.dir.x * reach,
+        y: ray.origin.y + ray.dir.y * reach,
+        z: ray.origin.z + ray.dir.z * reach,
       };
-      const normal = vec3(hit.normal.x, hit.normal.y, hit.normal.z);
+      const normal = contactNormal;
       wheel.contactPoint = contactPoint;
       wheel.contactNormal = normal;
 
-      const suspensionLength = clamp(hit.timeOfImpact - wheel.radius, MIN_LENGTH, this.maxLength);
+      const wanted = clamp(reach - wheel.radius, MIN_LENGTH, this.maxLength);
+      const travel = SUSPENSION_RATE * dt;
+      const suspensionLength = clamp(
+        wanted,
+        wheel.suspensionLength - travel,
+        wheel.suspensionLength + travel,
+      );
       wheel.suspensionLength = suspensionLength;
       const compression = this.restLength - suspensionLength;
       wheel.compression = compression;

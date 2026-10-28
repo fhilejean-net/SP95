@@ -1,4 +1,11 @@
 import RAPIER from '@dimforge/rapier3d-compat';
+
+/** Normale minimale pour qu'un rayon soit un appui au sol, pas une face de mur. */
+const GROUND_NORMAL_MIN = 0.55;
+/** Marge acceptée sous le rayon quand la cote analytique du sol sert de filet. */
+const FLOOR_SNAP_MARGIN = 0.4;
+/** Vitesse maximale du débattement, en m/s : amortit les marches du trimesh. */
+const SUSPENSION_RATE = 5.5;
 import { Drivetrain, SPORT_DRIVETRAIN } from './drivetrain.ts';
 import {
   add,
@@ -125,6 +132,8 @@ export class Bike {
   private steerAngle = 0;
   private telemetry: VehicleTelemetry;
   private readonly surfaceAt: (x: number, z: number) => SurfaceGrip;
+  /** Cote analytique du sol : elle existe même là où le trimesh a un trou. */
+  private readonly floorAt: ((x: number, z: number) => number | null) | null;
   private popCooldown = 0;
   private bailTimer = 0;
   /** Time the rider has held the brake at a standstill: he walks it back. */
@@ -145,11 +154,14 @@ export class Bike {
       z: number;
       heading: number;
       surfaceAt?: (x: number, z: number) => SurfaceGrip;
+      /** Hauteur du sol, en X/Z : filet quand le rayon de roue ne touche rien. */
+      floorAt?: (x: number, z: number) => number | null;
     },
     spec: BikeSpec,
   ) {
     this.spec = spec;
     this.surfaceAt = opts.surfaceAt ?? (() => ASPHALT);
+    this.floorAt = opts.floorAt ?? null;
     this.wheelieGeometry = {
       cgHeight: spec.cgHeight,
       cgFromRear: spec.cgFromRear,
@@ -449,7 +461,23 @@ export class Bike {
       );
       const lifted = wheel.front && frontLifted;
 
-      if (!hit || lifted) {
+      // Même filet que la voiture : la grille de collision de la piste a des
+      // trous et le châssis de la moto ne collisionne qu'avec les murs. Une
+      // roue qui rate le trimesh faisait tomber la moto sous l'asphalte.
+      let reach = hit && hit.normal.y >= GROUND_NORMAL_MIN ? hit.timeOfImpact : -1;
+      let normal = hit ? vec3(hit.normal.x, hit.normal.y, hit.normal.z) : null;
+      if (reach < 0 && !lifted) {
+        const floor = this.floorAt ? this.floorAt(mountWorld.x, mountWorld.z) : null;
+        if (floor !== null) {
+          const drop = mountWorld.y - floor;
+          if (drop <= this.maxLength + wheel.radius + FLOOR_SNAP_MARGIN) {
+            reach = Math.max(0, drop);
+            normal = { x: 0, y: 1, z: 0 };
+          }
+        }
+      }
+
+      if (reach < 0 || !normal || lifted) {
         wheel.contact = false;
         wheel.load = 0;
         wheel.compression = 0;
@@ -471,15 +499,22 @@ export class Bike {
 
       wheel.contact = true;
       const contactPoint = {
-        x: ray.origin.x + ray.dir.x * hit.timeOfImpact,
-        y: ray.origin.y + ray.dir.y * hit.timeOfImpact,
-        z: ray.origin.z + ray.dir.z * hit.timeOfImpact,
+        x: ray.origin.x + ray.dir.x * reach,
+        y: ray.origin.y + ray.dir.y * reach,
+        z: ray.origin.z + ray.dir.z * reach,
       };
-      const normal = vec3(hit.normal.x, hit.normal.y, hit.normal.z);
       wheel.contactPoint = contactPoint;
       wheel.contactNormal = normal;
 
-      const suspensionLength = clamp(hit.timeOfImpact - wheel.radius, MIN_LENGTH, this.maxLength);
+      // Débattement borné par image : une arête du trimesh qui manque le rayon
+      // ne doit pas détendre la suspension d'un coup.
+      const wanted = clamp(reach - wheel.radius, MIN_LENGTH, this.maxLength);
+      const travel = SUSPENSION_RATE * dt;
+      const suspensionLength = clamp(
+        wanted,
+        wheel.suspensionLength - travel,
+        wheel.suspensionLength + travel,
+      );
       wheel.suspensionLength = suspensionLength;
       const compression = this.restLength - suspensionLength;
       wheel.compression = compression;
