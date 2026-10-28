@@ -35,6 +35,8 @@ import {
   hasKerb,
   type TrackSample,
 } from './trackLayout.ts';
+import { brakingMarkers } from './brakingMarkers.ts';
+import { buildBrakingBoards } from '../render/brakingBoards.ts';
 
 /** Les murs ne collisionnent que la coque, comme les bâtiments de la ville. */
 const WALL_GROUP = (GROUP_WORLD << 16) | GROUP_WORLD;
@@ -1216,6 +1218,13 @@ export function buildFlatCircuit(
   } else {
     gravelMesh.dispose();
   }
+
+  // --- Panneaux de freinage 150/100/50 m --------------------------------
+  // Posés dans le dégagement avant chaque entrée de virage, face à la voiture
+  // qui arrive. Purement visuels : une sortie large les traverse.
+  const markerPlan = brakingMarkers();
+  const markerBoards = buildBrakingBoards(scene, markerPlan, options.anisotropy);
+  triangles += markerBoards.triangles;
 
   // --- Lignes blanches de bord -------------------------------------------
   const lineMat = new THREE.MeshStandardMaterial({

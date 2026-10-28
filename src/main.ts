@@ -2462,6 +2462,18 @@ declare global {
       readonly carModel: boolean;
       readonly wheelMounts: { x: number; z: number }[];
       readonly wheelSpin: number[];
+      readonly replayState: {
+        active: boolean;
+        elapsed: number;
+        frames: number;
+        visual: {
+          wheels: { suspension: number; steer: number; spin: number }[];
+          brake: number;
+          reverse: boolean;
+          lean: number;
+          pitch: number;
+        } | null;
+      };
       readonly wheels: { name: string; contact: boolean; slip: number; load: number; omega: number }[];
       setCar: (id: string) => Promise<void>;
       setTcs: (enabled: boolean) => void;
