@@ -90,12 +90,13 @@ commit hash so the history stays readable.
   playback, and a manual replay shows the wheels turning and the rider leaning.
   *Cycle 11:* `b9eec72` — Roues, direction, frein et inclinaison enregistrés avec chaque pose et rejoués ; sonde navigateur : physique gelée, roues qui tournent
 
-- [ ] **Braking boards should point at the corner** — `S`. The chevrons on every board always
+- [x] ~~**Braking boards should point at the corner**~~ — `S`. The chevrons on every board always
   point right, so on a left-hander they send the driver the wrong way. The plan already knows
   which way the corner turns: give each board that sign and mirror only the chevrons, never the
   number, by pairing one texture per value and direction.
   *Done when:* a test asserts every board carries the sign of the corner it announces, and the
   capture strip shows a left and a right corner with mirrored chevrons.
+  *Cycle 14:* `9d5f926` — Panneaux gauche/droite différenciés, tests des directions et atlas contrôlé ; tsc, 114 tests et build ok
 
 - [ ] **The debug surface is declared twice** — `S`. `window.__sp95` is a seventy-field object
   literal plus a hand-written type literal, and they have already drifted: `replayState` was

@@ -12,13 +12,13 @@ modifie pas le bloc d'état à la main.
 - `status: blocked` → deux échecs sur la même cause : s'arrêter et le dire à l'utilisateur.
 
 <!-- state:start -->
-status: running
-task: Braking boards should point at the corner
+status: idle
+task: —
 cycle: 14
-started: 2026-10-29T17:04:35Z
-heartbeat: 2026-10-29T22:28:45Z
-commit: 9e93ede
-owner: session-11576
+started: —
+heartbeat: 2026-10-29T22:30:53Z
+commit: 9d5f926
+owner: session-12533
 <!-- state:end -->
 
 ## Journal
@@ -38,3 +38,4 @@ owner: session-11576
 | 11 | 2026-10-28 | Animate wheels, steering and rider inside the replay | `b9eec72` | Roues, direction, frein et inclinaison enregistrés avec chaque pose et rejoués ; sonde navigateur : physique gelée, roues qui tournent |
 | 12 | 2026-10-28 | Braking markers before every corner | `5fb74fd` | Panneaux 150/100/50 dans le dégagement avant les entrées de virage, faces vers la voiture, plan pur + rendu partagé ; 4 tests, tsc ok, 104/104, build ok, planche de captures ; type du panneau de debug replay corrigé (tsc était rouge sur main) |
 | 13 | 2026-10-29 | Circuit look: portique, palissade, gravier, stands | `9e93ede` | portique rattaché, palissade continue, gravier progressif, stands détaillés ; 3 tests, tsc ok, 107/107 |
+| 14 | 2026-10-29 | Braking boards should point at the corner | `9d5f926` | Panneaux gauche/droite différenciés, tests des directions et atlas contrôlé ; tsc, 114 tests et build ok |
