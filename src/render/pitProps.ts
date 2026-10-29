@@ -1,0 +1,223 @@
+/**
+ * L'outillage des boxes : pont élévateur, servante, moteur, chariot, creeper,
+ * palan. Les modèles fournis pesaient 70 Mo à eux tous ; ils sont passés par
+ * glTF-Transform (simplification, textures WebP 1024, compression meshopt) et
+ * font maintenant 3,6 Mo.
+ *
+ * Chaque modèle est chargé une fois, normalisé (plus grande longueur
+ * horizontale ramenée à sa taille réelle, centré, posé au sol), puis *instancié*
+ * sur les huit boxes. Un modèle de quatre maillages coûte donc quatre appels de
+ * dessin, pas trente-deux, et la géométrie est partagée.
+ *
+ * Le chargement est asynchrone et facultatif : si un fichier manque, le box
+ * reste vide au lieu de casser le circuit.
+ */
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import {
+  GARAGE_FRONT_X,
+  STALL_COUNT,
+  stallCentre,
+} from '../world/pitLayout.ts';
+
+const MODEL_ROOT = import.meta.env.BASE_URL;
+const PIT_DIR = 'models/pit/';
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+interface PropSpec {
+  file: string;
+  /** Longueur cible du plus grand côté horizontal, en mètres. */
+  length: number;
+  /** Rotation appliquée après normalisation, en radians. */
+  yaw?: number;
+}
+
+/**
+ * Tailles réelles : un pont fait la longueur d'une voiture, une servante tient
+ * contre le mur, un moteur se porte à deux.
+ */
+const PROPS = {
+  lift: { file: 'hydraulic_car_lift.glb', length: 4.4 },
+  elevator: { file: 'car_elevator_free.glb', length: 4.2 },
+  chest: { file: 'tool_chest.glb', length: 1.25 },
+  engine: { file: 'car_engine.glb', length: 0.95 },
+  trolley: { file: 'trolley_jack_lo_poly.glb', length: 1.7, yaw: Math.PI / 2 },
+  creeper: { file: 'mechanic_creeper.glb', length: 1.15 },
+  hoist: { file: 'engine_hoist_-_engine_crane.glb', length: 2.1 },
+} satisfies Record<string, PropSpec>;
+
+type PropName = keyof typeof PROPS;
+
+interface Placement {
+  x: number;
+  z: number;
+  /** Rotation propre à cette pose, ajoutée à celle du modèle. */
+  yaw: number;
+}
+
+/** Positions dans un box : la voie est à droite, le fond à gauche. */
+function placements(): Record<PropName, Placement[]> {
+  const list: Record<PropName, Placement[]> = {
+    lift: [],
+    elevator: [],
+    chest: [],
+    engine: [],
+    trolley: [],
+    creeper: [],
+    hoist: [],
+  };
+  for (let index = 0; index < STALL_COUNT; index++) {
+    const centre = stallCentre(index);
+    // Un pont par box, alterné : le pont ciseaux est lourd (23 000 triangles),
+    // l'élévateur quatre colonnes en coûte 1 200 et fait le même effet.
+    if (index % 2 === 0) list.lift.push({ x: -40.4, z: centre, yaw: 0 });
+    else list.elevator.push({ x: -40.4, z: centre, yaw: 0 });
+    // Servante et chariot contre la façade, de part et d'autre de la porte.
+    list.chest.push({ x: GARAGE_FRONT_X - 0.9, z: centre - 2.9, yaw: 0 });
+    list.trolley.push({ x: GARAGE_FRONT_X - 1.2, z: centre + 2.5, yaw: 0 });
+    // Moteur au fond dans quatre boxes, creeper sous le pont dans deux autres :
+    // chaque box a son outillage propre sans répéter les six modèles huit fois.
+    if (index % 4 === 0) list.engine.push({ x: -44.2, z: centre + 2.4, yaw: Math.PI * 0.5 });
+    if (index === 1 || index === 5) list.creeper.push({ x: -40.6, z: centre + 2.2, yaw: 0 });
+  }
+  // Un palan dans deux boxes seulement : c'est un engin, pas un meuble.
+  for (const index of [2, 5]) {
+    list.hoist.push({ x: -43.4, z: stallCentre(index) - 0.4, yaw: Math.PI * 0.5 });
+  }
+  return list;
+}
+
+export interface PitPropsSummary {
+  meshes: number;
+  triangles: number;
+  models: number;
+  loadMs: number;
+}
+
+/**
+ * Normalise un modèle : plus grande longueur horizontale couchée sur X,
+ * centré en X/Z, bas posé à y = 0. Sans ça, les sept modèles arrivent dans
+ * sept unités et sept orientations différentes.
+ */
+function normalize(root: THREE.Object3D, spec: PropSpec): void {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3());
+  if (size.z > size.x) root.rotation.y += Math.PI / 2;
+  root.updateMatrixWorld(true);
+  box.setFromObject(root);
+  box.getSize(size);
+  const longest = Math.max(size.x, size.z, 0.001);
+  root.scale.setScalar(spec.length / longest);
+  root.updateMatrixWorld(true);
+  box.setFromObject(root);
+  const centre = box.getCenter(new THREE.Vector3());
+  root.position.set(-centre.x, -box.min.y, -centre.z);
+  root.updateMatrixWorld(true);
+}
+
+/** Matériaux : reflets du ciel et filtrage anisotrope, comme les voitures. */
+function prepare(root: THREE.Object3D, anisotropy: number): void {
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    child.castShadow = false;
+    child.receiveShadow = true;
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (material instanceof THREE.MeshStandardMaterial) {
+        material.envMapIntensity = 1;
+        material.roughness = Math.max(0.25, material.roughness);
+      }
+      for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap'] as const) {
+        const texture = (material as THREE.MeshStandardMaterial)[key];
+        if (texture) texture.anisotropy = anisotropy;
+      }
+      material.needsUpdate = true;
+    }
+  });
+}
+
+/**
+ * Instancie un modèle normalisé sur toutes ses poses. On garde la matrice
+ * monde de chaque maillage par rapport à la racine (identité au sol) pour que
+ * les pièces d'un même modèle restent solidaires.
+ */
+function instance(
+  root: THREE.Object3D,
+  list: Placement[],
+  spec: PropSpec,
+  scene: THREE.Scene,
+): { meshes: number; triangles: number } {
+  if (list.length === 0) return { meshes: 0, triangles: 0 };
+  root.updateMatrixWorld(true);
+  const parts: { geometry: THREE.BufferGeometry; material: THREE.Material | THREE.Material[]; local: THREE.Matrix4 }[] = [];
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || (child as THREE.SkinnedMesh).isSkinnedMesh) return;
+    parts.push({
+      geometry: child.geometry,
+      material: child.material,
+      local: child.matrixWorld.clone(),
+    });
+  });
+
+  const place = new THREE.Matrix4();
+  const composed = new THREE.Matrix4();
+  const quaternion = new THREE.Quaternion();
+  let meshes = 0;
+  let triangles = 0;
+  for (const part of parts) {
+    const mesh = new THREE.InstancedMesh(part.geometry, part.material, list.length);
+    list.forEach((spot, index) => {
+      quaternion.setFromAxisAngle(Y_AXIS, spot.yaw + (spec.yaw ?? 0));
+      place.compose(new THREE.Vector3(spot.x, 0.06, spot.z), quaternion, new THREE.Vector3(1, 1, 1));
+      mesh.setMatrixAt(index, composed.multiplyMatrices(place, part.local));
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.name = `pit-prop-${spec.file.replace('.glb', '')}`;
+    scene.add(mesh);
+    meshes += 1;
+    const geometry = part.geometry;
+    const count = geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3;
+    triangles += Math.round(count * list.length);
+  }
+  return { meshes, triangles };
+}
+
+export async function buildPitProps(
+  scene: THREE.Scene,
+  anisotropy: number,
+): Promise<PitPropsSummary> {
+  const started = performance.now();
+  const loader = new GLTFLoader();
+  // Les modèles sont compressés en meshopt : sans ce décodeur, la géométrie
+  // n'arrive pas et les boxes restent vides.
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  const spots = placements();
+  const names = Object.keys(PROPS) as PropName[];
+  const results = await Promise.allSettled(
+    names.map((name) => loader.loadAsync(`${MODEL_ROOT}${PIT_DIR}${PROPS[name].file}`)),
+  );
+
+  let meshes = 0;
+  let triangles = 0;
+  let models = 0;
+  results.forEach((result, index) => {
+    const name = names[index];
+    if (result.status !== 'fulfilled') {
+      console.warn(`Prop de stand manquant : ${PROPS[name].file}`, result.reason);
+      return;
+    }
+    const root = result.value.scene;
+    normalize(root, PROPS[name]);
+    prepare(root, anisotropy);
+    const built = instance(root, spots[name], PROPS[name], scene);
+    meshes += built.meshes;
+    triangles += built.triangles;
+    models += 1;
+  });
+
+  return { meshes, triangles, models, loadMs: performance.now() - started };
+}

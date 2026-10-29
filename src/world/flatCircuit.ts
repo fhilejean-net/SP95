@@ -40,6 +40,19 @@ import { buildBrakingBoards } from '../render/brakingBoards.ts';
 import { gravelFillAt, gravelRuns } from './circuitDecor.ts';
 import { buildSponsorFence } from '../render/sponsorFence.ts';
 import { buildPitLaneDetail } from '../render/pitLaneDetail.ts';
+import { buildPitGarage } from '../render/pitGarage.ts';
+import {
+  PIT_APRON_FROM,
+  PIT_APRON_TO,
+  PIT_LANE_FROM,
+  PIT_LANE_HALF,
+  PIT_LANE_TO,
+  PIT_LANE_X,
+  PIT_THROATS,
+  PIT_THROAT_INNER_X,
+  PIT_WALL_OUTER,
+  pitWallGap,
+} from './pitLayout.ts';
 
 /** Les murs ne collisionnent que la coque, comme les bâtiments de la ville. */
 const WALL_GROUP = (GROUP_WORLD << 16) | GROUP_WORLD;
@@ -585,7 +598,12 @@ function gantryBannerTexture(): THREE.CanvasTexture {
  * cote zéro, et aucun de ces objets ne porte de collision — ils sont derrière
  * les murs, ou hors d'atteinte.
  */
-function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): number {
+function buildScenery(
+  scene: THREE.Scene,
+  world: RAPIER.World,
+  anisotropy: number,
+  lowFx: boolean,
+): number {
   const concrete = createConcreteTexture();
   concrete.repeat.set(3, 3);
   concrete.anisotropy = anisotropy;
@@ -635,61 +653,47 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
     return mesh;
   };
 
-  // --- Pit lane : une dalle, une voie des stands, un bâtiment, huit garages -
-  const pad = new THREE.Mesh(new THREE.PlaneGeometry(46, 260), concreteMat);
+  // --- Stands : la voie est *derrière* le muret --------------------------
+  // La dalle couvre la voie et l'atelier : les garages ouvrent dessus.
+  const padLength = PIT_APRON_TO - PIT_APRON_FROM;
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(46, padLength), concreteMat);
   pad.rotation.x = -Math.PI / 2;
-  pad.position.set(-42, ROAD_LIFT, -410);
+  pad.position.set(-42, ROAD_LIFT, (PIT_APRON_FROM + PIT_APRON_TO) / 2);
   add(pad, 'receive');
 
-  // La voie des stands court entre le bord de piste et le mur : elle est
-  // peinte, le sol physique reste le terrain plat.
-  const pitLane = new THREE.Mesh(new THREE.PlaneGeometry(8.6, 250), pitAsphalt);
+  const pitLane = new THREE.Mesh(
+    new THREE.PlaneGeometry(PIT_LANE_HALF * 2, PIT_LANE_TO - PIT_LANE_FROM),
+    pitAsphalt,
+  );
   pitLane.rotation.x = -Math.PI / 2;
-  pitLane.position.set(-13.2, ROAD_LIFT + 0.004, -390);
+  pitLane.position.set(PIT_LANE_X, ROAD_LIFT + 0.004, (PIT_LANE_FROM + PIT_LANE_TO) / 2);
   add(pitLane, 'receive');
+
+  // Raccordements piste ↔ stands : deux traversées du dégagement, là où le
+  // muret est ouvert. Sans elles, la voie serait une impasse derrière le mur.
+  for (const throat of PIT_THROATS) {
+    // Largeur positive : la face intérieure est à -6, la face du muret à
+    // -18,95. La soustraction dans l'autre sens donnait un plan retourné, donc
+    // invisible — le raccordement restait de l'herbe à l'écran.
+    const ramp = new THREE.Mesh(
+      new THREE.PlaneGeometry(PIT_THROAT_INNER_X - PIT_WALL_OUTER, throat.to - throat.from),
+      pitAsphalt,
+    );
+    ramp.rotation.x = -Math.PI / 2;
+    ramp.position.set(
+      (PIT_THROAT_INNER_X + PIT_WALL_OUTER) / 2,
+      ROAD_LIFT + 0.004,
+      (throat.from + throat.to) / 2,
+    );
+    add(ramp, 'receive');
+  }
+
   // Détail de la voie : emplacements numérotés, rail de muret, pneus, chrono.
   const pitDetail = buildPitLaneDetail(scene, anisotropy);
   triangles += pitDetail.triangles;
-
-  box(15, 8.4, 118, -33, 4.2, -420, concreteMat, 0, 'both');
-  box(15.8, 0.7, 120, -33, 8.6, -420, darkMat, 0, 'both');
-  // Bandeau vitré au-dessus des garages, puis les portes.
-  box(0.2, 1.7, 112, -25.4, 6.1, -420, glassMat, 0, 'none');
-  const lampMat = new THREE.MeshStandardMaterial({
-    color: 0xf4f2e8,
-    emissive: 0xfff1d2,
-    emissiveIntensity: 0.9,
-    roughness: 0.5,
-  });
-  for (let i = 0; i < 8; i++) {
-    const z = -474 + i * 13.2;
-    box(0.35, 3.9, 8.4, -25.4, 1.95, z, darkMat, 0, 'none');
-    box(0.25, 0.22, 8.4, -25.15, 0.11, z, whiteMat, 0, 'none');
-    // Encadrement de la porte : sans lui, les garages sont des rectangles gris.
-    box(0.18, 4.2, 0.26, -25.2, 2.1, z - 4.32, whiteMat, 0, 'none');
-    box(0.18, 4.2, 0.26, -25.2, 2.1, z + 4.32, whiteMat, 0, 'none');
-    box(0.2, 0.32, 8.9, -25.2, 4.26, z, whiteMat, 0, 'none');
-    // Bandeau lumineux au-dessus de chaque porte.
-    box(0.14, 0.16, 7.4, -25.18, 4.6, z, lampMat, 0, 'none');
-  }
-  // Terrasse des stands : garde-corps et unités de toiture, pour que la façade
-  // ne se termine pas sur une arête blanche.
-  for (let z = -476; z <= -362; z += 4) {
-    box(0.06, 0.95, 0.06, -25.72, 9.02, z, metalMat, 0, 'none');
-  }
-  box(0.07, 0.07, 114, -25.72, 9.48, -420, metalMat, 0, 'none');
-  box(0.07, 0.07, 114, -25.72, 9.02, -420, metalMat, 0, 'none');
-  for (const z of [-462, -436, -404, -378]) {
-    box(2.6, 1.1, 3.4, -31, 9.5, z, metalMat, 0, 'none');
-  }
-  // Enseigne du bâtiment, tournée vers la piste.
-  const sign = new THREE.Mesh(
-    new THREE.PlaneGeometry(18, 3.4),
-    new THREE.MeshBasicMaterial({ map: boardTexture('SP95', '#a3141c', '#f4f1e8') }),
-  );
-  sign.position.set(-25.2, 8.2, -420);
-  sign.rotation.y = Math.PI / 2;
-  scene.add(sign);
+  // Les boxes : un bâtiment ouvert, ses cloisons et son toit.
+  const garage = buildPitGarage(scene, world, anisotropy);
+  triangles += garage.triangles;
 
   // --- Tribune principale : les gradins montent *vers l'extérieur* --------
   // La première version montait vers la piste : le public tournait le dos au
@@ -1366,6 +1370,10 @@ export function buildFlatCircuit(
       const dz = bz - az;
       const span = Math.hypot(dx, dz);
       if (span < 1e-4) continue;
+      // Les deux traversées des stands : le muret s'ouvre, sinon la voie est
+      // une impasse derrière lui. La voie est du côté x négatif, c'est-à-dire
+      // `side = +1` (la normale à droite pointe vers -x sur cette ligne).
+      if (side === 1 && pitWallGap(a.x, a.z, b.z)) continue;
       const yaw = Math.atan2(dx, dz);
       quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       position.set((ax + bx) / 2, WALL_HEIGHT / 2, (az + bz) / 2);
@@ -1503,7 +1511,7 @@ export function buildFlatCircuit(
     scene.add(trim);
   }
 
-  const scenery = buildScenery(scene, options.anisotropy, options.lowFx);
+  const scenery = buildScenery(scene, world, options.anisotropy, options.lowFx);
   triangles += scenery;
   const buildMs = performance.now() - buildMsStart;
 

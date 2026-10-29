@@ -58,12 +58,35 @@ const PAINT_CLEARCOAT_ROUGHNESS = 0.055;
 function glossPaint(material: THREE.Material): THREE.Material {
   if (!(material instanceof THREE.MeshStandardMaterial)) return material;
   if (material.transparent || !PAINT_MATERIAL.test(material.name ?? '')) return material;
-  const paint = new THREE.MeshPhysicalMaterial();
-  paint.copy(material as unknown as THREE.MeshPhysicalMaterial);
-  paint.name = material.name;
-  paint.clearcoat = PAINT_CLEARCOAT;
-  paint.clearcoatRoughness = PAINT_CLEARCOAT_ROUGHNESS;
-  paint.envMapIntensity = ENV_INTENSITY;
+  // On recopie champ par champ, pas `copy()` : `MeshPhysicalMaterial.copy()`
+  // attend une *physique* en source et lit `source.clearcoatNormalScale`, que
+  // toute `MeshStandardMaterial` n'a pas — la peinture de la voiture par défaut
+  // plantait là et le jeu retombait sur la voiture de secours.
+  const paint = new THREE.MeshPhysicalMaterial({
+    name: material.name,
+    color: material.color ? material.color.clone() : new THREE.Color(0xffffff),
+    map: material.map ?? null,
+    normalMap: material.normalMap ?? null,
+    normalScale: material.normalScale ? material.normalScale.clone() : new THREE.Vector2(1, 1),
+    aoMap: material.aoMap ?? null,
+    aoMapIntensity: material.aoMapIntensity ?? 1,
+    roughnessMap: material.roughnessMap ?? null,
+    roughness: material.roughness,
+    metalnessMap: material.metalnessMap ?? null,
+    metalness: material.metalness,
+    emissive: material.emissive ? material.emissive.clone() : new THREE.Color(0x000000),
+    emissiveMap: material.emissiveMap ?? null,
+    emissiveIntensity: material.emissiveIntensity ?? 1,
+    alphaMap: material.alphaMap ?? null,
+    side: material.side,
+    transparent: material.transparent,
+    opacity: material.opacity,
+    alphaTest: material.alphaTest,
+    depthWrite: material.depthWrite,
+    clearcoat: PAINT_CLEARCOAT,
+    clearcoatRoughness: PAINT_CLEARCOAT_ROUGHNESS,
+    envMapIntensity: ENV_INTENSITY,
+  });
   return paint;
 }
 

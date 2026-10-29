@@ -12,18 +12,20 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
-/** Axe de la voie des stands, en coordonnées monde. */
-export const PIT_LANE_X = -13.2;
-/** Demi-largeur de la voie. */
-export const PIT_LANE_HALF = 4.3;
-/** Étendue de la voie le long de la ligne droite. */
-export const PIT_LANE_FROM = -515;
-export const PIT_LANE_TO = -265;
-/** Emplacements : huit garages, un toutes les 13,2 m. */
-export const STALL_FIRST_Z = -474;
-export const STALL_PITCH = 13.2;
-export const STALL_COUNT = 8;
-const STALL_HALF_LENGTH = 4.4;
+import {
+  PIT_LANE_FROM,
+  PIT_LANE_HALF,
+  PIT_LANE_TO,
+  PIT_LANE_X,
+  PIT_WALL_OUTER,
+  STALL_COUNT,
+  STALL_FIRST_Z,
+  STALL_PITCH,
+  STALL_LENGTH,
+} from '../world/pitLayout.ts';
+
+export { PIT_LANE_FROM, PIT_LANE_HALF, PIT_LANE_TO, PIT_LANE_X, STALL_COUNT, STALL_PITCH };
+const STALL_HALF_LENGTH = STALL_LENGTH / 2;
 /** Cote du marquage, au-dessus de l'asphalte de la voie. */
 const PAINT_Y = 0.036;
 /** Teintes des écuries, reprises du bandeau du portique. */
@@ -326,8 +328,9 @@ export function buildPitLaneDetail(scene: THREE.Scene, anisotropy: number): PitL
   triangles += tyre * 48 + STALL_COUNT * 12;
 
   // --- Rail du muret de stands -------------------------------------------
-  // Le muret est à WALL_OFFSET ; on pose le rail sur son arête intérieure.
-  const railX = -17.95;
+  // Le rail se monte sur la face *stands* du muret : c'est de ce côté que se
+  // tiennent les commissaires, face aux garages.
+  const railX = PIT_WALL_OUTER - 0.2;
   const railParts: THREE.BufferGeometry[] = [];
   for (const y of [1.22, 1.56, 1.9]) {
     const rail = new THREE.BoxGeometry(0.07, 0.07, 208);

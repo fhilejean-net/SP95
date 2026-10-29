@@ -603,6 +603,78 @@ button.primary {
   backdrop-filter: blur(10px);
 }
 
+/* ---------- Secteurs ---------- */
+#sector-panel {
+  position: absolute;
+  right: 26px;
+  top: 282px;
+  width: 190px;
+  padding: 10px 12px 8px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(12px);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.sector-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+  font-family: var(--font);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#sector-ref {
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.sector-row {
+  display: grid;
+  grid-template-columns: 20px 1fr 64px;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sector-row .sector-name {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.sector-row .sector-time {
+  text-align: right;
+  color: var(--text);
+}
+
+.sector-row .sector-delta {
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sector-row.current .sector-time {
+  color: var(--accent);
+}
+
+.sector-row.faster .sector-delta {
+  color: #57d38c;
+}
+
+.sector-row.slower .sector-delta {
+  color: #ef5a4b;
+}
+
 #message {
   position: absolute;
   top: 42%;
@@ -722,6 +794,16 @@ body.touch #stunt-panel {
 }
 
 @media (max-width: 860px) {
+  #sector-panel {
+    top: 232px;
+    width: 150px;
+    font-size: 11px;
+  }
+
+  .sector-row {
+    grid-template-columns: 18px 1fr 54px;
+  }
+
   #minimap {
     width: 140px;
     height: 140px;

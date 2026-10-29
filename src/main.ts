@@ -36,7 +36,8 @@ import {
 import { NEIGHBOURHOODS, buildCity, syncProps } from './world/city.ts';
 import { buildCircuit, circuitFloor, type CircuitHandles } from './world/circuit.ts';
 import { buildFlatCircuit } from './world/flatCircuit.ts';
-import { TRACK, trackSurfaceAt } from './world/trackLayout.ts';
+import { TRACK, trackDistanceAt, trackSurfaceAt } from './world/trackLayout.ts';
+import { insidePit } from './world/pitLayout.ts';
 import { MAPS, MAP_ID, mapUrl, type MapId } from './game/maps.ts';
 import { BUILDINGS } from './world/buildings.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
@@ -50,6 +51,7 @@ import { loadBikeVisual } from './render/bikeModel.ts';
 import { createSparks } from './render/sparks.ts';
 import { createTireSmoke } from './render/tireSmoke.ts';
 import { loadCarVisual } from './render/carModel.ts';
+import { buildPitProps } from './render/pitProps.ts';
 import { CARS, findCar, loadCarId, saveCarId, type CarDef, type CarId } from './game/cars.ts';
 import { QualityGovernor } from './render/quality.ts';
 import { ChaseCamera, cameraModeLabel } from './core/camera.ts';
@@ -89,6 +91,7 @@ import {
 import { Garage } from './game/garage.ts';
 import { Showroom } from './game/showroom.ts';
 import { Chrono, formatLap } from './game/chrono.ts';
+import { SectorTimer } from './game/sectors.ts';
 import { loadSetup, resolveSpec, saveSetup, type Setup } from './game/tuning.ts';
 
 const FIXED = 1 / 120;
@@ -247,6 +250,8 @@ async function boot(): Promise<void> {
   let circuit: CircuitHandles | null = null;
   /** Chrono de la piste : seulement là où il y a une piste. */
   let chrono: Chrono | null = null;
+  /** Les trois secteurs du tour, sur le circuit dessiné par le jeu. */
+  let sectors: SectorTimer | null = null;
   if (SUZUKA_MAP) {
     await setLoading(0.26, 'Pose du circuit de Suzuka…');
     circuit = await buildCircuit(scene, world, {
@@ -291,6 +296,20 @@ async function boot(): Promise<void> {
       },
       'sp95.chrono.sp95',
     );
+    // Les secteurs se mesurent sur la longueur du tour : leurs frontières
+    // tombent au tiers et aux deux tiers, toujours sur les mêmes virages.
+    sectors = new SectorTimer(TRACK.length, 'sp95.sectors.sp95');
+  }
+
+  // L'outillage des boxes se charge après le circuit : la voie et les garages
+  // existent déjà, les props viennent s'y poser.
+  if (FLAT_MAP) {
+    await setLoading(0.38, 'Chargement de l’atelier…');
+    const props = await buildPitProps(scene, renderer.capabilities.getMaxAnisotropy());
+    console.log(
+      `Stands SP95 : ${props.models} modèles, ${props.meshes} maillages, ` +
+        `${props.triangles} triangles en ${Math.round(props.loadMs)} ms`,
+    );
   }
 
   await setLoading(TRACK_MAP ? 0.42 : 0.3, 'Génération du terrain…');
@@ -299,7 +318,11 @@ async function boot(): Promise<void> {
   const terrain = buildTerrain(scene, world, materials);
   // Le circuit SP95 fournit lui-même son revêtement : la physique doit lire
   // l'asphalte de la piste et l'herbe du reste, pas la grille de la ville.
-  setTrackSurface(FLAT_MAP ? trackSurfaceAt : null);
+  // La voie des stands et ses raccordements sont du bitume : sans cette
+  // exception, la physique les lisait comme de l'herbe et la voiture y glissait.
+  setTrackSurface(
+    FLAT_MAP ? (x, z) => (insidePit(x, z) ? 'asphalte' : trackSurfaceAt(x, z)) : null,
+  );
   /** Sol de jeu sous une roue : la dalle du circuit passe avant le terrain. */
   const groundAt = (x: number, z: number) =>
     Math.max(terrain.sample(x, z), circuitFloor(x, z) ?? -Infinity);
@@ -665,7 +688,9 @@ async function boot(): Promise<void> {
     // panneau des tours affiche le tour en cours et le meilleur, sans course.
     timedLap = Boolean(chrono) && wanted === 'free' && target === 'circuit';
     if (timedLap) chrono?.reset();
+    sectors?.reset();
     hud.setChrono(timedLap);
+    hud.setSectors(timedLap && Boolean(sectors));
     hud.setMode(wanted, TRACK_LABEL);
     input.clear();
     audio.init();
@@ -739,6 +764,7 @@ async function boot(): Promise<void> {
     }
     // Repartir des stands, c'est repartir du chrono : le tour en cours est perdu.
     if (timedLap) chrono?.reset();
+    sectors?.reset();
     hud.flash('Réapparition', { duration: 700 });
   }
 
@@ -1408,6 +1434,14 @@ async function boot(): Promise<void> {
     if (chrono && timedLap) {
       const pos = vehicle.position;
       const chronoEvent = chrono.update(dt, pos.x, pos.z, telemetry.speed);
+      if (sectors) {
+        if (chronoEvent === 'start') sectors.arm();
+        // Distance depuis la ligne, ramenée dans [0, longueur du tour).
+        const covered = trackDistanceAt(pos.x, pos.z) - CHRONO_LINE_OFFSET;
+        const lapDistance = ((covered % TRACK.length) + TRACK.length) % TRACK.length;
+        sectors.update(dt, lapDistance);
+        if (chronoEvent === 'lap') sectors.completeLap(chrono.last);
+      }
       if (chronoEvent === 'start') {
         hud.flash('Chrono lancé', { accent: true, duration: 1200 });
       } else if (chronoEvent === 'lap') {
@@ -1875,6 +1909,7 @@ async function boot(): Promise<void> {
     }
     if (chrono && timedLap) {
       hud.updateChrono(chrono.lap, chrono.current, chrono.best);
+      if (sectors) hud.updateSectors(sectors.snapshot());
     }
 
     if (mode !== 'menu') {

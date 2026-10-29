@@ -9,6 +9,7 @@ import {
   CIRCUIT,
 } from '../world/layout.ts';
 import { Race, type RaceSnapshot } from './race.ts';
+import { formatDelta, formatSector, type SectorSnapshot } from './sectors.ts';
 
 export type GameMode = 'menu' | 'free' | 'race';
 
@@ -24,6 +25,9 @@ export class Hud {
   private raceLap = el('race-lap');
   private raceTime = el('race-time');
   private raceBest = el('race-best');
+  private sectorPanel = el('sector-panel');
+  private sectorRef = el('sector-ref');
+  private sectorRows = [1, 2, 3].map((index) => el(`sector-row-${index}`));
   private driftTotal = el('drift-total');
   private driftPanel = el('drift-panel');
   private driftPoints = el('drift-points');
@@ -359,6 +363,42 @@ export class Hud {
     this.raceLap.textContent = lap > 0 ? String(lap) : '—';
     this.raceTime.textContent = Race.formatTime(current);
     this.raceBest.textContent = Race.formatTime(best);
+  }
+
+  /** Le panneau des secteurs suit le chrono : pas de chrono, pas de secteurs. */
+  setSectors(on: boolean): void {
+    this.sectorPanel.classList.toggle('hidden', !on);
+  }
+
+  /**
+   * Trois lignes, une par secteur : le temps bouclé et l'écart au meilleur tour
+   * du même secteur, en vert quand on gagne, en rouge quand on perd. Le secteur
+   * en cours affiche son temps qui court.
+   */
+  updateSectors(snapshot: SectorSnapshot): void {
+    this.sectorRef.textContent =
+      snapshot.reference === null ? 'réf. —' : `réf. ${Race.formatTime(snapshot.reference)}`;
+    for (let index = 0; index < this.sectorRows.length; index++) {
+      const row = this.sectorRows[index];
+      const time = row.querySelector('.sector-time') as HTMLSpanElement | null;
+      const delta = row.querySelector('.sector-delta') as HTMLSpanElement | null;
+      if (!time || !delta) continue;
+      const split = snapshot.splits[index] ?? null;
+      const current = snapshot.running === index;
+      row.classList.toggle('current', current);
+      row.classList.remove('faster', 'slower');
+      if (split) {
+        time.textContent = formatSector(split.time);
+        delta.textContent = split.delta === null ? '' : formatDelta(split.delta);
+        if (split.delta !== null) {
+          row.classList.toggle('faster', split.delta < -0.0005);
+          row.classList.toggle('slower', split.delta > 0.0005);
+        }
+      } else {
+        time.textContent = current ? formatSector(snapshot.partial) : '—';
+        delta.textContent = '';
+      }
+    }
   }
 
   updateRace(snapshot: RaceSnapshot | null): void {

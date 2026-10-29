@@ -293,6 +293,44 @@ export function lateralOffset(x: number, z: number, track: TrackData = TRACK): n
   return signed < 0 ? -best : best;
 }
 
+/**
+ * Distance parcourue depuis la ligne pour le point le plus proche de l'axe.
+ *
+ * Les secteurs en ont besoin à chaque image : même grille de voisinage que le
+ * revêtement, et projection sur le segment le plus proche. Renvoie `-1` quand
+ * le point est hors de portée de la grille (très loin du circuit).
+ */
+export function trackDistanceAt(x: number, z: number, track: TrackData = TRACK): number {
+  const grid = ensureBuckets(track);
+  const total = track.samples.length;
+  const cellX = Math.floor(x / QUERY_CELL);
+  const cellZ = Math.floor(z / QUERY_CELL);
+  let best = Infinity;
+  let distance = -1;
+  for (let dz = -2; dz <= 2; dz++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const list = grid.get(keyOf(cellX + dx, cellZ + dz));
+      if (!list) continue;
+      for (const index of list) {
+        const a = track.samples[index];
+        const b = track.samples[(index + 1) % total];
+        const ex = b.x - a.x;
+        const ez = b.z - a.z;
+        const lengthSq = ex * ex + ez * ez || 1;
+        const t = Math.min(1, Math.max(0, ((x - a.x) * ex + (z - a.z) * ez) / lengthSq));
+        const px = a.x + ex * t;
+        const pz = a.z + ez * t;
+        const dist = Math.hypot(x - px, z - pz);
+        if (dist < best) {
+          best = dist;
+          distance = a.distance + Math.sqrt(lengthSq) * t;
+        }
+      }
+    }
+  }
+  return distance % track.length;
+}
+
 /** Revêtement sous une roue : l'asphalte jusqu'au bord des vibreurs. */
 export function trackSurfaceAt(x: number, z: number, track: TrackData = TRACK): TrackSurfaceKind {
   return Math.abs(lateralOffset(x, z, track)) <= track.halfWidth + KERB_WIDTH ? 'asphalte' : 'herbe';

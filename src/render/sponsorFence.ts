@@ -18,6 +18,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { sampleAtDistance } from '../world/brakingMarkers.ts';
 import { offsetFits } from '../world/circuitDecor.ts';
 import { TRACK, WALL_OFFSET, WALL_THICK, type TrackSample } from '../world/trackLayout.ts';
+import { pitWallGap } from '../world/pitLayout.ts';
 
 /** Longueur d'un panneau, en mètres. */
 export const PANEL_LENGTH = 6.4;
@@ -168,6 +169,17 @@ export function buildSponsorFence(
         offsetFits(sampleAtDistance(start + offset), lateral * side),
       );
       if (!fits) continue;
+      // Devant les raccordements des stands, le muret n'existe plus : un
+      // panneau y flotterait en travers de l'ouverture.
+      if (
+        side === 1 &&
+        [0, PANEL_LENGTH / 2, PANEL_LENGTH].some((offset) => {
+          const point = sampleAtDistance(start + offset);
+          return pitWallGap(point.x, point.z, point.z);
+        })
+      ) {
+        continue;
+      }
       byBrand[panel % BRANDS.length].push(panelGeometry(start, side, lateral));
     }
     byBrand.forEach((parts, index) => {
@@ -201,6 +213,7 @@ export function buildSponsorFence(
       const bz = b.z + normalB.z * lateral * side;
       const span = Math.hypot(bx - ax, bz - az);
       if (span < 1e-3) continue;
+      if (side === 1 && pitWallGap(a.x, a.z, b.z)) continue;
       const rail = new THREE.BoxGeometry(RAIL_SIDE, RAIL_SIDE, span + 0.02);
       rail.rotateY(Math.atan2(bx - ax, bz - az));
       rail.translate((ax + bx) / 2, RAIL_HEIGHT, (az + bz) / 2);
