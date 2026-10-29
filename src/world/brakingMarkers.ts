@@ -56,6 +56,8 @@ export interface BrakingMarker {
   distance: number;
   /** Distance de l'entrée du virage annoncé. */
   cornerDistance: number;
+  /** Sens du virage annoncé : -1 à gauche, +1 à droite. */
+  direction: -1 | 1;
   /** -1 à gauche de l'axe, +1 à droite. */
   side: -1 | 1;
   /** Décalage latéral signé, en mètres. */
@@ -167,7 +169,8 @@ export function sampleAtDistance(
 
 /**
  * Plan complet : pour chaque entrée retenue et chaque distance, un panneau de
- * part et d'autre de la piste, tourné vers la voiture qui approche.
+ * part et d'autre de la piste, tourné vers la voiture qui approche et indiquant
+ * le sens du virage annoncé.
  */
 export function brakingMarkers(
   entries: CornerEntry[] = cornerEntries(),
@@ -194,6 +197,7 @@ export function brakingMarkers(
           value,
           distance,
           cornerDistance: entry.distance,
+          direction: entry.direction,
           side,
           lateral: MARKER_LATERAL * side,
         });

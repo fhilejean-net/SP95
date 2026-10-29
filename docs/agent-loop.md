@@ -12,13 +12,13 @@ modifie pas le bloc d'état à la main.
 - `status: blocked` → deux échecs sur la même cause : s'arrêter et le dire à l'utilisateur.
 
 <!-- state:start -->
-status: idle
-task: —
-cycle: 13
-started: —
-heartbeat: 2026-10-29T07:10:24Z
+status: running
+task: Braking boards should point at the corner
+cycle: 14
+started: 2026-10-29T17:04:35Z
+heartbeat: 2026-10-29T22:28:45Z
 commit: 9e93ede
-owner: session-11767
+owner: session-11576
 <!-- state:end -->
 
 ## Journal

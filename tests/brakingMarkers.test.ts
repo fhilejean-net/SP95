@@ -7,6 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import * as THREE from 'three';
 import {
   BRAKING_DISTANCES,
   CORNER_RADIUS,
@@ -19,6 +20,7 @@ import {
   sampleAtDistance,
 } from '../src/world/brakingMarkers.ts';
 import { KERB_WIDTH, TRACK, WALL_OFFSET, cornerRadius } from '../src/world/trackLayout.ts';
+import { setBoardDirectionUv } from '../src/render/brakingBoards.ts';
 
 test('chaque entrée de virage reçoit les annonces que sa ligne droite permet', () => {
   const entries = cornerEntries();
@@ -84,6 +86,40 @@ test('les panneaux sont dans le dégagement, de part et d’autre de la piste', 
     assert.ok(Math.abs(Math.hypot(dx, dz) - MARKER_LATERAL) < 1e-6);
   }
   assert.deepEqual([...sides].sort(), [-1, 1], 'un seul côté de la piste est équipé');
+});
+
+test('chaque panneau annonce le sens réel du virage avec un signe cohérent', () => {
+  const entries = cornerEntries();
+  const markers = brakingMarkers(entries);
+  assert.ok(entries.some((entry) => entry.direction === -1), 'aucun virage à gauche');
+  assert.ok(entries.some((entry) => entry.direction === 1), 'aucun virage à droite');
+  for (const entry of entries) {
+    const matching = markers.filter((marker) => marker.cornerDistance === entry.distance);
+    assert.ok(matching.length > 0, `aucun panneau pour le virage à ${entry.distance}`);
+    for (const marker of matching) {
+      assert.equal(marker.direction, entry.direction, `sens erroné à ${entry.distance} m`);
+    }
+  }
+});
+
+test('les UV choisissent le demi-atlas du virage sans inverser les caractères', () => {
+  const leftGeometry = new THREE.PlaneGeometry(2, 1);
+  const rightGeometry = new THREE.PlaneGeometry(2, 1);
+  const original = Array.from(leftGeometry.getAttribute('uv').array as ArrayLike<number>);
+  setBoardDirectionUv(leftGeometry, -1);
+  setBoardDirectionUv(rightGeometry, 1);
+  const left = Array.from(leftGeometry.getAttribute('uv').array as ArrayLike<number>);
+  const right = Array.from(rightGeometry.getAttribute('uv').array as ArrayLike<number>);
+  const inset = 3 / 1024;
+  for (let i = 0; i < original.length; i += 2) {
+    const localU = THREE.MathUtils.clamp(original[i], inset, 1 - inset);
+    assert.equal(left[i], inset + localU * (0.5 - 2 * inset), `U gauche vertex ${i / 2}`);
+    assert.equal(right[i], 0.5 + inset + localU * (0.5 - 2 * inset), `U droite vertex ${i / 2}`);
+    assert.equal(left[i + 1], original[i + 1], `V gauche préservé vertex ${i / 2}`);
+    assert.equal(right[i + 1], original[i + 1], `V droite préservé vertex ${i / 2}`);
+  }
+  leftGeometry.dispose();
+  rightGeometry.dispose();
 });
 
 test('les faces regardent la voiture qui arrive', () => {

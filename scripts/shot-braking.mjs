@@ -1,7 +1,7 @@
 /**
- * Capture des panneaux de freinage du premier virage : le 150, le 100 et le 50
- * doivent se lire dans l'ordre, face à la voiture, de part et d'autre de la
- * piste.
+ * Capture des panneaux de freinage : contrôle de la séquence 150/100/50 m, puis
+ * comparaison côte à côte des chevrons d'un virage à gauche et d'un virage à
+ * droite, sans que nombre ni unité ne soient retournés.
  *
  *   node --experimental-strip-types scripts/shot-braking.mjs
  */
@@ -58,12 +58,22 @@ try {
   await page.waitForTimeout(1400);
   await page.screenshot({ path: 'artifacts/braking-markers-wide.png' });
 
-  // Planche de contrôle : chaque annonce en gros plan, dans l'ordre de la
-  // freinée. Une seule image, donc lisible d'un coup d'œil.
+  // Planche de contrôle des deux signes : un virage à gauche et un à droite,
+  // cadrés à la même échelle pour comparer les chevrons sans retourner le texte.
+  const directionExamples = [
+    {
+      label: 'Virage à gauche · 150 m',
+      marker: markers.find((marker) => marker.value === 150 && marker.direction === -1 && marker.side === -1),
+    },
+    {
+      label: 'Virage à droite · 100 m',
+      marker: markers.find((marker) => marker.value === 100 && marker.direction === 1 && marker.side === -1),
+    },
+  ];
   const closeups = [];
-  for (const value of [150, 100, 50]) {
-    const board = markers.find((marker) => marker.value === value && marker.side === -1);
-    if (!board) continue;
+  for (const example of directionExamples) {
+    const board = example.marker;
+    if (!board) throw new Error(`panneau introuvable pour ${example.label}`);
     await page.evaluate(
       ([px, py, pz, tx, ty, tz]) => window.__sp95.setCamera(px, py, pz, tx, ty, tz),
       [
@@ -77,21 +87,21 @@ try {
     );
     await page.waitForTimeout(1200);
     const shot = await page.screenshot();
-    closeups.push({ value, data: shot.toString('base64') });
+    closeups.push({ label: example.label, data: shot.toString('base64') });
   }
-  if (closeups.length === 3) {
+  if (closeups.length === directionExamples.length) {
     const strip = await browser.newPage({ viewport: { width: 1290, height: 420 } });
     await strip.setContent(
-      `<body style="margin:0;background:#0d0f12;display:flex;gap:5px;padding:10px;font:600 22px system-ui;color:#e8e6df">` +
+      `<body style="margin:0;background:#0d0f12;display:flex;gap:8px;padding:10px;font:600 22px system-ui;color:#e8e6df">` +
         closeups
           .map(
             (entry) =>
-              `<figure style="margin:0;flex:1"><img src="data:image/png;base64,${entry.data}" style="width:100%;display:block;border-radius:4px"><figcaption style="padding:6px 2px">${entry.value} m avant l’entrée</figcaption></figure>`,
+              `<figure style="margin:0;flex:1"><img src="data:image/png;base64,${entry.data}" style="width:100%;display:block;border-radius:4px"><figcaption style="padding:6px 2px">${entry.label}</figcaption></figure>`,
           )
           .join('') +
         '</body>',
     );
-    await strip.screenshot({ path: 'artifacts/braking-markers-strip.png' });
+    await strip.screenshot({ path: 'artifacts/braking-directions-strip.png' });
     await strip.close();
   }
 
