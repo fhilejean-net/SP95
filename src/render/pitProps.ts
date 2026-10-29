@@ -18,7 +18,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GROUP_WORLD } from '../physics/vehicle.ts';
 import { TRACK } from '../world/trackLayout.ts';
-import { DRIFT_PAD } from '../world/driftPad.ts';
+import { DRIFT_PAD, SLALOM } from '../world/driftPad.ts';
 import {
   GARAGE_FRONT_X,
   PIT_LANE_FROM,
@@ -44,6 +44,8 @@ interface ModelSpec {
   height?: number;
   /** Rotation appliquée après normalisation, en radians. */
   yaw?: number;
+  /** Teinte multipliée à la texture, pour les modèles au feuillage pâle. */
+  tint?: number;
   /**
    * Correction d'axe : quelques GLB sont livrés en Z-up et arrivent couchés
    * sur le dos (le pont élévateur, par exemple). On les redresse avant de
@@ -62,10 +64,14 @@ interface PropSpec extends ModelSpec {
  * appliquer une longueur *puis* une hauteur rapetissait les ponts deux fois.
  */
 const PROPS = {
-  // Le modèle du pont est en Z-up : sans le quart de tour, il se dresse comme
-  // une tour de trois mètres au lieu de s'allonger sous la voiture.
-  lift: { file: 'hydraulic_car_lift.glb', length: 3.9, pitch: -Math.PI / 2 },
-  elevator: { file: 'car_elevator_free.glb', length: 4.2 },
+  // Le pont est déjà en Y-up (plateau vers le haut) : le quart de tour ajouté
+  // pour un faux Z-up le couchait sur le côté, plateaux verticaux. On le laisse
+  // tel quel et c'est la longueur qui l'échelle.
+  // Le GLB contient *deux* rampes ciseaux côte à côte (une sous chaque train
+  // de roues) : la longueur pilote les deux, et 3,4 m laisse 2,4 m d'écart
+  // entre les rampes — la voie d'une voiture — pour 2,7 m de hauteur levée.
+  lift: { file: 'hydraulic_car_lift.glb', length: 2.9 },
+  elevator: { file: 'car_elevator_free.glb', length: 3.8 },
   chest: { file: 'tool_chest.glb', height: 1.2 },
   engine: { file: 'car_engine.glb', height: 0.9 },
   trolley: { file: 'trolley_jack_lo_poly.glb', length: 1.7, yaw: Math.PI / 2 },
@@ -74,7 +80,9 @@ const PROPS = {
   hoist: { file: 'engine_hoist_-_engine_crane.glb', length: 1.7 },
   // Les modèles détaillés ajoutés au dépôt.
   raceFence: { file: 'race_fence.glb', length: 4.2 },
-  urbanTree: { file: 'urban_tree.glb', height: 7.5 },
+  // Le feuillage du modèle sort presque blanc sous ce ciel : une teinte verte
+  // le ramène dans la palette sans repeindre la texture.
+  urbanTree: { file: 'urban_tree.glb', height: 7.5, tint: 0x8fae6a },
   barrier: { file: 'barrier.glb', length: 2.9 },
   metalBarrier: { file: 'metal_barrier__game_ready__4k.glb', length: 3.1 },
   pitBoard: { file: 'pit_board.glb', height: 1.7 },
@@ -133,14 +141,25 @@ function placements(): Record<PropName, Placement[]> {
   // dalle, tournée vers les garages, et les arbres sont plantés *derrière*, sur
   // l'herbe. La version précédente posait les deux sur le béton, clôture
   // tournée à l'envers et arbres au milieu du passage.
-  for (let z = -516; z <= -258; z += 4.2) {
+  for (let z = -536; z <= -244; z += 4.2) {
     list.raceFence.push({ x: -56.4, z, yaw: -Math.PI / 2 });
   }
-  for (let z = -502; z <= -272; z += 26) {
+  // Les deux bouts du paddock : sans ces clôtures, on quittait la carte par
+  // l'extrémité des boxes. Elles relient la façade des garages à la clôture
+  // ouest et ferment la cour.
+  for (let x = -54; x <= -22; x += 4.2) {
+    list.raceFence.push({ x, z: -538, yaw: 0 });
+    list.raceFence.push({ x, z: -242, yaw: 0 });
+  }
+  // Arbres derrière la clôture ouest et dans les jardinières du paddock.
+  for (let z = -530; z <= -250; z += 26) {
     list.urbanTree.push({ x: -64.5, z, yaw: 0 });
   }
-  for (let z = -490; z <= -284; z += 38) {
+  for (let z = -512; z <= -268; z += 38) {
     list.urbanTree.push({ x: -77, z: z + 11, yaw: Math.PI });
+  }
+  for (const z of [-370, -286, -484, -530]) {
+    list.urbanTree.push({ x: -54.4, z, yaw: 0 });
   }
   for (let index = 0; index < STALL_COUNT; index++) {
     list.pitBoard.push({ x: GARAGE_FRONT_X + 0.6, z: stallCentre(index) - 4.4, yaw: 0 });
@@ -216,19 +235,21 @@ function clutterPlacements(): Record<ClutterName, Placement[]> {
   for (const z of [PIT_LANE_FROM + 8, PIT_LANE_TO - 8]) {
     list.tyreWall.push({ x: front + 0.4, z, yaw: 0 });
   }
+  // Les barrières ferment les coins du raccordement, côté voie : elles sont
+  // posées sur les bords `outer`, ceux qui donnent sur la voie.
   for (const throat of PIT_THROATS) {
-    list.barrier.push({ x: front + 0.2, z: throat.from + 1.6, yaw: 0 });
-    list.barrier.push({ x: front + 0.2, z: throat.to - 1.6, yaw: 0 });
+    list.barrier.push({ x: front + 0.2, z: throat.outerFrom + 1.6, yaw: 0 });
+    list.barrier.push({ x: front + 0.2, z: throat.outerTo - 1.6, yaw: 0 });
   }
   // Cônes tous les 24 m, côté garages, hors de la trajectoire.
   for (let z = PIT_LANE_FROM + 26; z < PIT_LANE_TO - 12; z += 24) {
     list.cone.push({ x: front + 1.5, z, yaw: 0 });
   }
   // L'aire de gymkhana : les plots tombent exactement sur les points blancs
-  // peints dans la texture du slalom, et deux cônes marquent l'entrée. Le
-  // muret de pneus du pourtour est bâti avec la dalle, pas ici.
-  for (let i = 0; i < 8; i++) {
-    list.cone.push({ x: DRIFT_PAD.cx - 28 + i * 8, z: DRIFT_PAD.cz - 34, yaw: 0 });
+  // peints dans la texture du slalom — les deux lisent `SLALOM`. Le muret de
+  // pneus du pourtour est bâti avec la dalle, pas ici.
+  for (let i = 0; i < SLALOM.count; i++) {
+    list.cone.push({ x: SLALOM.firstX + i * SLALOM.step, z: SLALOM.z, yaw: 0 });
   }
   for (const side of [-1, 1]) {
     list.cone.push({
@@ -359,7 +380,7 @@ function collide(
 }
 
 /** Matériaux : reflets du ciel et filtrage anisotrope, comme les voitures. */
-function prepare(root: THREE.Object3D, anisotropy: number): void {
+function prepare(root: THREE.Object3D, anisotropy: number, spec?: ModelSpec): void {
   root.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
     child.castShadow = false;
@@ -369,6 +390,7 @@ function prepare(root: THREE.Object3D, anisotropy: number): void {
       if (material instanceof THREE.MeshStandardMaterial) {
         material.envMapIntensity = 1;
         material.roughness = Math.max(0.25, material.roughness);
+        if (spec?.tint !== undefined) material.color.setHex(spec.tint);
       }
       for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap'] as const) {
         const texture = (material as THREE.MeshStandardMaterial)[key];
@@ -617,7 +639,7 @@ export async function buildPitProps(
     }
     const root = result.value.scene;
     const size = normalize(root, PROPS[name]);
-    prepare(root, anisotropy);
+    prepare(root, anisotropy, PROPS[name]);
     const built = instance(root, spots[name], PROPS[name], scene, PROPS[name].file.replace('.glb', ''));
     meshes += built.meshes;
     triangles += built.triangles;
@@ -648,7 +670,7 @@ export async function buildPitProps(
       const holder = new THREE.Group();
       holder.add(node.clone(true));
       const size = normalize(holder, spec);
-      prepare(holder, anisotropy);
+      prepare(holder, anisotropy, spec);
       const built = instance(holder, clutterSpots[name], spec, scene, spec.node);
       meshes += built.meshes;
       triangles += built.triangles;

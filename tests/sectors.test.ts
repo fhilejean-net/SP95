@@ -81,11 +81,14 @@ test('la voie des stands est derrière le muret et roulable', () => {
 
 test('les ouvertures du muret tombent sur les raccordements', () => {
   for (const throat of PIT_THROATS) {
-    assert.equal(pitWallGap(0, throat.from + 2, throat.to - 2), true);
+    assert.equal(pitWallGap(0, throat.outerFrom + 2, throat.outerTo - 2), true);
     // Entre les deux raccordements, le mur est continu.
     assert.equal(pitWallGap(0, -450, -447), false);
-    // Les raccordements traversent le dégagement jusqu'au bord des vibreurs.
-    const middle = (throat.from + throat.to) / 2;
+    // Les raccordements traversent le dégagement jusqu'au bord des vibreurs,
+    // en biais : le milieu du quadrilatère est du bitume.
+    const middle = (throat.innerFrom + throat.innerTo + throat.outerFrom + throat.outerTo) / 4;
     assert.equal(insidePit(-15, middle), true);
+    // Le biais est réel : le bord piste et le bord voie ne sont pas au même z.
+    assert.notEqual(throat.innerFrom, throat.outerFrom);
   }
 });

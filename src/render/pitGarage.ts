@@ -215,6 +215,33 @@ export function buildPitGarage(
     push(lampParts, 0.3, 0.12, STALL_LENGTH - 2.2, GARAGE_FRONT_X + 0.06, CLEAR_HEIGHT - 0.05, centre);
   }
 
+  // --- Façade : les murs qui encadrent chaque porte ----------------------
+  // La façade n'avait que les montants : entre le montant et la cloison on
+  // voyait à travers le box voisin, et le box n'était fermé que sur trois
+  // côtés. Ces panneaux referment chaque cellule autour de sa porte.
+  const doorHalf = (STALL_LENGTH - 1.1) / 2;
+  const frontWalls: { from: number; to: number }[] = [];
+  for (let index = 0; index < STALL_COUNT; index++) {
+    const centre = stallCentre(index);
+    const outerFrom = index === 0 ? Z0 : centre - STALL_PITCH / 2;
+    const outerTo = index === STALL_COUNT - 1 ? Z1 : centre + STALL_PITCH / 2;
+    frontWalls.push({ from: outerFrom, to: centre - doorHalf });
+    frontWalls.push({ from: centre + doorHalf, to: outerTo });
+  }
+  for (const wall of frontWalls) {
+    const width = wall.to - wall.from;
+    if (width < 0.2) continue;
+    push(
+      concreteParts,
+      SHELL,
+      CLEAR_HEIGHT,
+      width,
+      GARAGE_FRONT_X,
+      CLEAR_HEIGHT / 2,
+      (wall.from + wall.to) / 2,
+    );
+  }
+
   // --- Toiture technique : caissons, lanterneaux, garde-corps -------------
   // Les caissons étaient des pavés sombres sans matière : on les habille en
   // centrale de traitement d'air — capot clair, grilles, pieds — pour qu'ils
@@ -326,6 +353,20 @@ export function buildPitGarage(
   for (let index = 1; index < STALL_COUNT; index++) {
     const z = stallCentre(index) - STALL_PITCH / 2;
     collider(GARAGE_DEPTH, CLEAR_HEIGHT, 0.24, CENTRE_X, CLEAR_HEIGHT / 2, z);
+  }
+  // Les pans de façade sont solides comme le reste : on ne traverse plus le
+  // box par le côté en visant la porte voisine.
+  for (const wall of frontWalls) {
+    const width = wall.to - wall.from;
+    if (width < 0.2) continue;
+    collider(
+      SHELL,
+      CLEAR_HEIGHT,
+      width,
+      GARAGE_FRONT_X,
+      CLEAR_HEIGHT / 2,
+      (wall.from + wall.to) / 2,
+    );
   }
 
   return { triangles, meshes };

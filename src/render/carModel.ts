@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import type { CarVisual } from './car.ts';
 import type { CarDef } from '../game/cars.ts';
 import type { VehicleSpec } from '../physics/vehicle.ts';
@@ -25,11 +26,14 @@ import { pickWheels, type Box3Data, type WheelCandidate } from './wheels.ts';
 export type { Box3Data, WheelCandidate, WheelPick } from './wheels.ts';
 
 const loader = new GLTFLoader();
+// Les voitures récentes sont compressées en meshopt (géométrie) et WebP
+// (textures) : sans le décodeur, la F1 arrive invisible ou vide.
+loader.setMeshoptDecoder(MeshoptDecoder);
 // BASE_URL keeps the models reachable at the dev root and under /SP95/ on Pages.
 const MODEL_ROOT = import.meta.env.BASE_URL;
 
 /** Un maillage qui sent la roue : pneu, jante, moyeu, disque. */
-const NAMED_WHEEL_PARTS = /wheel|tyre|tire|roue|jante|[^a-z]rims?\b|moyeu|hub/i;
+const NAMED_WHEEL_PARTS = /wheel|tyre|tire|tread|roue|jante|\brims?\b|rim|moyeu|hub/i;
 /** Ce qui ne tourne pas avec la roue : étrier, passage de roue, suspension. */
 const FIXED_WHEEL_PARTS = /caliper|calliper|étrier|etrier|wheelhouse|well|fender|suspension|arche|arch/i;
 /**
@@ -108,6 +112,68 @@ function bounds(geometries: THREE.BufferGeometry[]): THREE.Box3 {
   return box;
 }
 
+/**
+ * Découpe un maillage qui contient les quatre roues en quatre morceaux.
+ *
+ * La F1 de McLaren livre ses jantes, ses pneus et ses flancs en un maillage
+ * par matière : chaque maillage couvre les quatre coins. La détection ne peut
+ * pas voir quatre roues dans une boîte de cinq mètres de long, et le rendu ne
+ * peut pas faire tourner une pièce qui contient les quatre. On répartit donc
+ * les triangles par quadrant autour du centre de la voiture.
+ *
+ * Les géométries sont déjà cuites en repère voiture quand cette fonction
+ * tourne : le quadrant se lit directement en x/z.
+ */
+function splitWheelMesh(
+  geometry: THREE.BufferGeometry,
+  centreX: number,
+  centreZ: number,
+): THREE.BufferGeometry[] {
+  const position = geometry.attributes.position as THREE.BufferAttribute;
+  const normal = geometry.attributes.normal as THREE.BufferAttribute | undefined;
+  const uv = geometry.attributes.uv as THREE.BufferAttribute | undefined;
+  const index = geometry.index;
+  const count = index ? index.count : position.count;
+  const groups: number[][] = [[], [], [], []];
+  for (let i = 0; i < count; i += 3) {
+    const a = index ? index.getX(i) : i;
+    const b = index ? index.getX(i + 1) : i + 1;
+    const c = index ? index.getX(i + 2) : i + 2;
+    const x = (position.getX(a) + position.getX(b) + position.getX(c)) / 3;
+    const z = (position.getZ(a) + position.getZ(b) + position.getZ(c)) / 3;
+    const corner = (x >= centreX ? 1 : 0) + (z >= centreZ ? 2 : 0);
+    groups[corner].push(a, b, c);
+  }
+  const parts: THREE.BufferGeometry[] = [];
+  for (const group of groups) {
+    if (group.length === 0) continue;
+    const out = new THREE.BufferGeometry();
+    const positions = new Float32Array(group.length * 3);
+    const normals = normal ? new Float32Array(group.length * 3) : null;
+    const uvs = uv ? new Float32Array(group.length * 2) : null;
+    group.forEach((vertex, k) => {
+      positions[k * 3] = position.getX(vertex);
+      positions[k * 3 + 1] = position.getY(vertex);
+      positions[k * 3 + 2] = position.getZ(vertex);
+      if (normal && normals) {
+        normals[k * 3] = normal.getX(vertex);
+        normals[k * 3 + 1] = normal.getY(vertex);
+        normals[k * 3 + 2] = normal.getZ(vertex);
+      }
+      if (uv && uvs) {
+        uvs[k * 2] = uv.getX(vertex);
+        uvs[k * 2 + 1] = uv.getY(vertex);
+      }
+    });
+    out.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    if (normals) out.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    if (uvs) out.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    out.computeBoundingBox();
+    parts.push(out);
+  }
+  return parts;
+}
+
 export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<CarVisual> {
   const gltf = await loader.loadAsync(`${MODEL_ROOT}${def.model}`);
   const root = gltf.scene;
@@ -152,12 +218,39 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
     return parts.join(' ');
   };
 
+  const labels = new Map<THREE.Mesh, string>();
+  for (const mesh of meshes) labels.set(mesh, labelOf(mesh));
+
+  // Les modèles dont les quatre roues partagent un maillage par matière : on
+  // les découpe avant de mesurer quoi que ce soit, sinon la boîte englobante
+  // d'une « roue » fait la longueur de la voiture et la détection échoue.
+  const whole = bounds([...geometries.values()]);
+  const wholeSize = whole.getSize(new THREE.Vector3());
+  const wholeCentre = whole.getCenter(new THREE.Vector3());
+  for (const mesh of [...meshes]) {
+    if (!/wheel|tyre|tire|tread|\brim/i.test(labels.get(mesh)!)) continue;
+    const geometry = geometries.get(mesh)!;
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox!;
+    const width = box.max.x - box.min.x;
+    const length = box.max.z - box.min.z;
+    // Une roue seule tient dans un coin ; un jeu de quatre couvre la voiture.
+    if (width < wholeSize.x * 0.5 || length < wholeSize.z * 0.55) continue;
+    const parts = splitWheelMesh(geometry, wholeCentre.x, wholeCentre.z);
+    if (parts.length < 4) continue;
+    meshes.splice(meshes.indexOf(mesh), 1);
+    geometries.delete(mesh);
+    for (const part of parts) {
+      const piece = new THREE.Mesh(part, mesh.material);
+      meshes.push(piece);
+      geometries.set(piece, part);
+      labels.set(piece, labels.get(mesh) ?? 'wheel');
+    }
+  }
+
   const body = bounds([...geometries.values()]);
   const bodyCentre = body.getCenter(new THREE.Vector3());
   const modelLength = Math.max(body.max.x - body.min.x, body.max.z - body.min.z);
-
-  const labels = new Map<THREE.Mesh, string>();
-  for (const mesh of meshes) labels.set(mesh, labelOf(mesh));
   const owner = new Map<THREE.Mesh, number>();
 
   // Le volant, la roue de secours et les roues des portières vivent dans la
@@ -165,7 +258,16 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
   const isWheelPiece = (mesh: THREE.Mesh): boolean => {
     const label = labels.get(mesh)!;
     if (!NAMED_WHEEL_PARTS.test(label) || FIXED_WHEEL_PARTS.test(label)) return false;
-    return box3Of(mesh).getCenter(new THREE.Vector3()).y <= bodyCentre.y;
+    const centre = box3Of(mesh).getCenter(new THREE.Vector3());
+    // Une roue est basse **et** dans un coin : le volant, le pneu de secours et
+    // les pièces centrales d'un modèle ne doivent pas tirer un moyeu au milieu
+    // de la caisse.
+    if (centre.y > bodyCentre.y) return false;
+    // Un morceau central (pneu de secours, pièce de cockpit) ne doit pas
+    // entrer dans le coin où il se trouve : il décalerait le moyeu. Une roue
+    // est décalée sur *les deux* axes par rapport au centre de la caisse.
+    if (Math.abs(centre.x - bodyCentre.x) < (body.max.x - body.min.x) * 0.15) return false;
+    return Math.abs(centre.z - bodyCentre.z) > modelLength * 0.15;
   };
 
   // 0 FL, 1 FR, 2 RL, 3 RR — quartiers mesurés depuis le centre de la caisse,
@@ -217,7 +319,11 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
       console.warn(
         `${def.id}: roues introuvables, maillages : ` +
           candidates
-            .map((entry) => entry.name)
+            .map(
+              (entry) =>
+                `${entry.name} [${entry.box.min.map((v) => v.toFixed(2)).join(',')}]` +
+                `..[${entry.box.max.map((v) => v.toFixed(2)).join(',')}]`,
+            )
             .slice(0, 24)
             .join(' | '),
       );

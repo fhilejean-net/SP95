@@ -29,7 +29,8 @@ export type CarId =
   | 'fk8'
   | 'yaris'
   | 'rs7'
-  | 'apollo';
+  | 'apollo'
+  | 'f1';
 
 export const CARS: CarDef[] = [
   {
@@ -414,6 +415,57 @@ export const CARS: CarDef[] = [
       bodyHalf: { x: 1, y: 0.42, z: 2.25 },
       driveFront: 0,
       tractionControl: 0.7,
+    },
+  },
+  {
+    id: 'f1',
+    label: 'McLaren MCL35M',
+    detail: 'V6 1,6 L hybride · 1 000 ch · 752 kg',
+    origin: 'Formule 1 · 2021',
+    // Version optimisée du GLB fourni : 23,4 Mo → 3,8 Mo (meshopt + WebP),
+    // sans perte visible à l'écran. Le décodeur meshopt est branché dans
+    // carModel.ts, sinon la géométrie n'arrive pas.
+    model: 'models/vehicles/f1_mclaren_mcl35m_opt.glb',
+    // Le nez du modèle pointe vers -Z, le sens de marche du jeu.
+    yaw: 0,
+    spec: {
+      ...STOCK_SPEC,
+      name: 'MCL35M',
+      mass: 752,
+      // Courbe de couple volontairement ramenée dans la plage que le modèle
+      // d'embrayage du jeu sait lancer : à 9 500 tr/min le point de couple
+      // restait au-dessus du régime de décollage et la boîte oscillait entre
+      // marche arrière et première sans jamais transmettre aux roues.
+      peakTorque: 700,
+      peakTorqueRpm: 6000,
+      redlineRpm: 9500,
+      upshiftRpm: 9000,
+      finalDrive: 3.5,
+      dragArea: 1.08,
+      // Un plancher et un aileron arrière de F1 : l'appui n'a rien à voir avec
+      // une GT. C'est ce qui rend la voiture collée dans les courbes rapides.
+      downforceArea: 4.4,
+      muFront: 1.78,
+      muRear: 1.86,
+      peakSlipAngle: 0.12,
+      // Suspension réglée dans la plage que la physique du jeu sait tenir :
+      // une monoplace réelle est plus rigide, mais un ressort de 135 kN/m
+      // bloquait la caisse sur ses butées et la voiture ne décollait pas.
+      springK: 52000,
+      springC: 5200,
+      arbFront: 26000,
+      arbRear: 18000,
+      rideHeight: 0.28,
+      wheelRadius: 0.36,
+      wheelTravel: 0.1,
+      brakeTorque: 1900,
+      maxSteer: 0.55,
+      steerRate: 3.4,
+      wheelbase: 3.6,
+      track: 1.6,
+      bodyHalf: { x: 1.02, y: 0.42, z: 2.84 },
+      driveFront: 0,
+      tractionControl: 0.55,
     },
   },
   // Le Mazda 787B n'est pas au registre : son GLB est un seul maillage

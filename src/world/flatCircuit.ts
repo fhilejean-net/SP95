@@ -43,6 +43,7 @@ import { buildDriftPad } from '../render/driftPad.ts';
 import { DRIFT_PAD, driftWallGap, insideDriftPad } from './driftPad.ts';
 import { buildPitLaneDetail } from '../render/pitLaneDetail.ts';
 import { buildPitGarage } from '../render/pitGarage.ts';
+import { buildPitPaddock } from '../render/pitPaddock.ts';
 import {
   PIT_APRON_FROM,
   PIT_APRON_TO,
@@ -51,9 +52,9 @@ import {
   PIT_LANE_TO,
   PIT_LANE_X,
   PIT_THROATS,
-  PIT_THROAT_INNER_X,
-  PIT_WALL_OUTER,
   pitWallGap,
+  throatCorners,
+  type PitThroat,
 } from './pitLayout.ts';
 
 /** Les murs ne collisionnent que la coque, comme les bâtiments de la ville. */
@@ -616,7 +617,7 @@ function buildScenery(
   // La dalle ne court plus jusqu'à x = -65 : elle s'arrête huit mètres derrière
   // les garages, ce qui laisse la clôture et les arbres sur l'herbe au lieu de
   // les planter au milieu du béton.
-  const pad = new THREE.Mesh(new THREE.PlaneGeometry(36, padLength), concreteMat);
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(40, padLength), concreteMat);
   pad.rotation.x = -Math.PI / 2;
   pad.position.set(-37, ROAD_LIFT, (PIT_APRON_FROM + PIT_APRON_TO) / 2);
   add(pad, 'receive');
@@ -632,21 +633,20 @@ function buildScenery(
   // Raccordements piste ↔ stands : deux traversées du dégagement, là où le
   // muret est ouvert. Sans elles, la voie serait une impasse derrière le mur.
   for (const throat of PIT_THROATS) {
-    // Largeur positive : la face intérieure est à -6, la face du muret à
-    // -18,95. La soustraction dans l'autre sens donnait un plan retourné, donc
-    // invisible — le raccordement restait de l'herbe à l'écran.
-    const ramp = new THREE.Mesh(
-      new THREE.PlaneGeometry(PIT_THROAT_INNER_X - PIT_WALL_OUTER, throat.to - throat.from),
-      pitAsphalt,
-    );
-    ramp.rotation.x = -Math.PI / 2;
-    ramp.position.set(
-      (PIT_THROAT_INNER_X + PIT_WALL_OUTER) / 2,
-      ROAD_LIFT + 0.004,
-      (throat.from + throat.to) / 2,
-    );
+    // Le raccordement est un quadrilatère, pas un rectangle : son bord côté
+    // piste est décalé vers l'avant pour qu'on entre et sorte en biais. Le
+    // maillage est construit à la main — deux triangles, UV au mètre — car un
+    // PlaneGeometry pivoté ne peut pas être biaisé.
+    const geometry = throatGeometry(throat);
+    const ramp = new THREE.Mesh(geometry, pitAsphalt);
+    ramp.position.y = ROAD_LIFT + 0.004;
     add(ramp, 'receive');
   }
+
+  // Paddock habillé aux deux extrémités : sans lui, la dalle s'arrêtait sur du
+  // béton vide et l'on sortait de la carte par les bouts.
+  const paddock = buildPitPaddock(scene, world, anisotropy);
+  triangles += paddock.triangles;
 
   // Détail de la voie : emplacements numérotés, rail de muret, pneus, chrono.
   const pitDetail = buildPitLaneDetail(scene, anisotropy);
@@ -1113,6 +1113,22 @@ function nearestAxis(x: number, z: number): { offset: number; sample: TrackSampl
   const right = rightOf(sample);
   const offset = (x - sample.x) * right.x + (z - sample.z) * right.z;
   return { offset, sample };
+}
+
+/**
+ * Le quadrilatère d'un raccordement, posé à plat. Deux triangles et des UV au
+ * mètre : le revêtement garde la même densité que la voie des stands.
+ */
+function throatGeometry(throat: PitThroat): THREE.BufferGeometry {
+  const corners = throatCorners(throat);
+  const positions = new Float32Array(corners.flatMap((corner) => [corner.x, 0, corner.z]));
+  const uvs = new Float32Array([0, 0, 1.6, 0, 1.6, 2.7, 0, 2.7]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
 export function buildFlatCircuit(

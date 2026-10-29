@@ -28,6 +28,19 @@ export const DRIFT_ACCESS = {
   z1: -412,
 } as const;
 
+/**
+ * Le slalom : sept plots, 12,5 m d'écart. À 8 m — la version précédente — une
+ * voiture de 4,5 m n'avait plus d'angle : ce n'était plus un slalom mais un mur
+ * de cônes. Les plots du décor et les points peints lisent tous deux ces
+ * valeurs, donc ils ne peuvent plus se désynchroniser.
+ */
+export const SLALOM = {
+  firstX: DRIFT_PAD.cx - 37.5,
+  step: 12.5,
+  count: 7,
+  z: DRIFT_PAD.cz - 36,
+} as const;
+
 /** Rectangle de bitume de l'aire, en coordonnées monde. */
 export interface DriftRect {
   x0: number;

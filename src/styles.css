@@ -1475,11 +1475,11 @@ body.touch #stunt-panel {
   }
 
   .menu-actions {
-    gap: 7px;
+    gap: 5px;
   }
 
   .menu-actions button {
-    padding: 12px 16px;
+    padding: 9px 14px;
     font-size: 13px;
   }
 

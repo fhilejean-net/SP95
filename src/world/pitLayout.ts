@@ -7,6 +7,12 @@
  * du bon côté — le muret la sépare de la piste, les garages la bordent — et
  * `insidePit` dit à la physique que tout cet espace est du bitume.
  *
+ * Les raccordements sont **en biais**, comme sur un vrai circuit : un
+ * raccordement perpendiculaire obligeait à s'arrêter presque net pour entrer
+ * dans la voie. Chaque raccordement est un quadrilatère dont le bord côté piste
+ * est décalé vers l'avant par rapport au bord côté voie ; on le prend donc en
+ * accélérant, et on ressort sans casser la trajectoire.
+ *
  * Module pur : ni three ni Rapier, pour que les tests puissent vérifier que les
  * trous du muret tombent exactement sur les raccordements.
  */
@@ -17,8 +23,8 @@ export const PIT_LANE_X = -24.2;
 /** Demi-largeur de la voie. */
 export const PIT_LANE_HALF = 4.3;
 /** Étendue de la voie le long de la ligne droite. */
-export const PIT_LANE_FROM = -515;
-export const PIT_LANE_TO = -265;
+export const PIT_LANE_FROM = -524;
+export const PIT_LANE_TO = -258;
 /** Face intérieure du muret (côté piste) et face extérieure (côté stands). */
 export const PIT_WALL_X = -WALL_OFFSET;
 export const PIT_WALL_OUTER = -(WALL_OFFSET + WALL_THICK / 2);
@@ -32,18 +38,35 @@ export const STALL_COUNT = 8;
 /** Longueur d'un box le long de la voie. */
 export const STALL_LENGTH = 8.4;
 /** Dalle de la voie et des garages, un peu plus longue que la voie peinte. */
-export const PIT_APRON_FROM = -522;
-export const PIT_APRON_TO = -258;
+export const PIT_APRON_FROM = -540;
+export const PIT_APRON_TO = -240;
 
 /**
- * Raccordements piste ↔ stands : deux ouvertures dans le muret. La première
- * sert d'entrée juste après la ligne, la seconde de sortie avant le premier
- * virage. Elles traversent le dégagement herbeux, qui devient du bitume.
+ * Un raccordement piste ↔ stands, en quadrilatère.
+ *
+ * La voiture roule vers les z croissants sur la ligne droite. Le bord côté piste
+ * est donc **en avance** à l'entrée (on ouvre devant soi) et **en retard** à la
+ * sortie (on se rabat devant soi). Autrement dit : à l'entrée, `outer` est plus
+ * grand que `inner` ; à la sortie, c'est l'inverse. Les deux raccordements font
+ * 22 m de large et se décalent de 22 m sur les 13 m qui séparent la piste de la
+ * voie — soit une pente à 30°, qu'on prend sans lever le pied.
  */
-export const PIT_THROATS = [
-  { from: -522, to: -498 },
-  { from: -282, to: -258 },
-] as const;
+export interface PitThroat {
+  /** Bord du raccordement côté piste (x = PIT_THROAT_INNER_X). */
+  innerFrom: number;
+  innerTo: number;
+  /** Bord du raccordement côté voie (x = PIT_WALL_OUTER). */
+  outerFrom: number;
+  outerTo: number;
+}
+
+export const PIT_THROATS: readonly PitThroat[] = [
+  // Entrée, juste après la ligne : on ouvre devant la voiture.
+  { innerFrom: -534, innerTo: -512, outerFrom: -512, outerTo: -490 },
+  // Sortie, avant le premier virage : on se rabat devant la voiture.
+  { innerFrom: -266, innerTo: -244, outerFrom: -288, outerTo: -266 },
+];
+
 /** Bord intérieur d'un raccordement : le bord extérieur des vibreurs. */
 export const PIT_THROAT_INNER_X = -6;
 
@@ -64,8 +87,8 @@ export function pitPavedRects(): PitRect[] {
     rects.push({
       x0: PIT_THROAT_INNER_X,
       x1: PIT_WALL_OUTER,
-      z0: throat.from,
-      z1: throat.to,
+      z0: Math.min(throat.innerFrom, throat.outerFrom),
+      z1: Math.max(throat.innerTo, throat.outerTo),
     });
   }
   return rects;
@@ -83,19 +106,48 @@ function inRect(x: number, z: number, rect: PitRect): boolean {
   );
 }
 
+/** Sommets d'un raccordement, dans l'ordre du pourtour. */
+export function throatCorners(throat: PitThroat): { x: number; z: number }[] {
+  return [
+    { x: PIT_THROAT_INNER_X, z: throat.innerFrom },
+    { x: PIT_WALL_OUTER, z: throat.outerFrom },
+    { x: PIT_WALL_OUTER, z: throat.outerTo },
+    { x: PIT_THROAT_INNER_X, z: throat.innerTo },
+  ];
+}
+
+/** Vrai si le point est dans le quadrilatère (convexe), quel que soit le sens. */
+function inQuad(x: number, z: number, corners: { x: number; z: number }[]): boolean {
+  let positive = 0;
+  let negative = 0;
+  for (let index = 0; index < corners.length; index++) {
+    const a = corners[index];
+    const b = corners[(index + 1) % corners.length];
+    const cross = (b.x - a.x) * (z - a.z) - (b.z - a.z) * (x - a.x);
+    if (cross > 1e-9) positive += 1;
+    else if (cross < -1e-9) negative += 1;
+  }
+  return positive === 0 || negative === 0;
+}
+
 /** Vrai si ce point est du bitume de stands (voie, dalle ou raccordement). */
 export function insidePit(x: number, z: number): boolean {
   for (const rect of pitPavedRects()) {
     if (inRect(x, z, rect)) return true;
   }
+  for (const throat of PIT_THROATS) {
+    if (inQuad(x, z, throatCorners(throat))) return true;
+  }
   return false;
 }
 
 /**
- * Vrai si le segment de muret qui va de `az` à `bz` doit être supprimé : une
- * ouverture de raccordement sur la ligne droite, côté gauche. Le test porte sur
- * les deux extrémités pour ne pas laisser un moignon de mur au milieu du
- * passage.
+ * Vrai si le segment de muret qui va de `az` à `bz` doit être supprimé.
+ *
+ * Le muret est à x = PIT_WALL_OUTER, c'est-à-dire sur le bord *voie* du
+ * raccordement : c'est donc la plage `outer` qui décide de l'ouverture. On
+ * élargit de deux mètres pour ne pas laisser un moignon de mur au droit du
+ * raccordement — le maillage avance par pas de trois mètres.
  */
 export function pitWallGap(axisX: number, az: number, bz: number): boolean {
   // Seule la ligne droite est concernée : ailleurs, la voie n'existe pas.
@@ -103,7 +155,9 @@ export function pitWallGap(axisX: number, az: number, bz: number): boolean {
   const low = Math.min(az, bz);
   const high = Math.max(az, bz);
   for (const throat of PIT_THROATS) {
-    if (low >= throat.from && high <= throat.to) return true;
+    const from = Math.min(throat.outerFrom, throat.outerTo) - 2;
+    const to = Math.max(throat.outerFrom, throat.outerTo) + 2;
+    if (low >= from && high <= to) return true;
   }
   return false;
 }

@@ -16,7 +16,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GROUP_WORLD } from '../physics/vehicle.ts';
 import { createAsphaltTexture } from './materials.ts';
-import { DRIFT_ACCESS, DRIFT_PAD } from '../world/driftPad.ts';
+import { DRIFT_ACCESS, DRIFT_PAD, SLALOM } from '../world/driftPad.ts';
 
 /** Cote du revêtement, au-dessus de l'herbe. */
 const PAD_Y = 0.028;
@@ -123,13 +123,96 @@ function markingsTexture(anisotropy: number): THREE.CanvasTexture {
   ctx.stroke();
 
   // --- Slalom : les emplacements des plots --------------------------------
-  for (let i = 0; i < 8; i++) {
+  // Un plot tous les 12,5 m : à 8 m, une voiture de 4,5 m n'avait plus de
+  // trajectoire possible. Les cônes du décor lisent les mêmes valeurs.
+  for (let i = 0; i < SLALOM.count; i++) {
     ctx.fillStyle = INK;
     ctx.globalAlpha = 0.85;
     ctx.beginPath();
-    ctx.arc(px(DRIFT_PAD.cx - 28 + i * 8), pz(DRIFT_PAD.cz - 34), metre(0.9), 0, Math.PI * 2);
+    ctx.arc(
+      px(SLALOM.firstX + i * SLALOM.step),
+      pz(SLALOM.z),
+      metre(0.9),
+      0,
+      Math.PI * 2,
+    );
     ctx.fill();
+    // Le numéro du plot, sous le point : on lit l'ordre du slalom.
+    ctx.globalAlpha = 0.7;
+    ctx.font = `bold ${Math.round(metre(1.2))}px system-ui, sans-serif`;
+    ctx.fillText(String(i + 1), px(SLALOM.firstX + i * SLALOM.step), pz(SLALOM.z + 2.6));
   }
+
+  // --- Boucle de pourtour : le mini-circuit de la dalle ----------------
+  // Un tour complet, à 9 m des pneus, avec six flèches. Il donne un sens de
+  // rotation à l'aire et relie le slalom au skidpad sans traverser le huit.
+  ctx.globalAlpha = 0.42;
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = metre(0.35);
+  ctx.setLineDash([metre(4), metre(3)]);
+  ctx.strokeRect(
+    px(DRIFT_PAD.cx - DRIFT_PAD.halfX + 9),
+    pz(DRIFT_PAD.cz - DRIFT_PAD.halfZ + 9),
+    metre(DRIFT_PAD.halfX * 2 - 18),
+    metre(DRIFT_PAD.halfZ * 2 - 18),
+  );
+  ctx.setLineDash([]);
+  for (let i = 0; i < 6; i++) {
+    const angle = i * (Math.PI / 3) + 0.2;
+    const rx = DRIFT_PAD.halfX - 9;
+    const rz = DRIFT_PAD.halfZ - 9;
+    // Point sur le rectangle, au prorata du périmètre.
+    const perimeter = 4 * (rx + rz);
+    let travelled = ((i / 6) * perimeter + rz) % perimeter;
+    let x = DRIFT_PAD.cx;
+    let z = DRIFT_PAD.cz - rz;
+    if (travelled < 2 * rx) x = DRIFT_PAD.cx - rx + travelled;
+    else if ((travelled -= 2 * rx) < 2 * rz) {
+      x = DRIFT_PAD.cx + rx;
+      z = DRIFT_PAD.cz - rz + travelled;
+    } else if ((travelled -= 2 * rz) < 2 * rx) {
+      x = DRIFT_PAD.cx + rx - travelled;
+      z = DRIFT_PAD.cz + rz;
+    } else {
+      travelled -= 2 * rx;
+      x = DRIFT_PAD.cx - rx;
+      z = DRIFT_PAD.cz + rz - travelled;
+    }
+    ctx.save();
+    ctx.translate(px(x), pz(z));
+    ctx.rotate(angle);
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -metre(1.8));
+    ctx.lineTo(metre(1.1), metre(1));
+    ctx.lineTo(-metre(1.1), metre(1));
+    ctx.closePath();
+    ctx.fillStyle = INK;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // --- Cercle de donut, à l'ouest de la dalle ----------------------------
+  // Il occupe le vide laissé par le skidpad ; deux arcs gravés montrent le
+  // point de rotation et le rayon extérieur.
+  const donutX = DRIFT_PAD.cx - 40;
+  const donutZ = DRIFT_PAD.cz + 2;
+  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = metre(0.35);
+  for (const radius of [10.5, 13.5]) {
+    ctx.beginPath();
+    ctx.arc(px(donutX), pz(donutZ), metre(radius), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([metre(1.8), metre(1.8)]);
+  ctx.beginPath();
+  ctx.arc(px(donutX), pz(donutZ), metre(12), 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 0.7;
+  ctx.font = `bold ${Math.round(metre(1.5))}px system-ui, sans-serif`;
+  ctx.fillText('DONUT', px(donutX), pz(donutZ + 17));
 
   // --- Ligne de départ du tracé, à l'entrée de la dalle -------------------
   const bandX = 58;
@@ -178,12 +261,12 @@ function markingsTexture(anisotropy: number): THREE.CanvasTexture {
   ctx.fillStyle = INK;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = `bold ${Math.round(metre(4.6))}px system-ui, sans-serif`;
-  ctx.fillText('SP95', px(DRIFT_PAD.cx), pz(DRIFT_PAD.cz + 45));
-  ctx.font = `bold ${Math.round(metre(1.9))}px system-ui, sans-serif`;
-  ctx.fillText('DRIFT PARK', px(DRIFT_PAD.cx), pz(DRIFT_PAD.cz - 44));
-  ctx.font = `bold ${Math.round(metre(1.1))}px system-ui, sans-serif`;
-  ctx.fillText('DONUT · HUIT · SLALOM', px(DRIFT_PAD.cx), pz(DRIFT_PAD.cz - 40.5));
+  ctx.font = `bold ${Math.round(metre(3.6))}px system-ui, sans-serif`;
+  ctx.fillText('SP95', px(DRIFT_PAD.cx), pz(DRIFT_PAD.cz + 41));
+  ctx.font = `bold ${Math.round(metre(1.7))}px system-ui, sans-serif`;
+  ctx.fillText('DRIFT PARK', px(DRIFT_PAD.cx), pz(DRIFT_PAD.cz - 45));
+  ctx.font = `bold ${Math.round(metre(1.05))}px system-ui, sans-serif`;
+  ctx.fillText('GYMKHANA · SKIDPAD · HUIT', px(DRIFT_PAD.cx), pz(DRIFT_PAD.cz - 41.8));
   // Croix du centre du skidpad : elle aide à viser le point de rotation.
   ctx.lineWidth = metre(0.35);
   ctx.globalAlpha = 0.5;

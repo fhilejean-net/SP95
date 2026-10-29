@@ -109,6 +109,13 @@ type FreeSpawn = 'city' | 'col' | 'rally' | 'summit' | 'circuit';
 
 /** La carte de la session : la ville, ou le circuit seul sur la sienne. */
 const MAP = MAP_ID;
+/**
+ * Premier écran : l'URL ne demande aucune carte. On n'en construit alors
+ * aucune — ni la ville, ni Suzuka, ni la piste — et chaque bouton du menu part
+ * vers la carte choisie. Charger le monde avant le premier clic coûtait
+ * plusieurs secondes pour un écran qu'on quitte aussitôt.
+ */
+const MENU_ONLY = !new URLSearchParams(window.location.search).has('map');
 const SUZUKA_MAP = MAP === 'suzuka';
 /** La piste dessinée par le jeu : plate de bout en bout, sans dalle importée. */
 const FLAT_MAP = MAP === 'sp95';
@@ -230,6 +237,28 @@ async function boot(): Promise<void> {
   const sky = createSky(scene, renderer, pickSkyPreset());
   renderer.toneMappingExposure = sky.preset.exposure;
   console.log(`Lumière : ${sky.preset.label} (exposition ${sky.preset.exposure})`);
+
+  // Accueil sans carte : le ciel suffit derrière le menu, et rien de lourd
+  // n'est construit tant que le joueur n'a pas choisi sa destination.
+  if (MENU_ONLY) {
+    camera.position.set(0, 9, 34);
+    camera.lookAt(0, 5, 0);
+    renderer.render(scene, camera);
+    menuBest.textContent = 'Choisis une destination — la carte ne se charge qu’au clic.';
+    await setLoading(1, 'Prêt');
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    loading.classList.add('done');
+    window.setTimeout(() => loading.classList.add('hidden'), 500);
+    menu.classList.remove('hidden');
+    wireMenuOnly();
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.render(scene, camera);
+    });
+    return;
+  }
 
   // DIAGNOSTIC CYCLE 10 (temporaire) : compte les dessins réellement émis
   // pendant la passe d'ombre — on reconnaît la passe à sa target.
@@ -2392,6 +2421,18 @@ async function boot(): Promise<void> {
       const t = vehicle.telemetryState;
       return { gear: t.gear, rpm: t.rpm, limiter: t.limiter, shifting: t.shifting };
     },
+    /** Les pédales réellement lues par la physique, pour les scripts de contrôle. */
+    get pedals() {
+      const t = vehicle.telemetryState;
+      return {
+        throttle: t.throttle,
+        brake: t.brake,
+        handbrake: t.handbrake,
+        speed: t.speed,
+        mode,
+        paused,
+      };
+    },
     get spec() {
       return {
         name: spec.name,
@@ -2545,6 +2586,25 @@ async function boot(): Promise<void> {
       freeCamera = null;
     },
   };
+
+  // Le menu d'accueil renvoie ici avec la destination : la carte est chargée,
+  // on peut maintenant lancer directement la session demandée.
+  const launch = new URLSearchParams(window.location.search);
+  const open = launch.get('open');
+  if (open === 'showroom') openShowroom();
+  else if (open === 'garage') openGarage();
+  else if (open === 'sound') openSound();
+  const start = launch.get('start');
+  if (start === 'moto') void startBikeMode();
+  else if (start === 'race') startMode('race');
+  else if (start === 'free') {
+    const spawn = launch.get('spawn');
+    const target: FreeSpawn | undefined =
+      spawn === 'col' || spawn === 'rally' || spawn === 'summit' || spawn === 'circuit'
+        ? spawn
+        : undefined;
+    startMode('free', target);
+  }
 }
 
 declare global {
@@ -2672,6 +2732,14 @@ declare global {
       };
       readonly wheels: { name: string; contact: boolean; slip: number; load: number; omega: number }[];
       setCar: (id: string) => Promise<void>;
+      readonly pedals: {
+        throttle: number;
+        brake: number;
+        handbrake: boolean;
+        speed: number;
+        mode: GameMode;
+        paused: boolean;
+      };
       setTcs: (enabled: boolean) => void;
       startBike: () => void;
       stopBike: () => void;
@@ -2688,6 +2756,35 @@ declare global {
       clearCamera: () => void;
     };
   }
+}
+
+/**
+ * Menu d'accueil sans carte. Chaque entrée navigue vers l'URL de sa carte et
+ * de sa session : c'est le chargement de cette URL qui construit le monde.
+ */
+function wireMenuOnly(): void {
+  const go = (params: Record<string, string>): void => {
+    const url = new URL(window.location.href);
+    // On conserve les réglages déjà dans l'URL (qualité, cadence, lumière) :
+    // les effacer faisait perdre `?fps=` et `?fx=` au premier clic.
+    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+    window.location.href = url.toString();
+  };
+  const on = (id: string, params: Record<string, string>): void => {
+    document.getElementById(id)?.addEventListener('click', () => go(params));
+  };
+  on('btn-free', { start: 'free' });
+  on('btn-race', { start: 'race' });
+  on('btn-circuit', { map: 'suzuka', start: 'free' });
+  on('btn-flat', { map: 'sp95', start: 'free' });
+  on('btn-col', { start: 'free', spawn: 'col' });
+  on('btn-rally', { start: 'free', spawn: 'rally' });
+  on('btn-sommet', { start: 'free', spawn: 'summit' });
+  on('btn-moto', { start: 'moto' });
+  // Showroom, atelier et son vivent sur la piste plate : y aller les ouvre.
+  on('btn-cars', { map: 'sp95', open: 'showroom' });
+  on('btn-garage', { map: 'sp95', open: 'garage' });
+  on('btn-sound', { map: 'sp95', open: 'sound' });
 }
 
 boot().catch((error) => {
