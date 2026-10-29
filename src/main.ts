@@ -209,7 +209,7 @@ function refreshMenuBest(): void {
       : `Meilleur tour : ${Race.formatTime(best)}`;
 }
 
-async function boot(): Promise<void> {
+async function boot() {
   const coarse = matchMedia('(pointer: coarse)').matches;
   const fxParam = new URLSearchParams(window.location.search).get('fx');
   const lowFx = fxParam === 'low';
@@ -2331,7 +2331,7 @@ async function boot(): Promise<void> {
   }
   if (COLLIDE_VIEW) toggleCollisionView(true);
 
-  window.__sp95 = {
+  const debugSurface = {
     ready: true,
     map: MAP,
     groundClearance,
@@ -2598,6 +2598,7 @@ async function boot(): Promise<void> {
       freeCamera = null;
     },
   };
+  window.__sp95 = debugSurface;
 
   // Le menu d'accueil renvoie ici avec la destination : la carte est chargée,
   // on peut maintenant lancer directement la session demandée.
@@ -2617,156 +2618,14 @@ async function boot(): Promise<void> {
         : undefined;
     startMode('free', target);
   }
+  return debugSurface;
 }
+
+type Sp95DebugSurface = Awaited<ReturnType<typeof boot>>;
 
 declare global {
   interface Window {
-    __sp95?: {
-    /** Vue des collisions (F9 / `?collide`). */
-    readonly collisionView?: boolean;
-    setCollisionView?: (on?: boolean) => boolean;
-      ready: boolean;
-      readonly map: string;
-      /** Écart max du terrain de secours au-dessus de la dalle (négatif = ok). */
-      readonly groundClearance: number;
-      /** Le même écart, restreint aux cases d'asphalte de la piste. */
-      readonly trackClearance: number;
-      openMap: (id: MapId) => void;
-      readonly mode: GameMode;
-      readonly paused: boolean;
-      readonly speedKmh: number;
-      readonly gear: number;
-      readonly rpm: number;
-      readonly driftTotal: number;
-      readonly racePhase: string | null;
-      readonly raceLap: number;
-      readonly position: { x: number; y: number; z: number };
-      readonly camera: { x: number; y: number; z: number; fov: number };
-      readonly orbit: { yaw: number; pitch: number; active: boolean };
-      readonly replayView: string;
-      readonly debug: {
-        fps: number;
-        drawCalls: number;
-        triangles: number;
-        driftPending: number;
-        shadow: {
-          enabled: boolean;
-          casting: boolean;
-          mapReady: boolean;
-          sunVisible: boolean;
-          sunInScene: boolean;
-          casters: number;
-          castersInFrustum: number;
-          receivers: number;
-          light: [number, number, number];
-          extent: number;
-          carInside: [number, number, number];
-          passDraws: number;
-        };
-        setShadows: (on: boolean) => void;
-      };
-      readonly setup: Setup;
-      readonly surface: string;
-      readonly gearFloat: number;
-      readonly audioEvents: number;
-      readonly audioSamples: number;
-      readonly drivetrain: { gear: number; rpm: number; limiter: boolean; shifting: boolean };
-      readonly spec: {
-        name: string;
-        mass: number;
-        peakTorque: number;
-        maxSteer: number;
-        wheelbase: number;
-        track: number;
-        wheelRadius: number;
-      };
-      readonly garageOpen: boolean;
-      readonly showroomOpen: boolean;
-      readonly chrono: {
-        armed: boolean;
-        lap: number;
-        current: number;
-        last: number;
-        best: number | null;
-        lastLabel: string;
-      } | null;
-      readonly timedLap: boolean;
-      openShowroom: () => void;
-      resetChrono: () => void;
-      readonly soundPanelOpen: boolean;
-      readonly soundMix: Record<string, number>;
-      readonly tcs: boolean;
-      readonly abs: boolean;
-      readonly streetKit: StreetKitSummary;
-      readonly vegetation: VegetationSummary;
-      readonly roadEnds: number;
-      readonly neighbourhoods: { houses: number; shops: number };
-      readonly buildings: { models: number; instances: number; triangles: number };
-      readonly smoke: number;
-      readonly redline: number;
-      readonly vehicleKind: 'car' | 'bike';
-      readonly bikeSetup: Record<string, number>;
-      readonly bikeSpec: { peakTorque: number; mass: number; redline: number; looseGrip: number };
-      readonly cameraMode: string;
-      readonly bikePitch: number;
-      readonly pushingBack: boolean;
-      readonly stuntTotal: number;
-      readonly stuntPending: number;
-      readonly sparks: number;
-      readonly bikeState: {
-        leanDeg: number;
-        pitchDeg: number;
-        wheelie: boolean;
-        bavette: boolean;
-        steerDeg: number;
-        rearSuspension: number;
-        frontSuspension: number;
-        slopePitchDeg: number;
-        slopeRollDeg: number;
-        wheels: number;
-      } | null;
-      readonly car: string;
-      readonly cars: string[];
-      readonly carModel: boolean;
-      readonly wheelMounts: { x: number; z: number }[];
-      readonly wheelSpin: number[];
-      readonly replayState: {
-        active: boolean;
-        elapsed: number;
-        frames: number;
-        visual: {
-          wheels: { suspension: number; steer: number; spin: number }[];
-          brake: number;
-          reverse: boolean;
-          lean: number;
-          pitch: number;
-        } | null;
-      };
-      readonly wheels: { name: string; contact: boolean; slip: number; load: number; omega: number }[];
-      setCar: (id: string) => Promise<void>;
-      readonly pedals: {
-        throttle: number;
-        brake: number;
-        handbrake: boolean;
-        speed: number;
-        mode: GameMode;
-        paused: boolean;
-      };
-      setTcs: (enabled: boolean) => void;
-      startBike: () => void;
-      stopBike: () => void;
-      popWheelie: () => boolean;
-      startFree: () => void;
-      startRace: () => void;
-      startCol: () => void;
-      startCircuit: () => void;
-      startFlat?: () => void;
-      startRally: () => void;
-      startSummit: () => void;
-      teleport: (x: number, z: number, heading: number) => void;
-      setCamera: (px: number, py: number, pz: number, tx: number, ty: number, tz: number) => void;
-      clearCamera: () => void;
-    };
+    __sp95?: Sp95DebugSurface;
   }
 }
 
