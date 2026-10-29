@@ -51,6 +51,8 @@ export const WALL_OFFSET = HALF_WIDTH + KERB_WIDTH + RUNOFF;
 export const GROUND_LEVEL = 0;
 /** Épaisseur du revêtement visible au-dessus du sol. */
 export const ROAD_LIFT = 0.02;
+/** Épaisseur des murs de bord de piste, en mètres. */
+export const WALL_THICK = 0.5;
 /** Pas d'échantillonnage de l'axe, en mètres. */
 const SAMPLE_STEP = 2.5;
 /** Rayon en dessous duquel un virage reçoit des vibreurs. */

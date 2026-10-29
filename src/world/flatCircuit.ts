@@ -31,17 +31,19 @@ import {
   ROAD_LIFT,
   TRACK,
   WALL_OFFSET,
-  cornerRadius,
+  WALL_THICK,
   hasKerb,
   type TrackSample,
 } from './trackLayout.ts';
 import { brakingMarkers } from './brakingMarkers.ts';
 import { buildBrakingBoards } from '../render/brakingBoards.ts';
+import { gravelFillAt, gravelRuns } from './circuitDecor.ts';
+import { buildSponsorFence } from '../render/sponsorFence.ts';
+import { buildPitLaneDetail } from '../render/pitLaneDetail.ts';
 
 /** Les murs ne collisionnent que la coque, comme les bâtiments de la ville. */
 const WALL_GROUP = (GROUP_WORLD << 16) | GROUP_WORLD;
 const WALL_HEIGHT = 1.05;
-const WALL_THICK = 0.5;
 /** Pas des murs : trois mètres, avec recouvrement, ne laissent aucune fente. */
 const WALL_STEP = 3;
 const WALL_OVERLAP = 0.25;
@@ -55,8 +57,19 @@ const KERB_SEGMENT = 2.4;
 const TYRE_RADIUS = 75;
 /** Tuile carrée de l'asphalte, en mètres. */
 const ASPHALT_TILE = 6;
-/** Rayon sous lequel un virage reçoit un bac à gravier extérieur. */
-const GRAVEL_RADIUS = 110;
+/**
+ * Profil du bac, en fraction de sa largeur : [fraction, hauteur]. Le gravier se
+ * bombe contre le mur comme une banquette au lieu d'être une plaque.
+ */
+const GRAVEL_PROFILE: [number, number][] = [
+  [0, 0.015],
+  [0.24, 0.055],
+  [0.62, 0.1],
+  [0.9, 0.15],
+  [1, 0.115],
+];
+/** Largeur du liséré de terre qui raccorde le bac à l'herbe, en mètres. */
+const GRAVEL_FRINGE = 2.6;
 /** Tuile du gravier, en mètres. */
 const GRAVEL_TILE = 5;
 /**
@@ -307,45 +320,146 @@ function kerbGeometry(samples: TrackSample[]): THREE.BufferGeometry {
 
 /**
  * Bacs à gravier : une bande entre le vibreur et le mur, à l'extérieur des
- * virages serrés. C'est ce qui manquait le plus au décor — de l'herbe jusqu'au
- * mur fait tout de suite karting, alors qu'un bac à gravier lit comme un vrai
- * circuit. Purement visuel : la physique garde son sol plat.
+ * virages. Trois choses manquaient à la première version, qui était une plaque
+ * grise coupée net : la largeur ne suivait pas le serrage du virage, le bord
+ * était une arête vive au milieu de l'herbe, et le gravier était parfaitement
+ * plat. Ici le bac s'ouvre avec le rayon, s'éteint sur dix-huit mètres à ses
+ * extrémités et se bombe contre le mur. Purement visuel : la physique garde son
+ * sol plat.
  */
 function gravelGeometry(samples: TrackSample[]): THREE.BufferGeometry {
   const positions: number[] = [];
   const uvs: number[] = [];
+  const colors: number[] = [];
   const indices: number[] = [];
   const from = HALF_WIDTH + KERB_WIDTH + 0.05;
-  const to = WALL_OFFSET - 0.45;
-  const width = (to - from) / GRAVEL_TILE;
-  for (let i = 0; i < samples.length; i++) {
-    const a = samples[i];
-    const b = samples[(i + 1) % samples.length];
-    if (cornerRadius(a) > GRAVEL_RADIUS || cornerRadius(b) > GRAVEL_RADIUS) continue;
-    const side = a.curvature > 0 ? -1 : 1;
-    const rightA = rightOf(a);
-    const rightB = rightOf(b);
-    const base = positions.length / 3;
-    const va = a.distance / GRAVEL_TILE;
-    const vb = (b.distance <= a.distance ? b.distance + TRACK.length : b.distance) / GRAVEL_TILE;
-    positions.push(
-      a.x + rightA.x * side * from, ROAD_LIFT + 0.003, a.z + rightA.z * side * from,
-      a.x + rightA.x * side * to, ROAD_LIFT + 0.003, a.z + rightA.z * side * to,
-      b.x + rightB.x * side * from, ROAD_LIFT + 0.003, b.z + rightB.z * side * from,
-      b.x + rightB.x * side * to, ROAD_LIFT + 0.003, b.z + rightB.z * side * to,
-    );
-    uvs.push(0, va, width, va, 0, vb, width, vb);
-    const p0 = positions.slice(base * 3, base * 3 + 3);
-    const p1 = positions.slice((base + 1) * 3, (base + 1) * 3 + 3);
-    const p2 = positions.slice((base + 2) * 3, (base + 2) * 3 + 3);
-    const ny =
-      (p1[2] - p0[2]) * (p2[0] - p0[0]) - (p1[0] - p0[0]) * (p2[2] - p0[2]);
-    if (ny >= 0) indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
-    else indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+  const full = WALL_OFFSET - 0.45 - from;
+  const columns = GRAVEL_PROFILE.length;
+  const count = samples.length;
+  for (const run of gravelRuns(samples)) {
+    const span = run.end >= run.start ? run.end - run.start + 1 : count - run.start + run.end + 1;
+    let previous = -1;
+    for (let step = 0; step < span; step++) {
+      const index = (run.start + step) % count;
+      const sample = samples[index];
+      const fill = gravelFillAt(samples, run, index);
+      const right = rightOf(sample);
+      const width = full * fill;
+      const base = positions.length / 3;
+      // Ratissage : la teinte ondule tous les mètres, comme un gravier travaillé.
+      const rake = 0.9 + 0.1 * Math.sin(sample.distance * 0.9);
+      for (const [fraction, height] of GRAVEL_PROFILE) {
+        const lateral = run.side * (from + width * fraction);
+        positions.push(
+          sample.x + right.x * lateral,
+          ROAD_LIFT + 0.004 + height * fill,
+          sample.z + right.z * lateral,
+        );
+        uvs.push((width * fraction) / GRAVEL_TILE, sample.distance / GRAVEL_TILE);
+        // Le bord extérieur s'assombrit : sans ça le bac se termine sur une
+        // arête claire que la frange doit ensuite cacher.
+        const rim = 1 - 0.3 * fraction;
+        colors.push(rake * rim, rake * rim, rake * rim * 0.97);
+      }
+      if (previous >= 0) {
+        for (let column = 0; column < columns - 1; column++) {
+          const a = previous + column;
+          const b = a + 1;
+          const c = base + column;
+          const d = c + 1;
+          const ax = positions[a * 3];
+          const az = positions[a * 3 + 2];
+          const bx = positions[b * 3];
+          const bz = positions[b * 3 + 2];
+          const cx = positions[c * 3];
+          const cz = positions[c * 3 + 2];
+          const ny = (cz - az) * (bx - ax) - (cx - ax) * (bz - az);
+          if (ny >= 0) indices.push(a, c, b, b, c, d);
+          else indices.push(a, b, c, b, d, c);
+        }
+      }
+      previous = base;
+    }
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/**
+ * Frange de terre du bac : la bande qui va du gravier vers l'herbe et s'efface.
+ * L'alpha est porté par les sommets (quatre colonnes), pas par une texture : le
+ * grain du gravier s'éparpille et s'arrête, au lieu de finir sur l'arête claire
+ * d'une bande posée sur la pelouse.
+ */
+function gravelFringeGeometry(samples: TrackSample[]): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+  const from = HALF_WIDTH + KERB_WIDTH + 0.05;
+  const full = WALL_OFFSET - 0.45 - from;
+  const count = samples.length;
+  /** Décalage dans la frange, et part de gravier qui reste à cette distance. */
+  const fringe: [number, number][] = [
+    [0, 0.95],
+    [0.3, 0.66],
+    [0.64, 0.3],
+    [1, 0],
+  ];
+  const columns = fringe.length;
+  for (const run of gravelRuns(samples)) {
+    const span = run.end >= run.start ? run.end - run.start + 1 : count - run.start + run.end + 1;
+    let previous = -1;
+    for (let step = 0; step < span; step++) {
+      const index = (run.start + step) % count;
+      const fill = gravelFillAt(samples, run, index);
+      if (fill < 0.3) {
+        previous = -1;
+        continue;
+      }
+      const sample = samples[index];
+      const right = rightOf(sample);
+      const base = positions.length / 3;
+      for (const [offset, alpha] of fringe) {
+        const lateral = run.side * (from + full * fill + GRAVEL_FRINGE * offset);
+        positions.push(
+          sample.x + right.x * lateral,
+          ROAD_LIFT + 0.005,
+          sample.z + right.z * lateral,
+        );
+        // Même tuile que le bac : le gravier continue, il s'éclaircit seulement.
+        uvs.push((GRAVEL_FRINGE * offset) / GRAVEL_TILE, sample.distance / GRAVEL_TILE);
+        colors.push(1, 1, 1, alpha);
+      }
+      if (previous >= 0) {
+        for (let column = 0; column < columns - 1; column++) {
+          const a = previous + column;
+          const b = a + 1;
+          const c = base + column;
+          const d = c + 1;
+          const ax = positions[a * 3];
+          const az = positions[a * 3 + 2];
+          const bx = positions[b * 3];
+          const bz = positions[b * 3 + 2];
+          const cx = positions[c * 3];
+          const cz = positions[c * 3 + 2];
+          const ny = (cz - az) * (bx - ax) - (cx - ax) * (bz - az);
+          if (ny >= 0) indices.push(a, c, b, b, c, d);
+          else indices.push(a, b, c, b, d, c);
+        }
+      }
+      previous = base;
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 4));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;
@@ -415,50 +529,6 @@ function boardTexture(text: string, background: string, ink: string): THREE.Canv
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, 256, 52);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  return texture;
-}
-
-/**
- * Panneau de sponsor : fond plein, coin de couleur, marque et accroche. Le
- * dessin est net à 6 m de haut et coûte une canvas de 1024 × 160 par marque.
- */
-function sponsorTexture(options: {
-  name: string;
-  tagline: string;
-  background: string;
-  ink: string;
-  accent: string;
-}): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 160;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = options.background;
-  ctx.fillRect(0, 0, 1024, 160);
-  // Coin oblique, comme une virgule de logo.
-  ctx.fillStyle = options.accent;
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(176, 0);
-  ctx.lineTo(104, 160);
-  ctx.lineTo(0, 160);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(2, 2, 1020, 156);
-  ctx.fillStyle = options.ink;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.font = 'bold 80px system-ui, sans-serif';
-  ctx.fillText(options.name, 208, 64);
-  ctx.globalAlpha = 0.78;
-  ctx.font = '600 32px system-ui, sans-serif';
-  ctx.fillText(options.tagline, 212, 124);
-  ctx.globalAlpha = 1;
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
@@ -577,18 +647,40 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
   pitLane.rotation.x = -Math.PI / 2;
   pitLane.position.set(-13.2, ROAD_LIFT + 0.004, -390);
   add(pitLane, 'receive');
-  for (let z = -508; z < -266; z += 8) {
-    box(0.18, 0.02, 4, -13.2, ROAD_LIFT + 0.01, z, whiteMat, 0, 'none');
-  }
+  // Détail de la voie : emplacements numérotés, rail de muret, pneus, chrono.
+  const pitDetail = buildPitLaneDetail(scene, anisotropy);
+  triangles += pitDetail.triangles;
 
   box(15, 8.4, 118, -33, 4.2, -420, concreteMat, 0, 'both');
   box(15.8, 0.7, 120, -33, 8.6, -420, darkMat, 0, 'both');
   // Bandeau vitré au-dessus des garages, puis les portes.
   box(0.2, 1.7, 112, -25.4, 6.1, -420, glassMat, 0, 'none');
+  const lampMat = new THREE.MeshStandardMaterial({
+    color: 0xf4f2e8,
+    emissive: 0xfff1d2,
+    emissiveIntensity: 0.9,
+    roughness: 0.5,
+  });
   for (let i = 0; i < 8; i++) {
     const z = -474 + i * 13.2;
     box(0.35, 3.9, 8.4, -25.4, 1.95, z, darkMat, 0, 'none');
     box(0.25, 0.22, 8.4, -25.15, 0.11, z, whiteMat, 0, 'none');
+    // Encadrement de la porte : sans lui, les garages sont des rectangles gris.
+    box(0.18, 4.2, 0.26, -25.2, 2.1, z - 4.32, whiteMat, 0, 'none');
+    box(0.18, 4.2, 0.26, -25.2, 2.1, z + 4.32, whiteMat, 0, 'none');
+    box(0.2, 0.32, 8.9, -25.2, 4.26, z, whiteMat, 0, 'none');
+    // Bandeau lumineux au-dessus de chaque porte.
+    box(0.14, 0.16, 7.4, -25.18, 4.6, z, lampMat, 0, 'none');
+  }
+  // Terrasse des stands : garde-corps et unités de toiture, pour que la façade
+  // ne se termine pas sur une arête blanche.
+  for (let z = -476; z <= -362; z += 4) {
+    box(0.06, 0.95, 0.06, -25.72, 9.02, z, metalMat, 0, 'none');
+  }
+  box(0.07, 0.07, 114, -25.72, 9.48, -420, metalMat, 0, 'none');
+  box(0.07, 0.07, 114, -25.72, 9.02, -420, metalMat, 0, 'none');
+  for (const z of [-462, -436, -404, -378]) {
+    box(2.6, 1.1, 3.4, -31, 9.5, z, metalMat, 0, 'none');
   }
   // Enseigne du bâtiment, tournée vers la piste.
   const sign = new THREE.Mesh(
@@ -758,66 +850,13 @@ function buildScenery(scene: THREE.Scene, anisotropy: number, lowFx: boolean): n
     box(0.22, 0.02, 1.4, x, ROAD_LIFT + 0.012, z, whiteMat, yaw, 'none');
   }
 
-  // --- Panneaux publicitaires, devant la face intérieure du mur -----------
-  // La face est posée 9 cm *devant* le mur (dont la face intérieure est à
-  // WALL_OFFSET - WALL_THICK/2). L'ancienne version la plantait 5 cm derrière
-  // cette face, donc dans l'épaisseur du mur : les deux plans se disputaient le
-  // tampon de profondeur, et tout le panneau clignotait au loin.
-  const boards = [
-    { map: sponsorTexture({ name: 'VELOCE', tagline: 'SCUDERIA · MODENA', background: '#8f1017', ink: '#f6f2e6', accent: '#e8b422' }), step: 25 },
-    { map: sponsorTexture({ name: 'NORTHWIND', tagline: 'AIR SYSTEMS', background: '#e9e7df', ink: '#17202c', accent: '#2b57a8' }), step: 31 },
-    { map: sponsorTexture({ name: 'APEX OIL', tagline: 'FULL SYNTHETIC', background: '#14161b', ink: '#f4d34a', accent: '#f4d34a' }), step: 27 },
-    { map: sponsorTexture({ name: 'KERB+', tagline: 'RACE ENGINEERING', background: '#10241d', ink: '#eaf3ec', accent: '#1d8f6f' }), step: 35 },
-    { map: sponsorTexture({ name: 'ORBITA', tagline: 'TYRES · GRIP 0', background: '#1d2a44', ink: '#f2f4f8', accent: '#c2272d' }), step: 29 },
-  ];
+  // --- Palissade publicitaire, posée sur le muret -------------------------
+  // Un bandeau continu qui suit le mur, au lieu de plaques plates semées tous
+  // les 25 m : dans un virage de 23 m de rayon, la corde d'une plaque de 6,4 m
+  // s'enfonçait de 22 cm dans le béton et les panneaux voisins se coupaient.
   const wallSamples = resample(WALL_STEP);
-  const boardLateral = WALL_OFFSET - WALL_THICK / 2 - 0.09;
-  const postParts: THREE.BufferGeometry[] = [];
-  boards.forEach((board, boardIndex) => {
-    const geometry = new THREE.PlaneGeometry(6.4, 1.15);
-    const material = new THREE.MeshStandardMaterial({ map: board.map, roughness: 0.6, metalness: 0.05 });
-    const parts: THREE.BufferGeometry[] = [];
-    const stride = Math.max(1, Math.round(board.step / WALL_STEP));
-    for (let i = boardIndex * 5; i < wallSamples.length; i += stride) {
-      const sample = wallSamples[i % wallSamples.length];
-      const right = rightOf(sample);
-      const yaw = Math.atan2(sample.tx, sample.tz);
-      for (const side of [-1, 1]) {
-        const face = geometry.clone();
-        const x = sample.x + right.x * boardLateral * side;
-        const z = sample.z + right.z * boardLateral * side;
-        // Face tournée vers la piste, de chaque côté du mur ; une seule face,
-        // pas de DoubleSide : le dos ne se lit jamais.
-        face.rotateY(yaw + (side > 0 ? Math.PI / 2 : -Math.PI / 2));
-        face.translate(x, 1.78, z);
-        parts.push(face);
-        for (const along of [-2.5, 2.5]) {
-          const post = new THREE.BoxGeometry(0.11, 1.2, 0.11);
-          post.rotateY(yaw + (side > 0 ? Math.PI / 2 : -Math.PI / 2));
-          post.translate(x + sample.tx * along, 1.2, z + sample.tz * along);
-          postParts.push(post);
-        }
-      }
-    }
-    if (parts.length === 0) return;
-    const merged = mergeGeometries(parts);
-    parts.forEach((part) => part.dispose());
-    if (!merged) return;
-    const mesh = new THREE.Mesh(merged, material);
-    mesh.receiveShadow = true;
-    scene.add(mesh);
-    triangles += merged.index ? merged.index.count / 3 : merged.attributes.position.count / 3;
-  });
-  if (postParts.length > 0) {
-    const merged = mergeGeometries(postParts);
-    postParts.forEach((part) => part.dispose());
-    if (merged) {
-      const posts = new THREE.Mesh(merged, metalMat);
-      posts.receiveShadow = true;
-      scene.add(posts);
-      triangles += merged.index ? merged.index.count / 3 : merged.attributes.position.count / 3;
-    }
-  }
+  const fence = buildSponsorFence(scene, anisotropy, metalMat);
+  triangles += fence.triangles;
 
   // --- Tribunes secondaires dans les virages lents ------------------------
   // Une tribune est construite dans un repère local (front à x = 0, gradins
@@ -1207,7 +1246,8 @@ export function buildFlatCircuit(
     gravelTexture.anisotropy = options.anisotropy;
     const gravelMat = new THREE.MeshStandardMaterial({
       map: gravelTexture,
-      color: 0xa79b87,
+      vertexColors: true,
+      color: 0xb6ab97,
       roughness: 1,
       metalness: 0,
     });
@@ -1215,6 +1255,31 @@ export function buildFlatCircuit(
     gravel.receiveShadow = true;
     scene.add(gravel);
     triangles += gravelMesh.index.count / 3;
+
+    // Le liséré de terre : ce qui raccorde le bac à l'herbe.
+    const fringeMesh = gravelFringeGeometry(samples);
+    if (fringeMesh.index && fringeMesh.index.count > 0) {
+      const fringe = new THREE.Mesh(
+        fringeMesh,
+        new THREE.MeshStandardMaterial({
+          map: gravelTexture,
+          vertexColors: true,
+          transparent: true,
+          depthWrite: false,
+          roughness: 1,
+          metalness: 0,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2,
+        }),
+      );
+      fringe.name = 'flat-gravel-fringe';
+      fringe.receiveShadow = true;
+      scene.add(fringe);
+      triangles += fringeMesh.index.count / 3;
+    } else {
+      fringeMesh.dispose();
+    }
   } else {
     gravelMesh.dispose();
   }
@@ -1345,63 +1410,97 @@ export function buildFlatCircuit(
   triangles += 12 * wallIndex * 2;
 
   // --- Portique de départ ------------------------------------------------
+  // Mâts, poutre et bandeau sont posés à la *même* distance. La version
+  // précédente plantait les mâts sur la ligne et envoyait la poutre et le
+  // bandeau huit mètres plus loin : le panneau flottait au-dessus de la piste
+  // sans rien qui le tienne.
   const start = wallSamples[0];
   const right = rightOf(start);
   const gantryMat = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.55, metalness: 0.45 });
-  // Les mâts se plantent derrière le mur : sur le dégagement, une voiture
-  // sortie large les traverserait sans rien toucher.
+  const footingMat = new THREE.MeshStandardMaterial({ color: 0xa5a29a, roughness: 0.92, metalness: 0.02 });
   const GANTRY_HALF = WALL_OFFSET + 2.5;
-  for (const side of [-1, 1]) {
-    const x = start.x + right.x * GANTRY_HALF * side;
-    const z = start.z + right.z * GANTRY_HALF * side;
-    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.7, 7.6, 0.7), gantryMat);
-    mast.position.set(x, 3.8, z);
-    mast.castShadow = true;
-    scene.add(mast);
-  }
+  /** Axe de la poutre au-dessus de la piste. */
+  const GANTRY_Y = 7.2;
+  const BEAM_HEIGHT = 1;
+  const BEAM_DEPTH = 0.9;
+  /** Les mâts montent jusqu'au-dessus de la poutre : elle les traverse. */
+  const MAST_TOP = GANTRY_Y + BEAM_HEIGHT / 2 + 0.12;
   // La poutre doit être *en travers* de la piste : sa largeur locale suit X,
   // donc le cap de la piste suffit. Le +π/2 de la première version la posait
   // dans l'axe de la ligne droite, comme un rail au-dessus des voitures.
   const gantryYaw = Math.atan2(start.tx, start.tz);
-  const beam = new THREE.Mesh(new THREE.BoxGeometry((GANTRY_HALF + 0.4) * 2, 1.1, 0.9), gantryMat);
-  beam.position.set(
-    start.x + start.tx * START_LINE,
-    7.2,
-    start.z + start.tz * START_LINE,
-  );
+  const anchor = {
+    x: start.x + start.tx * START_LINE,
+    z: start.z + start.tz * START_LINE,
+  };
+  for (const side of [-1, 1]) {
+    const x = anchor.x + right.x * GANTRY_HALF * side;
+    const z = anchor.z + right.z * GANTRY_HALF * side;
+    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.72, MAST_TOP, 0.72), gantryMat);
+    mast.position.set(x, MAST_TOP / 2, z);
+    mast.castShadow = true;
+    scene.add(mast);
+    // Semelle béton : un mât de sept mètres ne sort pas du sol comme un poteau.
+    const footing = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 1.6), footingMat);
+    footing.position.set(x, 0.25, z);
+    footing.castShadow = true;
+    footing.receiveShadow = true;
+    scene.add(footing);
+  }
+  const beam = new THREE.Mesh(new THREE.BoxGeometry((GANTRY_HALF + 0.5) * 2, BEAM_HEIGHT, BEAM_DEPTH), gantryMat);
+  beam.position.set(anchor.x, GANTRY_Y, anchor.z);
   beam.rotation.y = gantryYaw;
   beam.castShadow = true;
   scene.add(beam);
-  // Cinq feux de départ sous la poutre, face à la voiture.
+  // Cinq feux de départ sous la poutre, dans leur boîtier, face à la voiture.
   const lightMat = new THREE.MeshStandardMaterial({
     color: 0x2a0a0a,
     emissive: 0x3a0505,
     roughness: 0.35,
   });
+  const housingMat = new THREE.MeshStandardMaterial({ color: 0x191b1f, roughness: 0.5, metalness: 0.3 });
+  const housingY = GANTRY_Y - BEAM_HEIGHT / 2 - 0.34;
   for (let i = 0; i < 5; i++) {
     const offset = (i - 2) * 1.15;
-    const light = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.52, 0.2), lightMat);
+    const housing = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.68, 0.3), housingMat);
+    housing.position.set(
+      anchor.x + Math.cos(gantryYaw) * offset,
+      housingY,
+      anchor.z - Math.sin(gantryYaw) * offset,
+    );
+    housing.rotation.y = gantryYaw + Math.PI;
+    housing.castShadow = true;
+    scene.add(housing);
+    const light = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.52, 0.1), lightMat);
     light.position.set(
-      beam.position.x + Math.cos(gantryYaw) * offset,
-      6.4,
-      beam.position.z - Math.sin(gantryYaw) * offset,
+      housing.position.x - start.tx * 0.16,
+      housing.position.y,
+      housing.position.z - start.tz * 0.16,
     );
     light.rotation.y = gantryYaw + Math.PI;
     scene.add(light);
   }
-  // Deux faces dos à dos, chacune sur une face de la poutre : à 2 cm du centre,
-  // elles étaient *dans* la poutre (90 cm d'épaisseur) et invisibles. Le
-  // bandeau porte le nom du circuit et quatre écuries.
-  const BEAM_DEPTH = 0.9;
+  // Deux faces dos à dos, chacune sur une face de la poutre, centrées sur son
+  // axe : le bandeau est *posé sur* la poutre, pas suspendu en dessous.
   const gantryMaterial = new THREE.MeshBasicMaterial({ map: gantryBannerTexture() });
-  for (const [turn, shift] of [[0, BEAM_DEPTH / 2 + 0.02], [Math.PI, -(BEAM_DEPTH / 2 + 0.02)]] as const) {
-    const face = new THREE.Mesh(new THREE.PlaneGeometry(24, 2.1), gantryMaterial);
-    face.position.copy(beam.position);
-    face.position.y = 6.35;
-    face.position.x += Math.sin(gantryYaw) * shift;
-    face.position.z += Math.cos(gantryYaw) * shift;
+  const bannerHeight = 2.2;
+  for (const [turn, shift] of [[0, BEAM_DEPTH / 2 + 0.03], [Math.PI, -(BEAM_DEPTH / 2 + 0.03)]] as const) {
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(24, bannerHeight), gantryMaterial);
+    face.position.set(
+      anchor.x + Math.sin(gantryYaw) * shift,
+      GANTRY_Y,
+      anchor.z + Math.cos(gantryYaw) * shift,
+    );
     face.rotation.y = gantryYaw + turn;
     scene.add(face);
+  }
+  // Cornières haut et bas : elles cachent la tranche du panneau et le lient
+  // visuellement à la poutre.
+  for (const y of [GANTRY_Y + bannerHeight / 2, GANTRY_Y - bannerHeight / 2]) {
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(24.3, 0.09, BEAM_DEPTH + 0.09), gantryMat);
+    trim.position.set(anchor.x, y, anchor.z);
+    trim.rotation.y = gantryYaw;
+    scene.add(trim);
   }
 
   const scenery = buildScenery(scene, options.anisotropy, options.lowFx);
