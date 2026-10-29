@@ -837,6 +837,9 @@ function buildScenery(
     const distance = WALL_OFFSET + 8;
     const x = sample.x + right.x * distance * outward;
     const z = sample.z + right.z * distance * outward;
+    // Aucun poste sur la ligne droite : la voie des stands et son paddock y
+    // sont, et un poste de commissaire au milieu du bitume n'a aucun sens.
+    if (z < -240 && z > -545 && x < 10) continue;
     marshalHut(x, z, Math.atan2(sample.tx, sample.tz), {
       x: -right.x * outward,
       z: -right.z * outward,
@@ -1021,6 +1024,9 @@ function buildScenery(
           const lateral = side * (WALL_OFFSET + 3.2 + random() * 16);
           const x = sample.x + right.x * lateral + (random() - 0.5) * 3;
           const z = sample.z + right.z * lateral + (random() - 0.5) * 3;
+          // Pas de touffes sur la dalle des stands : c'était de l'herbe plantée
+          // dans le paddock, à l'envers sur le béton.
+          if (x < -16 && z < -250 && z > -535) continue;
           const yaw = random() * Math.PI;
           const size = 0.7 + random() * 0.9;
           tuftRotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);

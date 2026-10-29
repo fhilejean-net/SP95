@@ -38,6 +38,8 @@ const Y_AXIS = new THREE.Vector3(0, 1, 0);
 interface ModelSpec {
   /** Longueur cible du plus grand côté horizontal, en mètres. */
   length: number;
+  /** Hauteur cible, quand la longueur seule écrase le modèle. */
+  height?: number;
   /** Rotation appliquée après normalisation, en radians. */
   yaw?: number;
 }
@@ -51,13 +53,22 @@ interface PropSpec extends ModelSpec {
  * contre le mur, un moteur se porte à deux.
  */
 const PROPS = {
-  lift: { file: 'hydraulic_car_lift.glb', length: 4.4 },
-  elevator: { file: 'car_elevator_free.glb', length: 4.2 },
+  lift: { file: 'hydraulic_car_lift.glb', length: 4.2, height: 1.6 },
+  elevator: { file: 'car_elevator_free.glb', length: 4.0, height: 1.9 },
   chest: { file: 'tool_chest.glb', length: 1.25 },
   engine: { file: 'car_engine.glb', length: 0.95 },
   trolley: { file: 'trolley_jack_lo_poly.glb', length: 1.7, yaw: Math.PI / 2 },
-  creeper: { file: 'mechanic_creeper.glb', length: 1.15 },
-  hoist: { file: 'engine_hoist_-_engine_crane.glb', length: 2.1 },
+  // Un creeper fait la taille d'un humain allongé, pas d'une planche à pain.
+  creeper: { file: 'mechanic_creeper.glb', length: 1.9, height: 0.35 },
+  hoist: { file: 'engine_hoist_-_engine_crane.glb', length: 2.1, height: 2.3 },
+  // Les modèles détaillés ajoutés au dépôt.
+  raceFence: { file: 'race_fence.glb', length: 6 },
+  urbanTree: { file: 'urban_tree.glb', length: 6.5, height: 6.5 },
+  barrier: { file: 'barrier.glb', length: 2.2 },
+  metalBarrier: { file: 'metal_barrier__game_ready__4k.glb', length: 2.4 },
+  pitBoard: { file: 'pit_board.glb', length: 2.0, height: 2.2 },
+  finishLine: { file: 'finish_line.glb', length: 14 },
+  startingLine: { file: 'starting_line.glb', length: 14 },
 } satisfies Record<string, PropSpec>;
 
 type PropName = keyof typeof PROPS;
@@ -81,6 +92,13 @@ function placements(): Record<PropName, Placement[]> {
     trolley: [],
     creeper: [],
     hoist: [],
+    raceFence: [],
+    urbanTree: [],
+    barrier: [],
+    metalBarrier: [],
+    pitBoard: [],
+    finishLine: [],
+    startingLine: [],
   };
   for (let index = 0; index < STALL_COUNT; index++) {
     const centre = stallCentre(index);
@@ -100,6 +118,17 @@ function placements(): Record<PropName, Placement[]> {
   for (const index of [2, 5]) {
     list.hoist.push({ x: -43.4, z: stallCentre(index) - 0.4, yaw: Math.PI * 0.5 });
   }
+  // Le paddock derrière les stands : clôtures, arbres, barrières et panneaux.
+  for (let z = -505; z <= -265; z += 8) list.raceFence.push({ x: -49.5, z, yaw: 0 });
+  for (let z = -490; z <= -280; z += 34) list.urbanTree.push({ x: -57, z, yaw: 0 });
+  for (let z = -500; z <= -270; z += 26) list.barrier.push({ x: -30.9, z, yaw: 0 });
+  for (const z of [-516, -264]) list.metalBarrier.push({ x: -24.2, z, yaw: 0 });
+  for (let index = 0; index < STALL_COUNT; index++) {
+    list.pitBoard.push({ x: GARAGE_FRONT_X + 0.6, z: stallCentre(index) - 4.4, yaw: 0 });
+  }
+  // Les lignes de départ et d'arrivée, à plat sur l'asphalte.
+  list.finishLine.push({ x: 0, z: -543, y: 0.03, yaw: 0 });
+  list.startingLine.push({ x: 0, z: -534, y: 0.03, yaw: 0 });
   return list;
 }
 
@@ -201,6 +230,14 @@ function normalize(root: THREE.Object3D, spec: ModelSpec): THREE.Vector3 {
   root.scale.setScalar(spec.length / longest);
   root.updateMatrixWorld(true);
   box.setFromObject(root);
+  // Un pont élévateur a un bras très long : le normaliser par la longueur le
+  // rend minuscule. La hauteur cible le remet à l'échelle d'une voiture.
+  if (spec.height) {
+    box.getSize(size);
+    root.scale.multiplyScalar(spec.height / Math.max(0.01, size.y));
+    root.updateMatrixWorld(true);
+    box.setFromObject(root);
+  }
   const centre = box.getCenter(new THREE.Vector3());
   root.position.set(-centre.x, -box.min.y, -centre.z);
   root.updateMatrixWorld(true);

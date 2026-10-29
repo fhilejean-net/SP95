@@ -297,13 +297,7 @@ export function buildPitLaneDetail(scene: THREE.Scene, anisotropy: number): PitL
     new THREE.MeshStandardMaterial({ color: 0x1b1c1f, roughness: 0.96 }),
     STALL_COUNT * 6,
   );
-  const trolleys = new THREE.InstancedMesh(
-    new THREE.BoxGeometry(0.95, 0.78, 1.55),
-    new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0.15 }),
-    STALL_COUNT,
-  );
   const matrix = new THREE.Matrix4();
-  const colour = new THREE.Color();
   let tyre = 0;
   for (let stall = 0; stall < STALL_COUNT; stall++) {
     const centre = STALL_FIRST_Z + stall * STALL_PITCH;
@@ -313,19 +307,14 @@ export function buildPitLaneDetail(scene: THREE.Scene, anisotropy: number): PitL
         tyres.setMatrixAt(tyre++, matrix);
       }
     }
-    matrix.makeTranslation(laneMin + 2.1, 0.39, centre + 2.4);
-    trolleys.setMatrixAt(stall, matrix);
-    trolleys.setColorAt(stall, colour.set(TEAM_COLOURS[stall % TEAM_COLOURS.length]));
+
   }
   tyres.count = tyre;
   tyres.castShadow = false;
   tyres.receiveShadow = true;
   scene.add(tyres);
-  trolleys.castShadow = true;
-  trolleys.receiveShadow = true;
-  scene.add(trolleys);
   meshes += 2;
-  triangles += tyre * 48 + STALL_COUNT * 12;
+  triangles += tyre * 48;
 
   // --- Rail du muret de stands -------------------------------------------
   // Le rail se monte sur la face *stands* du muret : c'est de ce côté que se
