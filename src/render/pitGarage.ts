@@ -131,6 +131,7 @@ export function buildPitGarage(
   const yellowParts: THREE.BufferGeometry[] = [];
   const roofParts: THREE.BufferGeometry[] = [];
   const lampParts: THREE.BufferGeometry[] = [];
+  const equipmentParts: THREE.BufferGeometry[] = [];
   const accentParts: THREE.BufferGeometry[][] = TEAM_COLOURS.map(() => []);
 
   const push = (
@@ -215,8 +216,21 @@ export function buildPitGarage(
   }
 
   // --- Toiture technique : caissons, lanterneaux, garde-corps -------------
+  // Les caissons étaient des pavés sombres sans matière : on les habille en
+  // centrale de traitement d'air — capot clair, grilles, pieds — pour qu'ils
+  // se lisent comme du matériel et non comme un bloc oublié.
   for (const z of [stallCentre(1), stallCentre(4), stallCentre(6)]) {
-    push(darkParts, 2.4, 0.9, 3.2, CENTRE_X - 2.5, CLEAR_HEIGHT + ROOF_THICK + 0.45, z);
+    const x = CENTRE_X - 2.5;
+    const y = CLEAR_HEIGHT + ROOF_THICK + 0.45;
+    push(equipmentParts, 2.4, 0.9, 3.2, x, y, z);
+    push(trimParts, 2.6, 0.12, 3.4, x, y + 0.5, z);
+    for (let slat = 0; slat < 6; slat++) {
+      push(darkParts, 1.9, 0.06, 0.06, x, y - 0.3 + slat * 0.12, z - 1.62);
+      push(darkParts, 1.9, 0.06, 0.06, x, y - 0.3 + slat * 0.12, z + 1.62);
+    }
+    for (const dx of [-0.9, 0.9]) {
+      for (const dz of [-1.3, 1.3]) push(darkParts, 0.18, 0.35, 0.18, x + dx, y - 0.62, z + dz);
+    }
   }
   for (let z = Z0 + 2; z <= Z1 - 2; z += 3.4) {
     push(darkParts, 0.06, 0.9, 0.06, GARAGE_FRONT_X - 0.5, CLEAR_HEIGHT + ROOF_THICK + 0.45, z);
@@ -260,6 +274,10 @@ export function buildPitGarage(
     { material: yellowMat, geometries: yellowParts },
     { material: roofMat, geometries: roofParts },
     { material: lampMat, geometries: lampParts },
+    {
+      material: new THREE.MeshStandardMaterial({ color: 0x8d949c, roughness: 0.45, metalness: 0.55 }),
+      geometries: equipmentParts,
+    },
   ];
   TEAM_COLOURS.forEach((colour, index) => {
     sinks.push({

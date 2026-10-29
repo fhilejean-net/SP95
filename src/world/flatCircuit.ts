@@ -40,7 +40,7 @@ import { buildBrakingBoards } from '../render/brakingBoards.ts';
 import { gravelFillAt, gravelRuns } from './circuitDecor.ts';
 import { buildSponsorFence } from '../render/sponsorFence.ts';
 import { buildDriftPad } from '../render/driftPad.ts';
-import { driftWallGap } from './driftPad.ts';
+import { DRIFT_PAD, driftWallGap, insideDriftPad } from './driftPad.ts';
 import { buildPitLaneDetail } from '../render/pitLaneDetail.ts';
 import { buildPitGarage } from '../render/pitGarage.ts';
 import {
@@ -613,9 +613,12 @@ function buildScenery(
   // --- Stands : la voie est *derrière* le muret --------------------------
   // La dalle couvre la voie et l'atelier : les garages ouvrent dessus.
   const padLength = PIT_APRON_TO - PIT_APRON_FROM;
-  const pad = new THREE.Mesh(new THREE.PlaneGeometry(46, padLength), concreteMat);
+  // La dalle ne court plus jusqu'à x = -65 : elle s'arrête huit mètres derrière
+  // les garages, ce qui laisse la clôture et les arbres sur l'herbe au lieu de
+  // les planter au milieu du béton.
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(36, padLength), concreteMat);
   pad.rotation.x = -Math.PI / 2;
-  pad.position.set(-42, ROAD_LIFT, (PIT_APRON_FROM + PIT_APRON_TO) / 2);
+  pad.position.set(-37, ROAD_LIFT, (PIT_APRON_FROM + PIT_APRON_TO) / 2);
   add(pad, 'receive');
 
   const pitLane = new THREE.Mesh(
@@ -981,9 +984,11 @@ function buildScenery(
           const lateral = side * (WALL_OFFSET + 3.2 + random() * 16);
           const x = sample.x + right.x * lateral + (random() - 0.5) * 3;
           const z = sample.z + right.z * lateral + (random() - 0.5) * 3;
-          // Pas de touffes sur la dalle des stands : c'était de l'herbe plantée
-          // dans le paddock, à l'envers sur le béton.
+          // Pas de touffes sur la dalle des stands ni sur l'aire de gymkhana :
+          // c'était de l'herbe plantée dans le paddock, à l'envers sur le
+          // béton, et au milieu du tracé de drift.
           if (x < -16 && z < -250 && z > -535) continue;
+          if (insideDriftPad(x, z)) continue;
           const yaw = random() * Math.PI;
           const size = 0.7 + random() * 0.9;
           tuftRotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
@@ -1060,6 +1065,16 @@ function buildScenery(
       const sample = nearestAxis(x, z);
       if (Math.abs(sample.offset) < 34) continue;
       if (x < -18 && z > -430 && z < -20) continue; // paddock et tribunes
+      // L'aire de gymkhana est un ouvrage : aucun arbre ne pousse dessus. La
+      // marge évite qu'une couronne déborde au-dessus du bitume.
+      if (
+        x > DRIFT_PAD.cx - DRIFT_PAD.halfX - 12 &&
+        x < DRIFT_PAD.cx + DRIFT_PAD.halfX + 18 &&
+        z > DRIFT_PAD.cz - DRIFT_PAD.halfZ - 18 &&
+        z < DRIFT_PAD.cz + DRIFT_PAD.halfZ + 20
+      ) {
+        continue;
+      }
       const scale = 0.75 + random() * 0.7;
       matrix.makeScale(scale, scale, scale);
       matrix.setPosition(x, 1.7 * scale, z);
@@ -1385,11 +1400,11 @@ export function buildFlatCircuit(
   scene.add(walls, caps, plinth);
   triangles += 12 * wallIndex * 2;
 
-  // Le portique de départ-arrivée n'est plus bâti ici : les deux modèles
-  // fournis (starting_line et finish_line) le remplacent dans pitProps.ts.
+  // Le portique de départ-arrivée n'est plus bâti ici : le modèle fourni
+  // (finish_line) le remplace dans pitProps.ts.
 
   // L'aire de gymkhana, au centre du circuit, reliée à la ligne droite.
-  const driftPad = buildDriftPad(scene, options.anisotropy);
+  const driftPad = buildDriftPad(scene, world, options.anisotropy);
   triangles += driftPad.triangles;
 
   const scenery = buildScenery(scene, world, options.anisotropy, options.lowFx);

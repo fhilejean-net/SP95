@@ -10,25 +10,25 @@
  */
 
 export const DRIFT_PAD = {
-  cx: 210,
+  cx: 118,
   cz: -420,
-  halfX: 70,
-  halfZ: 55,
+  halfX: 64,
+  halfZ: 50,
 } as const;
 
 /**
- * Le raccordement : une allée de quatorze mètres qui part du bord intérieur de
- * la piste (x = 6,5, après le vibreur) et rejoint le bord ouest de la dalle.
+ * Le raccordement : une allée de vingt mètres qui part du bord intérieur de la
+ * piste (x = 6,5, après le vibreur) et rejoint le bord ouest de la dalle.
  * C'est là que le muret s'ouvre.
  */
 export const DRIFT_ACCESS = {
   fromX: 6.5,
   toX: DRIFT_PAD.cx - DRIFT_PAD.halfX,
-  z0: -428,
+  z0: -432,
   z1: -412,
 } as const;
 
-/** Rectangles de bitume de l'aire, en coordonnées monde. */
+/** Rectangle de bitume de l'aire, en coordonnées monde. */
 export interface DriftRect {
   x0: number;
   x1: number;
