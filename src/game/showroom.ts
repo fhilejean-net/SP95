@@ -26,12 +26,14 @@ export class Showroom {
   /** Voiture en cours de chargement, s'il y en a une. */
   private pending: CarId | null = null;
   private setup: Setup;
+  private readonly loadingCars = new Set<CarId>();
 
   constructor(
     setup: Setup,
     private car: CarDef,
     private readonly onPick: (id: CarId) => void,
     private readonly onDrive: (id: CarId) => void,
+    private readonly onClose: () => void = () => {},
   ) {
     this.setup = { ...setup };
     this.selection = car.id;
@@ -79,19 +81,30 @@ export class Showroom {
 
   close(): void {
     this.overlay.classList.add('hidden');
+    if (this.onClose) this.onClose();
   }
 
   /** La voiture demandée est chargée : la carte passe au vert. */
   setCar(car: CarDef): void {
     this.car = car;
     this.selection = car.id;
-    this.pending = null;
+    this.loadingCars.delete(car.id);
+    if (this.pending === car.id) this.pending = null;
+    if (this.isOpen) this.render();
+  }
+
+  /** Une chargement de modèle est en cours, même si l'on a quitté le showroom. */
+  markLoading(id: CarId): void {
+    this.pending = id;
+    this.loadingCars.add(id);
     if (this.isOpen) this.render();
   }
 
   /** Le chargement a échoué : la carte redevient cliquable. */
-  clearPending(): void {
-    this.pending = null;
+  clearPending(id?: CarId): void {
+    if (id) this.loadingCars.delete(id);
+    else this.loadingCars.clear();
+    if (!id || this.pending === id) this.pending = null;
     if (this.isOpen) this.render();
   }
 
@@ -104,8 +117,9 @@ export class Showroom {
 
   /** Charge la voiture mise en avant ; l'écran reste ouvert. */
   private pick(): void {
-    if (this.pending || this.selection === this.car.id) return;
+    if (this.loadingCars.has(this.selection) || this.selection === this.car.id) return;
     this.pending = this.selection;
+    this.loadingCars.add(this.selection);
     this.render();
     this.onPick(this.selection);
   }
@@ -121,11 +135,11 @@ export class Showroom {
         const classes = ['car-card'];
         if (shown) classes.push('shown');
         if (selected) classes.push('selected');
-        if (car.id === this.pending) classes.push('loading');
+        if (this.loadingCars.has(car.id)) classes.push('loading');
         card.className = classes.join(' ');
         card.innerHTML =
           `<strong>${car.label}</strong>` +
-          `<span>${car.id === this.pending ? 'Chargement…' : car.detail}</span>` +
+          `<span>${this.loadingCars.has(car.id) ? 'Chargement…' : car.detail}</span>` +
           `<em>${car.origin ?? 'SP95'}</em>`;
         return card;
       }),
@@ -147,10 +161,14 @@ export class Showroom {
       <p class="showroom-drive">${summary.drive} · ${summary.steering}</p>
     `;
     const loaded = car.id === this.car.id;
-    this.drive.disabled = this.pending !== null;
-    this.drive.textContent = loaded ? 'Conduire celle-ci' : `Conduire la ${car.label}`;
+    this.drive.disabled = this.loadingCars.has(this.selection);
+    this.drive.textContent = this.loadingCars.has(this.selection)
+      ? 'Chargement…'
+      : loaded
+        ? 'Conduire celle-ci'
+        : `Conduire la ${car.label}`;
     // Une voiture déjà au volant n'a rien à charger : le bouton s'efface.
-    this.pickButton.disabled = this.pending !== null || loaded;
+    this.pickButton.disabled = this.loadingCars.has(this.selection) || loaded;
     this.pickButton.textContent = loaded ? 'Voiture au volant' : 'Charger cette voiture';
   }
 }

@@ -1174,21 +1174,25 @@ async function boot(): Promise<void> {
     (id) => {
       void driveCar(id);
     },
+    () => {
+      if (paused && mode !== 'menu') pause.classList.remove('hidden');
+    },
   );
 
   /** Swaps the model, then the physics footprint that goes with it. */
   async function selectCar(id: CarId): Promise<void> {
     const def = CARS.find((entry) => entry.id === id);
     if (!def || (def.id === carDef.id && !ridingBike)) {
-      showroom.clearPending();
+      showroom.clearPending(id);
       return;
     }
+    showroom.markLoading(id);
     let next: CarVisual;
     try {
       next = await loadCarVisual(def, resolveSpec(setup, def.spec));
     } catch (error) {
       console.error(error);
-      showroom.clearPending();
+      showroom.clearPending(id);
       hud.flash('Modèle indisponible', { duration: 1600 });
       return;
     }
@@ -1217,6 +1221,10 @@ async function boot(): Promise<void> {
   /** L'écran de sélection : il montre la voiture, l'atelier la règle. */
   function openShowroom(): void {
     if (mode !== 'menu' && !paused) togglePause();
+    // Le showroom est au premier plan, pas dessiné à travers le menu pause.
+    // Garder la voiture en pause pendant le choix évite aussi qu'elle reparte
+    // sous le doigt lorsque le modèle sélectionné finit de charger.
+    if (paused) pause.classList.add('hidden');
     showroom.open(setup);
   }
 
@@ -1334,6 +1342,10 @@ async function boot(): Promise<void> {
   });
   document.getElementById('btn-pause-free')?.addEventListener('click', () => startMode('free', freeSpawn));
   document.getElementById('btn-pause-race')?.addEventListener('click', () => startMode('race'));
+  document.getElementById('touch-menu-btn')?.addEventListener('click', () => togglePause());
+  document.getElementById('touch-cars-btn')?.addEventListener('click', () => {
+    if (mode !== 'menu') openShowroom();
+  });
   document.getElementById('btn-pause-menu')?.addEventListener('click', () => {
     mode = 'menu';
     paused = false;
