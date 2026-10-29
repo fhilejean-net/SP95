@@ -300,6 +300,9 @@ export class Hud {
     this.tcsChip.classList.toggle('hidden', bike);
     this.absChip.classList.toggle('hidden', bike);
     this.wheelieChip.classList.toggle('hidden', !bike);
+    // Les trois modes de conduite sont des réglages de voiture : sur la moto,
+    // le bandeau disparaît avec les autres commandes de caisse.
+    document.getElementById('drive-modes')?.classList.toggle('hidden', bike);
     this.hint.textContent = bike
       ? 'Espace wheelie · S frein et marche arrière · C caméra · ZQSD conduire · Échap pause'
       : 'ZQSD conduire · Espace frein à main · T antipatinage · Souris caméra · Échap pause';

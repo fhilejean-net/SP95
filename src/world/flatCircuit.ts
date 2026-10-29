@@ -700,11 +700,13 @@ function buildScenery(
   // circuit et le toit passait au-dessus des sièges du premier rang.
   const steps = 10;
   const stepDepth = 2.1;
-  const front = -24;
+  // La tribune regarde la ligne droite depuis le côté *opposé* aux stands :
+  // à x = -24 elle occupait la voie des stands et traversait les garages.
+  const front = 24;
   const standZ = -300;
   for (let row = 0; row < steps; row++) {
     const height = 0.62 + row * 0.62;
-    box(stepDepth, height, 92, front - (row + 0.5) * stepDepth, height / 2, standZ, concreteMat);
+    box(stepDepth, height, 92, front + (row + 0.5) * stepDepth, height / 2, standZ, concreteMat);
   }
   // Assises : une par place, couleur par rangée.
   const seats = new THREE.InstancedMesh(new THREE.BoxGeometry(0.46, 0.34, 0.5), seatMat, steps * 46);
@@ -714,7 +716,7 @@ function buildScenery(
   for (let row = 0; row < steps; row++) {
     for (let column = 0; column < 46; column++) {
       matrix.makeTranslation(
-        front - (row + 1) * stepDepth + 0.55,
+        front + (row + 1) * stepDepth - 0.55,
         0.62 + row * 0.62 + 0.17,
         standZ - 45 + column * 2,
       );
@@ -732,16 +734,16 @@ function buildScenery(
     new THREE.PlaneGeometry(92, 2.2),
     new THREE.MeshBasicMaterial({ map: boardTexture('GRAND STAND', '#a3141c', '#f4f1e8') }),
   );
-  banner.position.set(front + 0.06, 2.15, standZ);
-  banner.rotation.y = Math.PI / 2;
+  banner.position.set(front - 0.06, 2.15, standZ);
+  banner.rotation.y = -Math.PI / 2;
   scene.add(banner);
   // Escaliers d'accès, de chaque côté de la tribune.
   for (const z of [standZ - 47, standZ + 47]) {
-    box(6, 0.5, 2.4, front - 3, 3.2, z, concreteMat);
+    box(6, 0.5, 2.4, front + 3, 3.2, z, concreteMat);
   }
   // Toit de tribune, posé au-dessus des gradins, et ses poteaux à l'arrière.
-  box(22, 0.5, 94, front - 5 * stepDepth, 9.6, standZ, metalMat);
-  for (const z of [standZ - 38, standZ, standZ + 38]) box(0.6, 9.6, 0.6, front - 19, 4.8, z, metalMat);
+  box(22, 0.5, 94, front + 5 * stepDepth, 9.6, standZ, metalMat);
+  for (const z of [standZ - 38, standZ, standZ + 38]) box(0.6, 9.6, 0.6, front + 19, 4.8, z, metalMat);
 
   // --- Tour de contrôle ----------------------------------------------------
   box(7, 15, 7, -52, 7.5, -470, concreteMat);

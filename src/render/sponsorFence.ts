@@ -104,7 +104,12 @@ function panelGeometry(start: number, side: -1 | 1, lateral: number): THREE.Buff
     const z = sample.z + normal.z * lateral * side;
     positions.push(x, BOTTOM, z, x, TOP, z);
     const u = facet / PANEL_FACETS;
-    uvs.push(u, 1, u, 0);
+    // Bas du panneau = bas de l'image (v = 0). L'ancien ordre donnait v = 1 en
+    // bas : les marques s'affichaient la tête en bas sur toute la palissade.
+    // Sur le côté droit de la piste, l'axe du tour part vers la gauche du
+    // spectateur : on retourne u pour que le texte se lise dans le bon sens.
+    const across = side === 1 ? 1 - u : u;
+    uvs.push(across, 0, across, 1);
   }
   // Le panneau regarde la piste : la normale doit aller vers l'axe, donc
   // contre la normale de droite du côté où il est posé.

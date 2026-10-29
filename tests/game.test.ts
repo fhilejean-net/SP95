@@ -427,6 +427,13 @@ test('les slicks de course collent plus que la monte de route', () => {
   assert.equal(describeSetup({ ...DEFAULT_SETUP, tires: 4 }, car.spec).grip, 'Slick de course');
 });
 
+test('le mode piste du HUD monte des slicks de course, pas des semi-slicks', () => {
+  const piste = PRESETS.find((preset) => preset.label === 'Piste');
+  assert.ok(piste, 'le preset Piste doit exister');
+  assert.equal(piste!.setup.tires, 4, 'le mode piste roule en slicks de course');
+  assert.equal(describeSetup(piste!.setup, CARS[0].spec).grip, 'Slick de course');
+});
+
 test('le réglage Chrono monte les slicks, et chaque voiture annonce sa transmission', () => {
   const chrono = PRESETS.find((preset) => preset.label === 'Chrono');
   assert.ok(chrono, 'le preset Chrono doit exister');

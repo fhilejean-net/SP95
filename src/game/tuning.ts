@@ -162,7 +162,10 @@ export const PRESETS: SetupPreset[] = [
       exhaust: 2,
       weight: 2,
       suspension: 2,
-      tires: 1,
+      // Le mode piste monte des slicks de course, pas des semi-slicks : c'est
+      // la gomme des tours chrono, et le joueur la demande explicitement au
+      // menu de conduite rapide.
+      tires: 4,
       steering: 0,
       brakes: 2,
       aero: 2,

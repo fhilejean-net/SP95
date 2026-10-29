@@ -92,7 +92,7 @@ import { Garage } from './game/garage.ts';
 import { Showroom } from './game/showroom.ts';
 import { Chrono, formatLap } from './game/chrono.ts';
 import { SectorTimer } from './game/sectors.ts';
-import { loadSetup, resolveSpec, saveSetup, type Setup } from './game/tuning.ts';
+import { PRESETS, loadSetup, resolveSpec, saveSetup, type Setup } from './game/tuning.ts';
 
 const FIXED = 1 / 120;
 
@@ -301,16 +301,12 @@ async function boot(): Promise<void> {
     sectors = new SectorTimer(TRACK.length, 'sp95.sectors.sp95');
   }
 
-  // L'outillage des boxes se charge après le circuit : la voie et les garages
-  // existent déjà, les props viennent s'y poser.
-  if (FLAT_MAP) {
-    await setLoading(0.38, 'Chargement de l’atelier…');
-    const props = await buildPitProps(scene, renderer.capabilities.getMaxAnisotropy());
-    console.log(
-      `Stands SP95 : ${props.models} modèles, ${props.meshes} maillages, ` +
-        `${props.triangles} triangles en ${Math.round(props.loadMs)} ms`,
-    );
-  }
+  // L'outillage des boxes part en tâche de fond : 3,6 Mo de modèles n'ont pas
+  // à bloquer l'écran de chargement. Il est attendu juste avant « Prêt », le
+  // temps que le terrain et la voiture se montent en parallèle.
+  const propsPromise = FLAT_MAP
+    ? buildPitProps(scene, world, renderer.capabilities.getMaxAnisotropy())
+    : null;
 
   await setLoading(TRACK_MAP ? 0.42 : 0.3, 'Génération du terrain…');
   // Le terrain déborde du monde jouable et s'y redresse en barrière (voir
@@ -336,7 +332,7 @@ async function boot(): Promise<void> {
   let clearanceProbes = 0;
   let worstAt = { x: 0, z: 0 };
   let trackWorstAt = { x: 0, z: 0 };
-  if (circuit) {
+  if (circuit && SUZUKA_MAP) {
     const halfX = CIRCUIT.plateHalfX * CIRCUIT.scale;
     const halfZ = CIRCUIT.plateHalfZ * CIRCUIT.scale;
     for (let z = CIRCUIT.cz - halfZ; z <= CIRCUIT.cz + halfZ; z += 12) {
@@ -368,6 +364,13 @@ async function boot(): Promise<void> {
         `(en ${worstAt.x},${worstAt.z}) · sous la piste ${trackClearance.toFixed(2)} m ` +
         `(en ${trackWorstAt.x},${trackWorstAt.z}) sur ${clearanceProbes} sondes`,
     );
+  } else if (FLAT_MAP) {
+    // La piste dessinée par le jeu n'a pas de dalle importée : le terrain plat
+    // est la seule couche, il n'y a rien à comparer. Surtout, la boucle de
+    // contrôle ci-dessus balayait la dalle de la *ville* (des milliers de
+    // sondes toutes vides) et coûtait 2,5 s au démarrage.
+    groundClearance = 0;
+    trackClearance = 0;
   }
 
   // Ce que la carte de la ville a en plus : routes, ville, mobilier, arbres et
@@ -998,7 +1001,48 @@ async function boot(): Promise<void> {
     setup = { ...next };
     saveSetup(setup);
     rebuildVehicle();
+    syncDriveModes();
   }
+
+  /**
+   * Les trois façons de rouler, à portée de clic depuis le HUD : route, drift,
+   * piste. Ce sont les presets de l'atelier — le mode piste monte les slicks de
+   * course — appliqués à la voiture en main, sans passer par la pause.
+   */
+  const DRIVE_MODES = [
+    { id: 'route', label: 'Route', preset: PRESETS.find((entry) => entry.label === 'Série')! },
+    { id: 'drift', label: 'Drift', preset: PRESETS.find((entry) => entry.label === 'Drift')! },
+    { id: 'piste', label: 'Piste', preset: PRESETS.find((entry) => entry.label === 'Piste')! },
+  ];
+
+  function sameSetup(a: Setup, b: Setup): boolean {
+    return (Object.keys(b) as (keyof Setup)[]).every((key) => a[key] === b[key]);
+  }
+
+  /** Le bouton allumé est celui dont le réglage est exactement monté. */
+  function syncDriveModes(): void {
+    const bar = document.getElementById('drive-modes');
+    if (!bar) return;
+    for (const button of bar.querySelectorAll<HTMLButtonElement>('button[data-drive-mode]')) {
+      const entry = DRIVE_MODES.find((mode) => mode.id === button.dataset.driveMode);
+      button.classList.toggle('active', Boolean(entry && sameSetup(setup, entry.preset.setup)));
+    }
+  }
+
+  function applyDriveMode(id: string): void {
+    const entry = DRIVE_MODES.find((mode) => mode.id === id);
+    if (!entry) return;
+    // Le bouton allumé et la voiture qui se remonte suffisent : un message
+    // plein écran par-dessus la piste serait plus gênant qu'utile.
+    applySetup(entry.preset.setup);
+  }
+
+  document.getElementById('drive-modes')?.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest('button[data-drive-mode]');
+    if (!button) return;
+    (button as HTMLButtonElement).blur();
+    applyDriveMode(button.getAttribute('data-drive-mode') ?? '');
+  });
 
   function configureAudio(): void {
     if (ridingBike) {
@@ -1282,6 +1326,7 @@ async function boot(): Promise<void> {
   });
 
   refreshMenuBest();
+  syncDriveModes();
   setCarPose(startPose.x, startPose.z, startPose.heading);
   if (TRACK_MAP) applyTrackMenu();
   await setLoading(1, 'Prêt');
@@ -1289,6 +1334,21 @@ async function boot(): Promise<void> {
   loading.classList.add('done');
   window.setTimeout(() => loading.classList.add('hidden'), 500);
   menu.classList.remove('hidden');
+
+  // L'atelier finit d'arriver *après* le menu : la partie ne doit pas attendre
+  // 3,6 Mo de modèles. Les boxes se meublent une seconde plus tard, collisions
+  // comprises, et personne ne roule encore dedans à ce moment-là.
+  if (propsPromise) {
+    void propsPromise
+      .then((props) => {
+        console.log(
+          `Stands SP95 : ${props.models} modèles, ${props.meshes} maillages, ` +
+            `${props.triangles} triangles, ${props.colliders} collisions ` +
+            `en ${Math.round(props.loadMs)} ms`,
+        );
+      })
+      .catch((error) => console.warn('Atelier des stands indisponible', error));
+  }
 
   function simulate(dt: number, controls: VehicleInput): void {
     const locked = race ? race.locked : false;
@@ -1610,6 +1670,81 @@ async function boot(): Promise<void> {
     bikeVisual.setBrake(visual.brake > 0.1);
   }
 
+  /**
+   * La caméra du replay. Elle vivait après le `return` du chemin de replay :
+   * elle ne tournait donc jamais, et la caméra restait figée sur la dernière
+   * image de conduite. Elle est appelée directement depuis ce chemin.
+   */
+  function updateReplayCamera(dt: number): void {
+    const turn = (input.isDown('KeyE') ? 1 : 0) - (input.isDown('KeyQ') ? 1 : 0);
+    replayCamYaw += turn * dt * 1.5;
+    const ground = groundAt(carPosition.x, carPosition.z);
+    const lookY = carPosition.y + 0.7;
+    // La souris tourne la caméra dans *toutes* les vues du replay, pas
+    // seulement en poursuite : un angle figé n'est pas un replay.
+    const yaw = replayCamYaw + (input.orbitYaw - replayCamOrbit);
+    const pitch = Math.max(-0.2, Math.min(1.2, 0.24 + input.orbitPitch));
+    if (replayView === 'tv') {
+      const angle = yaw + Math.PI * 0.62;
+      const distance = 17;
+      camera.position.set(
+        carPosition.x + Math.sin(angle) * distance,
+        Math.max(ground + 5 + pitch * 10, carPosition.y + 7),
+        carPosition.z + Math.cos(angle) * distance,
+      );
+      camera.lookAt(carPosition.x, lookY, carPosition.z);
+    } else if (replayView === 'onboard') {
+      // Embarquée : la souris tourne la tête du pilote sans sortir du cockpit.
+      const look = yaw - replayCamYaw;
+      const cos = Math.cos(look);
+      const sin = Math.sin(look);
+      const dx = carForward.x * cos + carForward.z * sin;
+      const dz = -carForward.x * sin + carForward.z * cos;
+      camera.position.set(
+        carPosition.x - carForward.x * 1.35,
+        carPosition.y + 1.18,
+        carPosition.z - carForward.z * 1.35,
+      );
+      camera.lookAt(
+        camera.position.x - dx * 30,
+        camera.position.y - 0.55 + pitch * 6,
+        camera.position.z - dz * 30,
+      );
+    } else if (replayView === 'trackside') {
+      // Posée au bord de la piste : la voiture passe. La souris fait pivoter
+      // le regard autour du point de pose, sinon cette vue serait la seule que
+      // le joueur ne peut pas orienter.
+      if (Math.hypot(carPosition.x - replayTrackside.x, carPosition.z - replayTrackside.z) > 45) {
+        placeReplayTrackside();
+      }
+      camera.position.copy(replayTrackside);
+      const base = Math.atan2(
+        carPosition.x - replayTrackside.x,
+        carPosition.z - replayTrackside.z,
+      );
+      const angle = base + (input.orbitYaw - replayCamOrbit);
+      const reach = 30;
+      camera.lookAt(
+        replayTrackside.x + Math.sin(angle) * reach,
+        replayTrackside.y + (pitch - 0.24) * reach,
+        replayTrackside.z + Math.cos(angle) * reach,
+      );
+    } else {
+      // Poursuite libre : la souris choisit l'angle, la molette la distance.
+      const distance = Math.max(2.2, 6.2 + input.zoom * 1.6);
+      const horizontal = Math.cos(pitch) * distance;
+      camera.position.set(
+        carPosition.x + Math.sin(yaw) * horizontal,
+        Math.max(ground + 0.5, carPosition.y + Math.sin(pitch) * distance + 0.55),
+        carPosition.z + Math.cos(yaw) * horizontal,
+      );
+      camera.lookAt(carPosition.x, lookY, carPosition.z);
+    }
+    const replayFov = replayView === 'onboard' ? 64 : replayView === 'tv' ? 45 : 58;
+    camera.fov += (replayFov - camera.fov) * Math.min(1, dt * 6);
+    camera.updateProjectionMatrix();
+  }
+
   function updateVisuals(dt: number): void {
     if (replay) {
       const pose = samplePoses(replay.poses, replay.elapsed);
@@ -1625,6 +1760,9 @@ async function boot(): Promise<void> {
           else applyCarReplay(pose.visual);
         }
       }
+      // La caméra doit suivre les poses rejouées : sans cet appel, le `return`
+      // laissait l'image figée sur la dernière frame de conduite.
+      updateReplayCamera(dt);
       return;
     }
     const telemetry = vehicle.telemetryState;
@@ -1811,57 +1949,7 @@ async function boot(): Promise<void> {
       camera.fov = 55;
       camera.updateProjectionMatrix();
     } else if (replay) {
-      const turn = (input.isDown('KeyE') ? 1 : 0) - (input.isDown('KeyQ') ? 1 : 0);
-      replayCamYaw += turn * dt * 1.5;
-      const ground = groundAt(carPosition.x, carPosition.z);
-      const lookY = carPosition.y + 0.7;
-      if (replayView === 'tv') {
-        // Caméra TV : haute, de trois quarts, elle prend la voiture en enfilade
-        // sans coller à elle — l'angle de diffusion d'un tour de circuit.
-        const angle = replayCamYaw + Math.PI * 0.62;
-        const distance = 17;
-        camera.position.set(
-          carPosition.x + Math.sin(angle) * distance,
-          Math.max(ground + 8, carPosition.y + 7),
-          carPosition.z + Math.cos(angle) * distance,
-        );
-        camera.lookAt(carPosition.x, lookY, carPosition.z);
-      } else if (replayView === 'onboard') {
-        // Embarquée : au-dessus du capot, dans l'axe de la voiture.
-        camera.position.set(
-          carPosition.x - carForward.x * 1.35,
-          carPosition.y + 1.18,
-          carPosition.z - carForward.z * 1.35,
-        );
-        camera.lookAt(
-          camera.position.x - carForward.x * 30,
-          camera.position.y - 0.55,
-          camera.position.z - carForward.z * 30,
-        );
-      } else if (replayView === 'trackside') {
-        // Posée au bord de la piste : elle ne bouge plus, la voiture passe.
-        if (Math.hypot(carPosition.x - replayTrackside.x, carPosition.z - replayTrackside.z) > 45) {
-          placeReplayTrackside();
-        }
-        camera.position.copy(replayTrackside);
-        camera.lookAt(carPosition.x, lookY, carPosition.z);
-      } else {
-        // Poursuite libre : la souris choisit l'angle, la molette la distance,
-        // sans le retard de la caméra de jeu ni le rappel automatique.
-        const yaw = replayCamYaw + (input.orbitYaw - replayCamOrbit);
-        const pitch = Math.max(-0.05, 0.24 + input.orbitPitch);
-        const distance = Math.max(2.2, 6.2 + input.zoom * 1.6);
-        const horizontal = Math.cos(pitch) * distance;
-        camera.position.set(
-          carPosition.x + Math.sin(yaw) * horizontal,
-          Math.max(ground + 0.5, carPosition.y + Math.sin(pitch) * distance + 0.55),
-          carPosition.z + Math.cos(yaw) * horizontal,
-        );
-        camera.lookAt(carPosition.x, lookY, carPosition.z);
-      }
-      const replayFov = replayView === 'onboard' ? 64 : replayView === 'tv' ? 45 : 58;
-      camera.fov += (replayFov - camera.fov) * Math.min(1, dt * 6);
-      camera.updateProjectionMatrix();
+      updateReplayCamera(dt);
     } else {
       chase.update(
         dt,
@@ -2180,6 +2268,20 @@ async function boot(): Promise<void> {
       const p = vehicle.position;
       return { x: p.x, y: p.y, z: p.z };
     },
+    get camera() {
+      return {
+        x: camera.position.x,
+        y: camera.position.y,
+        z: camera.position.z,
+        fov: camera.fov,
+      };
+    },
+    get orbit() {
+      return { yaw: input.orbitYaw, pitch: input.orbitPitch, active: input.orbitActive };
+    },
+    get replayView() {
+      return replayView;
+    },
     get debug() {
       return {
         fps,
@@ -2411,6 +2513,9 @@ declare global {
       readonly racePhase: string | null;
       readonly raceLap: number;
       readonly position: { x: number; y: number; z: number };
+      readonly camera: { x: number; y: number; z: number; fov: number };
+      readonly orbit: { yaw: number; pitch: number; active: boolean };
+      readonly replayView: string;
       readonly debug: {
         fps: number;
         drawCalls: number;
