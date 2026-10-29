@@ -30,7 +30,12 @@ export type CarId =
   | 'yaris'
   | 'rs7'
   | 'apollo'
-  | 'f1';
+  | 'f1'
+  | 'supra'
+  | 'rx7veilside'
+  | 'r34'
+  | 'crz'
+  | 'kart';
 
 export const CARS: CarDef[] = [
   {
@@ -426,8 +431,10 @@ export const CARS: CarDef[] = [
     // sans perte visible à l'écran. Le décodeur meshopt est branché dans
     // carModel.ts, sinon la géométrie n'arrive pas.
     model: 'models/vehicles/f1_mclaren_mcl35m_opt.glb',
-    // Le nez du modèle pointe vers -Z, le sens de marche du jeu.
-    yaw: 0,
+    // Le nez du modèle pointe vers +Z : sans la demi-tour, la voiture roulait
+    // en marche arrière et les roues avant du jeu tombaient sur les arrières
+    // du modèle (elles braquaient donc du mauvais côté).
+    yaw: Math.PI,
     spec: {
       ...STOCK_SPEC,
       name: 'MCL35M',
@@ -466,6 +473,213 @@ export const CARS: CarDef[] = [
       bodyHalf: { x: 1.02, y: 0.42, z: 2.84 },
       driveFront: 0,
       tractionControl: 0.55,
+    },
+  },
+  {
+    id: 'supra',
+    label: 'Toyota Supra MK IV',
+    detail: '2JZ-GTE 3,0 L biturbo · 450 Nm · propulsion',
+    origin: 'Fast & Furious · 1994',
+    // Version optimisée (meshopt + WebP) : 15,1 Mo → 2,8 Mo.
+    model: 'models/vehicles/supra_opt.glb',
+    // Le pack Sketchfab est authoré nez vers +Z, comme la F1.
+    yaw: Math.PI,
+    spec: {
+      ...STOCK_SPEC,
+      name: 'Supra MK IV',
+      mass: 1570,
+      peakTorque: 450,
+      peakTorqueRpm: 3600,
+      redlineRpm: 7200,
+      upshiftRpm: 6900,
+      finalDrive: 3.13,
+      dragArea: 0.66,
+      downforceArea: 0.5,
+      muFront: 1.3,
+      muRear: 1.24,
+      peakSlipAngle: 0.15,
+      springK: 34000,
+      springC: 3600,
+      arbFront: 15000,
+      arbRear: 10000,
+      rideHeight: 0.32,
+      wheelRadius: 0.33,
+      wheelTravel: 0.12,
+      brakeTorque: 1450,
+      maxSteer: 0.7,
+      steerRate: 3,
+      wheelbase: 2.55,
+      track: 1.52,
+      bodyHalf: { x: 0.95, y: 0.44, z: 2.25 },
+      driveFront: 0,
+      tractionControl: 0.5,
+    },
+  },
+  {
+    id: 'rx7veilside',
+    label: 'Mazda RX-7 Veilside',
+    detail: '13B-REW birotor biturbo · 360 Nm · propulsion',
+    origin: 'Tokyo Drift · 1997',
+    // Version optimisée : 13,1 Mo → 2,4 Mo.
+    model: 'models/vehicles/rx7_veilside_opt.glb',
+    yaw: Math.PI,
+    spec: {
+      ...STOCK_SPEC,
+      name: 'RX-7 Veilside',
+      mass: 1280,
+      peakTorque: 360,
+      peakTorqueRpm: 4500,
+      redlineRpm: 8000,
+      upshiftRpm: 7600,
+      finalDrive: 4.1,
+      dragArea: 0.63,
+      downforceArea: 0.75,
+      muFront: 1.27,
+      muRear: 1.22,
+      peakSlipAngle: 0.16,
+      springK: 30000,
+      springC: 3300,
+      arbFront: 15000,
+      arbRear: 10000,
+      rideHeight: 0.29,
+      wheelRadius: 0.32,
+      wheelTravel: 0.1,
+      brakeTorque: 1300,
+      maxSteer: 0.75,
+      steerRate: 3.1,
+      wheelbase: 2.43,
+      track: 1.5,
+      bodyHalf: { x: 0.94, y: 0.4, z: 2.2 },
+      driveFront: 0,
+      tractionControl: 0.35,
+    },
+  },
+  {
+    id: 'r34',
+    label: 'Nissan Skyline GT-R R34',
+    detail: 'RB26DETT 2,6 L biturbo · 460 Nm · ATTESA',
+    origin: '2 Fast 2 Furious · 1999',
+    // Version optimisée : 15,9 Mo → 4,5 Mo.
+    model: 'models/vehicles/skyline_r34_opt.glb',
+    yaw: Math.PI,
+    spec: {
+      ...STOCK_SPEC,
+      name: 'Skyline R34',
+      mass: 1560,
+      peakTorque: 460,
+      peakTorqueRpm: 4200,
+      redlineRpm: 7600,
+      upshiftRpm: 7200,
+      finalDrive: 3.55,
+      dragArea: 0.7,
+      downforceArea: 0.6,
+      muFront: 1.32,
+      muRear: 1.26,
+      peakSlipAngle: 0.15,
+      springK: 38000,
+      springC: 4000,
+      arbFront: 18000,
+      arbRear: 12000,
+      rideHeight: 0.32,
+      wheelRadius: 0.33,
+      wheelTravel: 0.12,
+      brakeTorque: 1550,
+      maxSteer: 0.68,
+      steerRate: 2.9,
+      wheelbase: 2.665,
+      track: 1.54,
+      bodyHalf: { x: 0.96, y: 0.44, z: 2.3 },
+      // L'ATTESA envoie une part du couple devant : la voiture motrice sans
+      // être une traction, ce qui la rend très stable en sortie de virage.
+      driveFront: 0.25,
+      tractionControl: 0.7,
+    },
+  },
+  {
+    id: 'crz',
+    label: 'Honda CR-Z',
+    detail: '1,5 L hybride · 174 Nm · traction',
+    origin: '2012',
+    // Version optimisée : 1,2 Mo → 234 Ko.
+    model: 'models/vehicles/crz_opt.glb',
+    // Ce modèle-ci est authoré nez vers -Z : rien à retourner.
+    yaw: 0,
+    spec: {
+      ...STOCK_SPEC,
+      name: 'CR-Z',
+      mass: 1160,
+      peakTorque: 174,
+      peakTorqueRpm: 1500,
+      redlineRpm: 6600,
+      upshiftRpm: 6300,
+      finalDrive: 4.4,
+      dragArea: 0.68,
+      downforceArea: 0.15,
+      muFront: 1.2,
+      muRear: 1.1,
+      peakSlipAngle: 0.16,
+      springK: 24000,
+      springC: 2600,
+      arbFront: 9000,
+      arbRear: 6000,
+      rideHeight: 0.33,
+      wheelRadius: 0.31,
+      wheelTravel: 0.14,
+      brakeTorque: 1000,
+      maxSteer: 0.78,
+      steerRate: 3.2,
+      wheelbase: 2.58,
+      track: 1.5,
+      bodyHalf: { x: 0.87, y: 0.42, z: 2.04 },
+      driveFront: 0.95,
+      tractionControl: 0.55,
+    },
+  },
+  // La Hoonicorn de Ken Block n'est pas au registre : son GLB est riggé
+  // (peau liée à un squelette). La géométrie est en pose de repos, donc les
+  // quatre roues se confondent avec la carrosserie et le modèle mis à
+  // l'échelle devient une boîte. Elle reviendra avec un export non riggé.
+  {
+    id: 'kart',
+    label: 'Kart « Piss Missile »',
+    detail: 'Monocylindre débridé · 220 kg · le troll du paddock',
+    origin: 'Kart de location, moteur changé',
+    // Version optimisée : 9,5 Mo → 830 Ko.
+    model: 'models/vehicles/go_kart_opt.glb',
+    yaw: Math.PI,
+    spec: {
+      ...STOCK_SPEC,
+      name: 'Piss Missile',
+      // Le troll assumé : moins lourd qu'une moto, un couple de supercar et
+      // des pneus de kart collés au sol. C'est fait pour aller trop vite et
+      // tourner sans ralentir.
+      mass: 220,
+      peakTorque: 900,
+      peakTorqueRpm: 8000,
+      redlineRpm: 13500,
+      upshiftRpm: 12800,
+      // Boîte très courte : le kart arrache, mais reste sous les 200 km/h.
+      finalDrive: 7.2,
+      dragArea: 0.95,
+      downforceArea: 3.2,
+      muFront: 2.1,
+      muRear: 2.15,
+      peakSlipAngle: 0.17,
+      springK: 62000,
+      springC: 6200,
+      arbFront: 30000,
+      arbRear: 22000,
+      rideHeight: 0.14,
+      wheelRadius: 0.22,
+      wheelTravel: 0.06,
+      brakeTorque: 2600,
+      maxSteer: 1.15,
+      steerRate: 4.4,
+      wheelbase: 1.65,
+      track: 1.35,
+      bodyHalf: { x: 0.75, y: 0.3, z: 1.15 },
+      driveFront: 0,
+      tractionControl: 0.85,
     },
   },
   // Le Mazda 787B n'est pas au registre : son GLB est un seul maillage

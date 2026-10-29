@@ -576,7 +576,9 @@ test('every car in the registry loads its own model, and ids stay unique', () =>
   for (const car of CARS) {
     assert.ok(car.model.endsWith('.glb'), `${car.id} : modèle manquant`);
     assert.ok(car.label.length > 2 && car.detail.length > 2, `${car.id} : libellé trop court`);
-    assert.ok(car.spec.wheelbase > 1.8 && car.spec.mass > 600, `${car.id} : specs invraisemblables`);
+    // Un kart est un vrai véhicule : 1,65 m d'empattement et 220 kg. Les bornes
+    // acceptent ce cas sans laisser passer une spec vide ou négative.
+    assert.ok(car.spec.wheelbase > 1.2 && car.spec.mass > 150, `${car.id} : specs invraisemblables`);
   }
   assert.ok(CARS.length >= 10, `${CARS.length} voitures au registre`);
   // Les modèles arrivent d'ateliers différents : chaque voiture doit dire dans

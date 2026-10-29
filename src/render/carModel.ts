@@ -174,6 +174,290 @@ function splitWheelMesh(
   return parts;
 }
 
+interface CornerSplit {
+  hubs: THREE.Vector3[];
+  radius: number;
+  pieces: {
+    geometry: THREE.BufferGeometry;
+    material: THREE.Material | THREE.Material[];
+    corner: number | null;
+  }[];
+}
+
+/**
+ * Découpe les roues d'un modèle qui les a fusionnées dans la carrosserie.
+ *
+ * Certains packs (la CR-Z, la Hoonicorn, le kart) livrent un maillage par
+ * matière : chaque maillage traverse la voiture et contient les quatre pneus
+ * avec le reste. Aucun nom de nœud ne les trahit, et leur boîte englobante fait
+ * la taille du véhicule. On mesure donc les quatre coins sur les sommets eux-
+ * mêmes — les roues sont le point le plus bas et le plus extérieur —, puis on
+ * répartit les **triangles** dans un cylindre autour de chaque moyeu. Le reste
+ * demeure la carrosserie.
+ *
+ * Renvoie `null` si les quatre coins ne ressemblent pas à des roues : mieux vaut
+ * la voiture de secours qu'un découpage au hasard.
+ */
+function splitWheelsByCorner(
+  meshes: THREE.Mesh[],
+  geometries: Map<THREE.Mesh, THREE.BufferGeometry>,
+  body: THREE.Box3,
+): CornerSplit | null {
+  const size = body.getSize(new THREE.Vector3());
+  const centre = body.getCenter(new THREE.Vector3());
+  const length = Math.max(size.x, size.z);
+  if (!(length > 0)) return null;
+
+  // Un échantillon de sommets suffit pour trouver les quatre coins : les roues
+  // sont basses, extérieures en x et en z, et symétriques.
+  const boxes = [0, 1, 2, 3].map(() => new THREE.Box3());
+  const counts = [0, 0, 0, 0];
+  for (const geometry of geometries.values()) {
+    const position = geometry.attributes.position as THREE.BufferAttribute | undefined;
+    if (!position) continue;
+    const step = Math.max(1, Math.floor(position.count / 6000));
+    for (let i = 0; i < position.count; i += step) {
+      const x = position.getX(i);
+      const y = position.getY(i);
+      const z = position.getZ(i);
+      if (y > centre.y) continue;
+      const sideX = x >= centre.x ? 1 : 0;
+      const sideZ = z >= centre.z ? 1 : 0;
+      if (Math.abs(x - centre.x) < size.x * 0.3) continue;
+      if (Math.abs(z - centre.z) < size.z * 0.22) continue;
+      const corner = sideX + sideZ * 2;
+      boxes[corner].expandByPoint(new THREE.Vector3(x, y, z));
+      counts[corner] += 1;
+    }
+  }
+  const hubs = boxes.map((box) => box.getCenter(new THREE.Vector3()));
+  const radii = boxes.map((box) => (box.max.y - box.min.y) / 2);
+  const radius = radii.reduce((sum, value) => sum + value, 0) / 4;
+  if (counts.some((count) => count < 20)) return null;
+  if (!(radius > length * 0.035) || !(radius < length * 0.22)) return null;
+  // Une roue est ronde : la hauteur et la longueur de la boîte se ressemblent.
+  const round = boxes.every((box) => {
+    const height = box.max.y - box.min.y;
+    const depth = box.max.z - box.min.z;
+    return Math.abs(height - depth) < Math.max(height, depth) * 0.35;
+  });
+  if (!round) return null;
+
+  const halfWidth = radius * 0.7;
+  const pieces: CornerSplit['pieces'] = [];
+  for (const mesh of meshes) {
+    const source = geometries.get(mesh)!;
+    const position = source.attributes.position as THREE.BufferAttribute;
+    const normal = source.attributes.normal as THREE.BufferAttribute | undefined;
+    const uv = source.attributes.uv as THREE.BufferAttribute | undefined;
+    const index = source.index;
+    const count = index ? index.count : position.count;
+    const buckets: number[][] = [[], [], [], [], []];
+    for (let i = 0; i < count; i += 3) {
+      const a = index ? index.getX(i) : i;
+      const b = index ? index.getX(i + 1) : i + 1;
+      const c = index ? index.getX(i + 2) : i + 2;
+      const x = (position.getX(a) + position.getX(b) + position.getX(c)) / 3;
+      const y = (position.getY(a) + position.getY(b) + position.getY(c)) / 3;
+      const z = (position.getZ(a) + position.getZ(b) + position.getZ(c)) / 3;
+      let target = 4;
+      for (let corner = 0; corner < 4; corner++) {
+        const hub = hubs[corner];
+        if (Math.abs(x - hub.x) > halfWidth) continue;
+        if (Math.hypot(y - hub.y, z - hub.z) > radius * 1.08) continue;
+        target = corner;
+        break;
+      }
+      buckets[target].push(a, b, c);
+    }
+    for (let bucket = 0; bucket < buckets.length; bucket++) {
+      const group = buckets[bucket];
+      if (group.length === 0) continue;
+      const part = new THREE.BufferGeometry();
+      const positions = new Float32Array(group.length * 3);
+      const normals = normal ? new Float32Array(group.length * 3) : null;
+      const uvs = uv ? new Float32Array(group.length * 2) : null;
+      group.forEach((vertex, k) => {
+        positions[k * 3] = position.getX(vertex);
+        positions[k * 3 + 1] = position.getY(vertex);
+        positions[k * 3 + 2] = position.getZ(vertex);
+        if (normal && normals) {
+          normals[k * 3] = normal.getX(vertex);
+          normals[k * 3 + 1] = normal.getY(vertex);
+          normals[k * 3 + 2] = normal.getZ(vertex);
+        }
+        if (uv && uvs) {
+          uvs[k * 2] = uv.getX(vertex);
+          uvs[k * 2 + 1] = uv.getY(vertex);
+        }
+      });
+      part.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      if (normals) part.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+      if (uvs) part.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      part.computeBoundingBox();
+      pieces.push({ geometry: part, material: mesh.material, corner: bucket < 4 ? bucket : null });
+    }
+  }
+  if (![0, 1, 2, 3].every((corner) => pieces.some((piece) => piece.corner === corner))) return null;
+  return { hubs, radius, pieces };
+}
+
+/**
+ * Repli pour les modèles dont les roues ne peuvent pas être extraites.
+ *
+ * La Hoonicorn est riggée (peau liée à un squelette) : ses maillages sont en
+ * pose de repos et traversent toute la voiture. Le kart, lui, sort d'un export
+ * normalisé dans une boîte de 2×2×2. Dans les deux cas il n'y a aucun moyeu
+ * mesurable. On garde la carrosserie du modèle — mise à l'échelle de la fiche,
+ * posée sur le sol — et on perce les quatre passages de roue pour y monter des
+ * roues procédurales : elles tournent, braquent et ont le bon rayon physique.
+ */
+function buildFallbackCar(
+  spec: VehicleSpec,
+  meshes: THREE.Mesh[],
+  geometries: Map<THREE.Mesh, THREE.BufferGeometry>,
+  body: THREE.Box3,
+): CarVisual {
+  const size = body.getSize(new THREE.Vector3());
+  const centre = body.getCenter(new THREE.Vector3());
+  const length = Math.max(size.z, size.x * 0.9, 1e-4);
+  const scale = (spec.bodyHalf.z * 2) / length;
+  const restLength = spec.rideHeight + (spec.mass * 9.81) / (4 * spec.springK);
+  const hubY = 0.12 - restLength;
+  const radius = spec.wheelRadius;
+  const halfTrack = spec.track / 2;
+  const halfBase = spec.wheelbase / 2;
+  const hubs = [
+    new THREE.Vector3(-halfTrack, hubY, -halfBase),
+    new THREE.Vector3(halfTrack, hubY, -halfBase),
+    new THREE.Vector3(-halfTrack, hubY, halfBase),
+    new THREE.Vector3(halfTrack, hubY, halfBase),
+  ];
+  const width = Math.max(0.16, radius * 0.55);
+
+  // Le point le plus bas du modèle doit effleurer le sol sous les roues.
+  const scaledMinY = body.min.y * scale;
+  const offset = new THREE.Vector3(
+    -centre.x * scale,
+    hubY - radius + 0.03 - scaledMinY,
+    -centre.z * scale,
+  );
+
+  const group = new THREE.Group();
+  group.name = 'car';
+  let paintMaterial: THREE.MeshStandardMaterial | null = null;
+
+  for (const mesh of meshes) {
+    const source = geometries.get(mesh)!;
+    const position = source.attributes.position as THREE.BufferAttribute;
+    const normal = source.attributes.normal as THREE.BufferAttribute | undefined;
+    const uv = source.attributes.uv as THREE.BufferAttribute | undefined;
+    const index = source.index;
+    const count = index ? index.count : position.count;
+    const kept: number[] = [];
+    for (let i = 0; i < count; i += 3) {
+      const a = index ? index.getX(i) : i;
+      const b = index ? index.getX(i + 1) : i + 1;
+      const c = index ? index.getX(i + 2) : i + 2;
+      const x = position.getX(a) * scale + offset.x;
+      const y = position.getY(a) * scale + offset.y;
+      const z = position.getZ(a) * scale + offset.z;
+      let inside = false;
+      for (const hub of hubs) {
+        if (Math.abs(x - hub.x) > width * 0.9) continue;
+        if (Math.hypot(y - hub.y, z - hub.z) < radius * 1.12) inside = true;
+        if (inside) break;
+      }
+      if (!inside) kept.push(a, b, c);
+    }
+    if (kept.length === 0) continue;
+    const part = new THREE.BufferGeometry();
+    const positions = new Float32Array(kept.length * 3);
+    const normals = normal ? new Float32Array(kept.length * 3) : null;
+    const uvs = uv ? new Float32Array(kept.length * 2) : null;
+    kept.forEach((vertex, k) => {
+      positions[k * 3] = position.getX(vertex) * scale + offset.x;
+      positions[k * 3 + 1] = position.getY(vertex) * scale + offset.y;
+      positions[k * 3 + 2] = position.getZ(vertex) * scale + offset.z;
+      if (normal && normals) {
+        normals[k * 3] = normal.getX(vertex);
+        normals[k * 3 + 1] = normal.getY(vertex);
+        normals[k * 3 + 2] = normal.getZ(vertex);
+      }
+      if (uv && uvs) {
+        uvs[k * 2] = uv.getX(vertex);
+        uvs[k * 2 + 1] = uv.getY(vertex);
+      }
+    });
+    part.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    if (normals) part.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    if (uvs) part.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    part.computeVertexNormals();
+    const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const materials = sourceMaterials.map((material) => {
+      if (material instanceof THREE.MeshStandardMaterial) material.envMapIntensity = ENV_INTENSITY;
+      return material;
+    });
+    const glossed = materials.map((entry) => glossPaint(entry));
+    const bodyMesh = new THREE.Mesh(part, Array.isArray(mesh.material) ? glossed : glossed[0]);
+    bodyMesh.castShadow = true;
+    bodyMesh.receiveShadow = true;
+    group.add(bodyMesh);
+    const candidate = materials.find((entry) => /body|paint|colou?r/i.test(entry.name ?? ''));
+    if (!paintMaterial && candidate instanceof THREE.MeshStandardMaterial) paintMaterial = candidate;
+  }
+
+  const tyre = new THREE.MeshStandardMaterial({ color: 0x141517, roughness: 0.9, metalness: 0.02 });
+  const rim = new THREE.MeshStandardMaterial({ color: 0xb9bdc2, roughness: 0.32, metalness: 0.9 });
+  const wheelGroups: THREE.Group[] = [];
+  for (const hub of hubs) {
+    const wheel = new THREE.Group();
+    wheel.rotation.order = 'YXZ';
+    wheel.position.copy(hub);
+    const tyreMesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, width, 20), tyre);
+    tyreMesh.rotation.z = Math.PI / 2;
+    tyreMesh.castShadow = true;
+    wheel.add(tyreMesh);
+    const rimMesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius * 0.58, radius * 0.58, width * 1.02, 16),
+      rim,
+    );
+    rimMesh.rotation.z = Math.PI / 2;
+    wheel.add(rimMesh);
+    group.add(wheel);
+    wheelGroups.push(wheel);
+  }
+
+  const reverseLight = new THREE.Mesh(
+    new THREE.BufferGeometry(),
+    new THREE.MeshStandardMaterial({ visible: false }),
+  );
+  reverseLight.visible = false;
+  group.add(reverseLight);
+
+  return {
+    group,
+    wheels: wheelGroups,
+    mounts: wheelGroups.map((wheel) => ({ x: wheel.position.x, z: wheel.position.z })),
+    brakeLights: [],
+    reverseLight,
+    setPaint: (color: number) => {
+      paintMaterial?.color.setHex(color);
+    },
+    setWheelRadius: (next: number) => {
+      const factor = next / radius;
+      for (const wheel of wheelGroups) wheel.scale.setScalar(factor);
+    },
+    dispose: () => {
+      group.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.geometry.dispose();
+      });
+    },
+  };
+}
+
 export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<CarVisual> {
   const gltf = await loader.loadAsync(`${MODEL_ROOT}${def.model}`);
   const root = gltf.scene;
@@ -232,12 +516,18 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
     const geometry = geometries.get(mesh)!;
     geometry.computeBoundingBox();
     const box = geometry.boundingBox!;
-    const width = box.max.x - box.min.x;
-    const length = box.max.z - box.min.z;
-    // Une roue seule tient dans un coin ; un jeu de quatre couvre la voiture.
-    if (width < wholeSize.x * 0.5 || length < wholeSize.z * 0.55) continue;
+    // Une roue seule tient dans un coin ; un maillage qui **traverse le centre**
+    // de la voiture en contient au moins deux (les packs fusionnent souvent les
+    // deux roues d'un même côté). C'est ce croisement qui décide, pas la taille
+    // du maillage : sur la CR-Z, deux pneus ne font que la moitié de la
+    // longueur et passaient sous l'ancien seuil.
+    const marginX = wholeSize.x * 0.05;
+    const marginZ = wholeSize.z * 0.05;
+    const crossesX = box.min.x < wholeCentre.x - marginX && box.max.x > wholeCentre.x + marginX;
+    const crossesZ = box.min.z < wholeCentre.z - marginZ && box.max.z > wholeCentre.z + marginZ;
+    if (!crossesX && !crossesZ) continue;
     const parts = splitWheelMesh(geometry, wholeCentre.x, wholeCentre.z);
-    if (parts.length < 4) continue;
+    if (parts.length < 2) continue;
     meshes.splice(meshes.indexOf(mesh), 1);
     geometries.delete(mesh);
     for (const part of parts) {
@@ -314,20 +604,37 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
       name: labels.get(mesh)!,
       box: boxOf(geometries.get(mesh)!),
     }));
-    const detected = pickWheels(candidates, bodyData);
+    let detected = pickWheels(candidates, bodyData);
     if (!detected) {
-      console.warn(
-        `${def.id}: roues introuvables, maillages : ` +
-          candidates
-            .map(
-              (entry) =>
-                `${entry.name} [${entry.box.min.map((v) => v.toFixed(2)).join(',')}]` +
-                `..[${entry.box.max.map((v) => v.toFixed(2)).join(',')}]`,
-            )
-            .slice(0, 24)
-            .join(' | '),
-      );
-      throw new Error(`${def.id}: no wheel geometry`);
+      // Dernier recours : découper les pneus au triangle, autour des quatre
+      // coins mesurés sur les sommets. C'est ce qui sauve les modèles dont les
+      // roues sont fusionnées dans un maillage par matière (CR-Z, Hoonicorn,
+      // kart) et qu'aucun nom de nœud ne trahit.
+      const split = splitWheelsByCorner(meshes, geometries, body);
+      if (split) {
+        const originals = [...meshes];
+        meshes.length = 0;
+        for (const mesh of originals) geometries.delete(mesh);
+        for (const piece of split.pieces) {
+          const mesh = new THREE.Mesh(piece.geometry, piece.material);
+          meshes.push(mesh);
+          geometries.set(mesh, piece.geometry);
+          labels.set(mesh, piece.corner === null ? 'body' : 'wheel');
+        }
+        detected = [0, 1, 2, 3].map((corner) => ({
+          corner: corner as 0 | 1 | 2 | 3,
+          hub: split.hubs[corner].toArray() as [number, number, number],
+          radius: split.radius,
+        }));
+        console.log(
+          `${def.id}: roues découpées au triangle — rayon ${split.radius.toFixed(3)}, ` +
+            `${split.pieces.length} morceaux`,
+        );
+      }
+    }
+    if (!detected) {
+      console.warn(`${def.id}: roues non extraites — roues procédurales montées sur la carrosserie`);
+      return buildFallbackCar(spec, meshes, geometries, body);
     }
     hubs = detected.map((pick) => new THREE.Vector3(pick.hub[0], pick.hub[1], pick.hub[2]));
     radii = detected.map(() => detected[0].radius);
@@ -431,7 +738,7 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
   // Le modèle peut être authoré à n'importe quelle échelle — le trueno arrive
   // en centimètres, la Ford GT en unités de 4 m. C'est donc le rapport à la
   // taille du modèle qui dit si la mesure a un sens, pas une valeur en mètres.
-  let boxes = wheelBoxes();
+  const boxes = wheelBoxes();
   const wheelHubs = boxes.map((box) => box.getCenter(new THREE.Vector3()));
   // Les deux côtés mesurent l'empattement : leur moyenne résiste à un coin mal
   // découpé, là où la seule paire de gauche le suivrait.
@@ -442,9 +749,14 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
   }
   const scale = spec.wheelbase / measuredBase;
 
+  // Les moyeux sont mis à l'échelle à partir de leur position **mesurée avant**
+  // le facteur : recomputer les boîtes après `geometry.scale()` donnait des
+  // centres faux sur les modèles quantifiés (l'empattement s'effondrait à
+  // zéro et les roues se retrouvaient au milieu de la caisse).
+  const preHubs = wheelHubs.map((hub) => hub.clone());
+  const preRadius = radii[0];
   for (const geometry of geometries.values()) geometry.scale(scale, scale, scale);
-  boxes = wheelBoxes();
-  for (let i = 0; i < 4; i++) wheelHubs[i] = boxes[i].getCenter(new THREE.Vector3());
+  for (let i = 0; i < 4; i++) wheelHubs[i] = preHubs[i].clone().multiplyScalar(scale);
 
   // --- Ride height --------------------------------------------------------
   // The body origin sits at the physics body's centre of mass, not on the
@@ -452,7 +764,7 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
   // updateCarVisual puts the procedural ones.
   const restLength = spec.rideHeight + (spec.mass * 9.81) / (4 * spec.springK);
   const hubY = 0.12 - restLength;
-  const frontRadius = (boxes[0].max.y - boxes[0].min.y) / 2;
+  const frontRadius = preRadius * scale;
   const shift = new THREE.Vector3(
     -(wheelHubs[0].x + wheelHubs[1].x) / 2,
     hubY - wheelHubs[0].y,
