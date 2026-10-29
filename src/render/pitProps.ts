@@ -53,8 +53,8 @@ interface PropSpec extends ModelSpec {
  * contre le mur, un moteur se porte à deux.
  */
 const PROPS = {
-  lift: { file: 'hydraulic_car_lift.glb', length: 4.2, height: 1.6 },
-  elevator: { file: 'car_elevator_free.glb', length: 4.0, height: 1.9 },
+  lift: { file: 'hydraulic_car_lift.glb', length: 4.6, height: 2.0 },
+  elevator: { file: 'car_elevator_free.glb', length: 4.4, height: 2.2 },
   chest: { file: 'tool_chest.glb', length: 1.25 },
   engine: { file: 'car_engine.glb', length: 0.95 },
   trolley: { file: 'trolley_jack_lo_poly.glb', length: 1.7, yaw: Math.PI / 2 },
@@ -67,8 +67,6 @@ const PROPS = {
   barrier: { file: 'barrier.glb', length: 2.2 },
   metalBarrier: { file: 'metal_barrier__game_ready__4k.glb', length: 2.4 },
   pitBoard: { file: 'pit_board.glb', length: 2.0, height: 2.2 },
-  finishLine: { file: 'finish_line.glb', length: 14 },
-  startingLine: { file: 'starting_line.glb', length: 14 },
 } satisfies Record<string, PropSpec>;
 
 type PropName = keyof typeof PROPS;
@@ -97,8 +95,6 @@ function placements(): Record<PropName, Placement[]> {
     barrier: [],
     metalBarrier: [],
     pitBoard: [],
-    finishLine: [],
-    startingLine: [],
   };
   for (let index = 0; index < STALL_COUNT; index++) {
     const centre = stallCentre(index);
@@ -121,14 +117,9 @@ function placements(): Record<PropName, Placement[]> {
   // Le paddock derrière les stands : clôtures, arbres, barrières et panneaux.
   for (let z = -505; z <= -265; z += 8) list.raceFence.push({ x: -49.5, z, yaw: 0 });
   for (let z = -490; z <= -280; z += 34) list.urbanTree.push({ x: -57, z, yaw: 0 });
-  for (let z = -500; z <= -270; z += 26) list.barrier.push({ x: -30.9, z, yaw: 0 });
-  for (const z of [-516, -264]) list.metalBarrier.push({ x: -24.2, z, yaw: 0 });
   for (let index = 0; index < STALL_COUNT; index++) {
     list.pitBoard.push({ x: GARAGE_FRONT_X + 0.6, z: stallCentre(index) - 4.4, yaw: 0 });
   }
-  // Les lignes de départ et d'arrivée, à plat sur l'asphalte.
-  list.finishLine.push({ x: 0, z: -543, y: 0.03, yaw: 0 });
-  list.startingLine.push({ x: 0, z: -534, y: 0.03, yaw: 0 });
   return list;
 }
 
