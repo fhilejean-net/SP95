@@ -38,6 +38,7 @@ import { buildCircuit, circuitFloor, type CircuitHandles } from './world/circuit
 import { buildFlatCircuit } from './world/flatCircuit.ts';
 import { TRACK, trackDistanceAt, trackSurfaceAt } from './world/trackLayout.ts';
 import { insidePit } from './world/pitLayout.ts';
+import { insideDriftPad } from './world/driftPad.ts';
 import { MAPS, MAP_ID, mapUrl, type MapId } from './game/maps.ts';
 import { BUILDINGS } from './world/buildings.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
@@ -317,7 +318,10 @@ async function boot(): Promise<void> {
   // La voie des stands et ses raccordements sont du bitume : sans cette
   // exception, la physique les lisait comme de l'herbe et la voiture y glissait.
   setTrackSurface(
-    FLAT_MAP ? (x, z) => (insidePit(x, z) ? 'asphalte' : trackSurfaceAt(x, z)) : null,
+    FLAT_MAP
+      ? (x, z) =>
+          insidePit(x, z) || insideDriftPad(x, z) ? 'asphalte' : trackSurfaceAt(x, z)
+      : null,
   );
   /** Sol de jeu sous une roue : la dalle du circuit passe avant le terrain. */
   const groundAt = (x: number, z: number) =>
@@ -505,6 +509,20 @@ async function boot(): Promise<void> {
     () => closeSound(),
   );
   applyVehicleMix();
+  /** Réglage « Drift » monté : le tour se compte en points, pas en secondes. */
+  const DRIFT_PRESET = PRESETS.find((entry) => entry.label === 'Drift')!;
+  let driftMode = false;
+  /** Total de points au moment où le tour en cours a commencé. */
+  let driftLapBase = 0;
+  let driftBestLap: number | null = (() => {
+    try {
+      const raw = localStorage.getItem('sp95.driftBestLap');
+      const value = raw === null ? NaN : Number(raw);
+      return Number.isFinite(value) && value > 0 ? value : null;
+    } catch {
+      return null;
+    }
+  })();
   const drift = new DriftScore();
   const stunt = new StuntScore();
   const governor = lockedFx ? null : new QualityGovernor(renderer, renderer.getPixelRatio(), sky.sun);
@@ -692,8 +710,7 @@ async function boot(): Promise<void> {
     timedLap = Boolean(chrono) && wanted === 'free' && target === 'circuit';
     if (timedLap) chrono?.reset();
     sectors?.reset();
-    hud.setChrono(timedLap);
-    hud.setSectors(timedLap && Boolean(sectors));
+    refreshScoringPanels();
     hud.setMode(wanted, TRACK_LABEL);
     input.clear();
     audio.init();
@@ -1002,6 +1019,19 @@ async function boot(): Promise<void> {
     saveSetup(setup);
     rebuildVehicle();
     syncDriveModes();
+    refreshScoringPanels();
+  }
+
+  /**
+   * Le bon panneau de score : temps et secteurs en réglage normal, points de
+   * drift quand le kit Drift est monté. Appelé au départ et à chaque réglage.
+   */
+  function refreshScoringPanels(): void {
+    driftMode = !ridingBike && sameSetup(setup, DRIFT_PRESET.setup);
+    driftLapBase = drift.total;
+    hud.setChrono(timedLap && !driftMode);
+    hud.setSectors(timedLap && Boolean(sectors) && !driftMode);
+    hud.setDriftLap(timedLap && driftMode);
   }
 
   /**
@@ -1503,14 +1533,36 @@ async function boot(): Promise<void> {
         if (chronoEvent === 'lap') sectors.completeLap(chrono.last);
       }
       if (chronoEvent === 'start') {
+        driftLapBase = drift.total;
         hud.flash('Chrono lancé', { accent: true, duration: 1200 });
       } else if (chronoEvent === 'lap') {
-        const isBest = chrono.best !== null && chrono.last <= chrono.best + 1e-6;
-        hud.flash(
-          `Tour ${chrono.lap - 1} · ${formatLap(chrono.last)}${isBest ? ' · meilleur' : ''}`,
-          { accent: isBest, duration: 2100 },
-        );
-        updateMenuBest();
+        if (driftMode) {
+          // En drift, le résultat du tour est le total de points bankés depuis
+          // la ligne, pas les secondes.
+          const points = Math.max(0, Math.round(drift.total - driftLapBase));
+          driftLapBase = drift.total;
+          const record = driftBestLap === null || points > driftBestLap;
+          if (record) {
+            driftBestLap = points;
+            try {
+              localStorage.setItem('sp95.driftBestLap', String(points));
+            } catch {
+              // Stockage refusé : le record reste valable pour la session.
+            }
+          }
+          hud.flash(
+            `Tour ${chrono.lap - 1} · ${points} pts${record ? ' · record' : ''}`,
+            { accent: record, duration: 2100 },
+          );
+          updateMenuBest();
+        } else {
+          const isBest = chrono.best !== null && chrono.last <= chrono.best + 1e-6;
+          hud.flash(
+            `Tour ${chrono.lap - 1} · ${formatLap(chrono.last)}${isBest ? ' · meilleur' : ''}`,
+            { accent: isBest, duration: 2100 },
+          );
+          updateMenuBest();
+        }
       }
     }
 
@@ -1996,8 +2048,12 @@ async function boot(): Promise<void> {
       hud.updateRace(race.snapshot(carPosition));
     }
     if (chrono && timedLap) {
-      hud.updateChrono(chrono.lap, chrono.current, chrono.best);
-      if (sectors) hud.updateSectors(sectors.snapshot());
+      if (driftMode) {
+        hud.updateDriftLap(drift.total - driftLapBase, driftBestLap);
+      } else {
+        hud.updateChrono(chrono.lap, chrono.current, chrono.best);
+        if (sectors) hud.updateSectors(sectors.snapshot());
+      }
     }
 
     if (mode !== 'menu') {

@@ -28,6 +28,10 @@ export class Hud {
   private sectorPanel = el('sector-panel');
   private sectorRef = el('sector-ref');
   private sectorRows = [1, 2, 3].map((index) => el(`sector-row-${index}`));
+  private driftLapPanel = el('drift-lap-panel');
+  private driftLapPoints = el('drift-lap-points');
+  private driftLapRef = el('drift-lap-ref');
+  private driftLapDelta = el('drift-lap-delta');
   private driftTotal = el('drift-total');
   private driftPanel = el('drift-panel');
   private driftPoints = el('drift-points');
@@ -402,6 +406,26 @@ export class Hud {
         delta.textContent = '';
       }
     }
+  }
+
+  /**
+   * En mode drift, le tour se lit en points et non en secondes : le panneau
+   * remplace celui des secteurs, à la même place en haut à droite.
+   */
+  setDriftLap(on: boolean): void {
+    this.driftLapPanel.classList.toggle('hidden', !on);
+  }
+
+  updateDriftLap(points: number, best: number | null): void {
+    const shown = Math.max(0, Math.round(points));
+    this.driftLapPoints.textContent = shown.toLocaleString('fr-FR');
+    this.driftLapRef.textContent =
+      best === null ? 'réf. —' : `réf. ${best.toLocaleString('fr-FR')} pts`;
+    const delta = best === null ? 0 : shown - best;
+    this.driftLapDelta.textContent =
+      best === null ? 'premier tour' : `${delta >= 0 ? '+' : ''}${delta.toLocaleString('fr-FR')} pts`;
+    this.driftLapDelta.classList.toggle('faster', delta > 0);
+    this.driftLapDelta.classList.toggle('slower', delta < 0);
   }
 
   updateRace(snapshot: RaceSnapshot | null): void {

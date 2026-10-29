@@ -17,6 +17,8 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GROUP_WORLD } from '../physics/vehicle.ts';
+import { TRACK } from '../world/trackLayout.ts';
+import { DRIFT_PAD } from '../world/driftPad.ts';
 import {
   GARAGE_FRONT_X,
   PIT_LANE_FROM,
@@ -37,7 +39,7 @@ const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
 interface ModelSpec {
   /** Longueur cible du plus grand côté horizontal, en mètres. */
-  length: number;
+  length?: number;
   /** Hauteur cible, quand la longueur seule écrase le modèle. */
   height?: number;
   /** Rotation appliquée après normalisation, en radians. */
@@ -50,23 +52,24 @@ interface PropSpec extends ModelSpec {
 
 /**
  * Tailles réelles : un pont fait la longueur d'une voiture, une servante tient
- * contre le mur, un moteur se porte à deux.
+ * contre le mur, un moteur se porte à deux. Une seule cote pilote l'échelle —
+ * appliquer une longueur *puis* une hauteur rapetissait les ponts deux fois.
  */
 const PROPS = {
-  lift: { file: 'hydraulic_car_lift.glb', length: 4.6, height: 2.0 },
-  elevator: { file: 'car_elevator_free.glb', length: 4.4, height: 2.2 },
-  chest: { file: 'tool_chest.glb', length: 1.25 },
-  engine: { file: 'car_engine.glb', length: 0.95 },
+  lift: { file: 'hydraulic_car_lift.glb', length: 4.8 },
+  elevator: { file: 'car_elevator_free.glb', length: 4.6 },
+  chest: { file: 'tool_chest.glb', height: 1.2 },
+  engine: { file: 'car_engine.glb', height: 0.9 },
   trolley: { file: 'trolley_jack_lo_poly.glb', length: 1.7, yaw: Math.PI / 2 },
-  // Un creeper fait la taille d'un humain allongé, pas d'une planche à pain.
-  creeper: { file: 'mechanic_creeper.glb', length: 1.9, height: 0.35 },
-  hoist: { file: 'engine_hoist_-_engine_crane.glb', length: 2.1, height: 2.3 },
+  // Un creeper se glisse sous une voiture : la taille d'un humain allongé.
+  creeper: { file: 'mechanic_creeper.glb', length: 1.6 },
+  hoist: { file: 'engine_hoist_-_engine_crane.glb', length: 1.7 },
   // Les modèles détaillés ajoutés au dépôt.
-  raceFence: { file: 'race_fence.glb', length: 6 },
-  urbanTree: { file: 'urban_tree.glb', length: 6.5, height: 6.5 },
-  barrier: { file: 'barrier.glb', length: 2.2 },
-  metalBarrier: { file: 'metal_barrier__game_ready__4k.glb', length: 2.4 },
-  pitBoard: { file: 'pit_board.glb', length: 2.0, height: 2.2 },
+  raceFence: { file: 'race_fence.glb', length: 3.4 },
+  urbanTree: { file: 'urban_tree.glb', height: 7.5 },
+  barrier: { file: 'barrier.glb', length: 2.9 },
+  metalBarrier: { file: 'metal_barrier__game_ready__4k.glb', length: 3.1 },
+  pitBoard: { file: 'pit_board.glb', height: 1.7 },
 } satisfies Record<string, PropSpec>;
 
 type PropName = keyof typeof PROPS;
@@ -114,9 +117,15 @@ function placements(): Record<PropName, Placement[]> {
   for (const index of [2, 5]) {
     list.hoist.push({ x: -43.4, z: stallCentre(index) - 0.4, yaw: Math.PI * 0.5 });
   }
-  // Le paddock derrière les stands : clôtures, arbres, barrières et panneaux.
-  for (let z = -505; z <= -265; z += 8) list.raceFence.push({ x: -49.5, z, yaw: 0 });
-  for (let z = -490; z <= -280; z += 34) list.urbanTree.push({ x: -57, z, yaw: 0 });
+  // Le paddock derrière les stands : une seule ligne de clôtures anti-
+  // spectateurs, face aux garages, et les arbres derrière — plus de clôture
+  // au milieu de la dalle ni d'arbre planté dans la voie.
+  for (let z = -512; z <= -262; z += 3.6) {
+    list.raceFence.push({ x: -51.6, z, yaw: Math.PI / 2 });
+  }
+  for (let z = -496; z <= -276; z += 27) {
+    list.urbanTree.push({ x: -58.5, z, yaw: 0 });
+  }
   for (let index = 0; index < STALL_COUNT; index++) {
     list.pitBoard.push({ x: GARAGE_FRONT_X + 0.6, z: stallCentre(index) - 4.4, yaw: 0 });
   }
@@ -199,41 +208,86 @@ function clutterPlacements(): Record<ClutterName, Placement[]> {
   for (let z = PIT_LANE_FROM + 26; z < PIT_LANE_TO - 12; z += 24) {
     list.cone.push({ x: front + 1.5, z, yaw: 0 });
   }
+  // L'aire de gymkhana : les plots dessinent le slalom et les pneus ferment
+  // les cordes. Ils sont posés sur la dalle, donc hors de la voie des stands.
+  for (let i = -3; i <= 3; i++) {
+    list.cone.push({ x: DRIFT_PAD.cx - 27 + i * 9, z: DRIFT_PAD.cz + 26, yaw: 0 });
+  }
+  for (let i = 0; i < 14; i++) {
+    const angle = (i / 14) * Math.PI * 2;
+    list.cone.push({
+      x: DRIFT_PAD.cx + Math.cos(angle) * 40,
+      z: DRIFT_PAD.cz + Math.sin(angle) * 36,
+      yaw: angle,
+    });
+  }
+  for (const [dx, dz] of [[-52, -34], [52, -34], [-52, 34], [52, 34]]) {
+    list.tyreStack.push({ x: DRIFT_PAD.cx + dx, z: DRIFT_PAD.cz + dz, yaw: 0 });
+  }
   // Le feu de départ, en hauteur au bout de la voie : il ne gêne personne.
   list.startLights.push({ x: -24.2, z: PIT_LANE_TO - 6, y: 4.4, yaw: Math.PI / 2 });
   return list;
 }
 
 /**
+ * Boîte englobante *robuste* : elle lit les sommets et jette les 0,5 % les
+ * plus extrêmes. Les GLB de Sketchfab traînent souvent un sommet perdu à des
+ * kilomètres, qui gonfle la Box3 de three : le modèle est alors réduit à une
+ * poussière et posé à côté de son support — c'est ce qui rendait les
+ * clôtures, les arbres et les ponts minuscules et flottants.
+ */
+function robustBox(root: THREE.Object3D): THREE.Box3 {
+  root.updateMatrixWorld(true);
+  const axes: number[][] = [[], [], []];
+  const vertex = new THREE.Vector3();
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    const position = child.geometry.attributes.position as THREE.BufferAttribute | undefined;
+    if (!position) return;
+    const step = Math.max(1, Math.floor(position.count / 4000));
+    for (let i = 0; i < position.count; i += step) {
+      vertex.fromBufferAttribute(position, i).applyMatrix4(child.matrixWorld);
+      axes[0].push(vertex.x);
+      axes[1].push(vertex.y);
+      axes[2].push(vertex.z);
+    }
+  });
+  if (axes[0].length === 0) return new THREE.Box3().setFromObject(root);
+  const percentile = (list: number[], p: number): number => {
+    list.sort((a, b) => a - b);
+    return list[Math.min(list.length - 1, Math.max(0, Math.floor(p * (list.length - 1))))];
+  };
+  return new THREE.Box3(
+    new THREE.Vector3(percentile(axes[0], 0.005), percentile(axes[1], 0.005), percentile(axes[2], 0.005)),
+    new THREE.Vector3(percentile(axes[0], 0.995), percentile(axes[1], 0.995), percentile(axes[2], 0.995)),
+  );
+}
+
+/**
  * Normalise un modèle : plus grande longueur horizontale couchée sur X,
- * centré en X/Z, bas posé à y = 0. Sans ça, les sept modèles arrivent dans
- * sept unités et sept orientations différentes.
+ * centré en X/Z, bas posé à y = 0. Une seule cote pilote l'échelle : la
+ * longueur, ou la hauteur quand le modèle est plus haut que long (une
+ * servante, un arbre).
  */
 function normalize(root: THREE.Object3D, spec: ModelSpec): THREE.Vector3 {
-  root.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(root);
-  const size = box.getSize(new THREE.Vector3());
-  if (size.z > size.x) root.rotation.y += Math.PI / 2;
-  root.updateMatrixWorld(true);
-  box.setFromObject(root);
-  box.getSize(size);
-  const longest = Math.max(size.x, size.z, 0.001);
-  root.scale.setScalar(spec.length / longest);
-  root.updateMatrixWorld(true);
-  box.setFromObject(root);
-  // Un pont élévateur a un bras très long : le normaliser par la longueur le
-  // rend minuscule. La hauteur cible le remet à l'échelle d'une voiture.
-  if (spec.height) {
+  let box = robustBox(root);
+  let size = box.getSize(new THREE.Vector3());
+  if (size.z > size.x) {
+    root.rotation.y += Math.PI / 2;
+    box = robustBox(root);
     box.getSize(size);
-    root.scale.multiplyScalar(spec.height / Math.max(0.01, size.y));
-    root.updateMatrixWorld(true);
-    box.setFromObject(root);
   }
+  const source = spec.height ? size.y : Math.max(size.x, size.z);
+  const target = spec.height ?? spec.length ?? source;
+  root.scale.multiplyScalar(target / Math.max(0.001, source));
+  root.updateMatrixWorld(true);
+  box = robustBox(root);
+  size = box.getSize(new THREE.Vector3());
   const centre = box.getCenter(new THREE.Vector3());
   root.position.set(-centre.x, -box.min.y, -centre.z);
   root.updateMatrixWorld(true);
   // Cotes après normalisation : elles servent à poser la boîte de collision.
-  return box.getSize(new THREE.Vector3());
+  return size;
 }
 
 /**
@@ -341,6 +395,129 @@ function instance(
   return { meshes, triangles };
 }
 
+/**
+ * Les portiques de Sketchfab déclarent leurs textures en
+ * `KHR_materials_pbrSpecularGlossiness`, une extension que three n'implémente
+ * plus : sans ce greffon, les bandeaux sortent gris. On reporte la couleur et
+ * la texture diffuse sur un matériau standard, qui est ce que le jeu rend.
+ */
+class SpecularGlossinessPlugin {
+  readonly name = 'KHR_materials_pbrSpecularGlossiness';
+  private readonly parser: {
+    json: { materials?: { extensions?: Record<string, unknown> }[] };
+    assignTexture: (params: object, key: string, value: unknown, space: string) => Promise<unknown>;
+  };
+
+  constructor(parser: SpecularGlossinessPlugin['parser']) {
+    this.parser = parser;
+  }
+
+  getMaterialType(index: number): typeof THREE.MeshStandardMaterial | null {
+    const material = this.parser.json.materials?.[index];
+    return material?.extensions?.[this.name] ? THREE.MeshStandardMaterial : null;
+  }
+
+  extendMaterialParams(index: number, params: Record<string, unknown>): Promise<unknown> {
+    const material = this.parser.json.materials?.[index];
+    const extension = material?.extensions?.[this.name] as
+      | { diffuseFactor?: number[]; diffuseTexture?: unknown }
+      | undefined;
+    if (!extension) return Promise.resolve();
+    params.color = new THREE.Color(1, 1, 1);
+    if (Array.isArray(extension.diffuseFactor)) {
+      (params.color as THREE.Color).fromArray(extension.diffuseFactor);
+      params.opacity = extension.diffuseFactor[3] ?? 1;
+    }
+    params.metalness = 0.1;
+    params.roughness = 0.85;
+    if (!extension.diffuseTexture) return Promise.resolve();
+    return this.parser.assignTexture(params, 'map', extension.diffuseTexture, THREE.SRGBColorSpace);
+  }
+}
+
+/** Largeur des portiques : ils traversent la piste d'un dégagement à l'autre. */
+const GANTRY_WIDTH = 22;
+/** Distance de la ligne de départ, identique à celle du marquage au sol. */
+const GANTRY_DISTANCE = 8;
+
+/**
+ * Les deux portiques fournis, posés sur la ligne droite. Le bandeau de départ
+ * fait face aux voitures qui arrivent ; le portique d'arrivée le suit de
+ * quarante-six mètres. **Seuls les mâts** portent une collision : entre les
+ * deux, on passe — c'était une boîte pleine qui faisait un mur invisible.
+ */
+async function buildGantries(
+  scene: THREE.Scene,
+  world: RAPIER.World,
+  anisotropy: number,
+): Promise<{ meshes: number; triangles: number; models: number; colliders: number }> {
+  const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  loader.register((parser) => new SpecularGlossinessPlugin(parser as never));
+  const first = TRACK.samples[0];
+  const anchor = {
+    x: first.x + first.tx * GANTRY_DISTANCE,
+    z: first.z + first.tz * GANTRY_DISTANCE,
+  };
+  const heading = Math.atan2(first.tx, first.tz);
+  const specs = [
+    { file: 'starting_line.glb', offset: 0 },
+    { file: 'finish_line.glb', offset: 46 },
+  ];
+  let meshes = 0;
+  let triangles = 0;
+  let models = 0;
+  let colliders = 0;
+  for (const spec of specs) {
+    try {
+      const gltf = await loader.loadAsync(`${MODEL_ROOT}${PIT_DIR}${spec.file}`);
+      const root = gltf.scene;
+      const size = normalize(root, { length: GANTRY_WIDTH });
+      prepare(root, anisotropy);
+      root.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        child.castShadow = false;
+        child.receiveShadow = true;
+        meshes += 1;
+        const geometry = child.geometry;
+        triangles += geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3;
+      });
+      const holder = new THREE.Group();
+      holder.add(root);
+      holder.position.set(
+        anchor.x + first.tx * spec.offset,
+        FLOOR_Y,
+        anchor.z + first.tz * spec.offset,
+      );
+      // Le bandeau du modèle regarde +Z : on le retourne vers les voitures.
+      holder.rotation.y = heading + Math.PI;
+      scene.add(holder);
+      models += 1;
+
+      const half = size.x / 2 - 0.4;
+      const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+      for (const side of [-1, 1]) {
+        world.createCollider(
+          RAPIER.ColliderDesc.cuboid(0.45, size.y / 2, 0.45)
+            .setTranslation(
+              holder.position.x + side * half * Math.cos(holder.rotation.y),
+              holder.position.y + size.y / 2,
+              holder.position.z - side * half * Math.sin(holder.rotation.y),
+            )
+            .setFriction(0.7)
+            .setRestitution(0.05)
+            .setCollisionGroups(PROP_GROUP),
+          body,
+        );
+        colliders += 1;
+      }
+    } catch (error) {
+      console.warn(`Portique manquant : ${spec.file}`, error);
+    }
+  }
+  return { meshes, triangles, models, colliders };
+}
+
 export async function buildPitProps(
   scene: THREE.Scene,
   world: RAPIER.World,
@@ -370,16 +547,22 @@ export async function buildPitProps(
       return;
     }
     const root = result.value.scene;
-    // L'arbre urbain arrive avec un matériau blanc sans texture : on lui rend
-    // un feuillage vert, sinon il neige sur le paddock.
+    // L'arbre urbain arrive avec des matériaux blancs sans texture : on rend
+    // le vert au *feuillage* et le brun à l'écorce, par nom de matériau. Teinter
+    // tous les matériaux blancs peignait aussi le tronc en vert.
     if (name === 'urbanTree') {
       root.traverse((child) => {
         if (!(child instanceof THREE.Mesh)) return;
         const materials = Array.isArray(child.material) ? child.material : [child.material];
         for (const material of materials) {
-          if (material instanceof THREE.MeshStandardMaterial && !material.map) {
+          if (!(material instanceof THREE.MeshStandardMaterial) || material.map) continue;
+          const label = `${material.name} ${child.name}`.toLowerCase();
+          if (/folh|leaf|leav|crown|canop|feuill/.test(label)) {
             material.color.setHex(0x4f7a3a);
-            material.roughness = 0.9;
+            material.roughness = 0.92;
+          } else if (/galho|branch|trunk|bark|tronc|wood/.test(label)) {
+            material.color.setHex(0x5b4632);
+            material.roughness = 0.95;
           }
         }
       });
@@ -396,6 +579,12 @@ export async function buildPitProps(
       colliders += collide(world, spots[name], size, (PROPS[name] as PropSpec).yaw ?? 0);
     }
   });
+
+  const gantries = await buildGantries(scene, world, anisotropy);
+  meshes += gantries.meshes;
+  triangles += gantries.triangles;
+  models += gantries.models;
+  colliders += gantries.colliders;
 
   const clutter = results[names.length];
   if (clutter?.status === 'fulfilled') {

@@ -637,6 +637,58 @@ button.primary {
   backdrop-filter: blur(10px);
 }
 
+/* ---------- Drift au tour ---------- */
+#drift-lap-panel {
+  position: absolute;
+  right: 26px;
+  top: 282px;
+  width: 190px;
+  padding: 10px 12px 8px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(12px);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.drift-lap-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+#drift-lap-points {
+  font-family: var(--font);
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.drift-lap-unit {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.drift-lap-delta {
+  margin-top: 2px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.drift-lap-delta.faster {
+  color: #57d38c;
+}
+
+.drift-lap-delta.slower {
+  color: #ef5a4b;
+}
+
 /* ---------- Secteurs ---------- */
 #sector-panel {
   position: absolute;

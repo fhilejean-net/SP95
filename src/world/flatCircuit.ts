@@ -39,6 +39,8 @@ import { brakingMarkers } from './brakingMarkers.ts';
 import { buildBrakingBoards } from '../render/brakingBoards.ts';
 import { gravelFillAt, gravelRuns } from './circuitDecor.ts';
 import { buildSponsorFence } from '../render/sponsorFence.ts';
+import { buildDriftPad } from '../render/driftPad.ts';
+import { driftWallGap } from './driftPad.ts';
 import { buildPitLaneDetail } from '../render/pitLaneDetail.ts';
 import { buildPitGarage } from '../render/pitGarage.ts';
 import {
@@ -542,51 +544,6 @@ function boardTexture(text: string, background: string, ink: string): THREE.Canv
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, 256, 52);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  return texture;
-}
-
-/**
- * Bandeau du portique : nom du circuit à gauche, quatre écuries à droite,
- * chacune avec sa couleur et ses initiales.
- */
-function gantryBannerTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 2048;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#11141b';
-  ctx.fillRect(0, 0, 2048, 256);
-  ctx.fillStyle = '#a3141c';
-  ctx.fillRect(0, 0, 2048, 12);
-  ctx.fillRect(0, 244, 2048, 12);
-  ctx.fillStyle = '#f3f0e6';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.font = 'bold 116px system-ui, sans-serif';
-  ctx.fillText('CIRCUIT SP95', 54, 104);
-  ctx.fillStyle = '#a9a69d';
-  ctx.font = '600 38px system-ui, sans-serif';
-  ctx.fillText('GRAND PRIX DE LA PLAINE', 58, 188);
-  const teams = [
-    { initials: 'RV', colour: '#b3131b', ink: '#f6f2e6' },
-    { initials: 'AZ', colour: '#1d8f6f', ink: '#f6f2e6' },
-    { initials: 'BL', colour: '#2b57a8', ink: '#f6f2e6' },
-    { initials: 'OR', colour: '#e2a119', ink: '#191a1c' },
-  ];
-  teams.forEach((team, index) => {
-    const x = 1252 + index * 192;
-    ctx.fillStyle = team.colour;
-    ctx.beginPath();
-    ctx.roundRect(x, 54, 160, 148, 16);
-    ctx.fill();
-    ctx.fillStyle = team.ink;
-    ctx.font = 'bold 72px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(team.initials, x + 80, 124);
-  });
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
@@ -1382,6 +1339,9 @@ export function buildFlatCircuit(
       // une impasse derrière lui. La voie est du côté x négatif, c'est-à-dire
       // `side = +1` (la normale à droite pointe vers -x sur cette ligne).
       if (side === 1 && pitWallGap(a.x, a.z, b.z)) continue;
+      // Le raccordement de la gymkhana traverse le muret intérieur : le mur
+      // s'ouvre là, sinon l'aire n'est qu'un décor derrière une clôture.
+      if (side === -1 && driftWallGap(a.x, a.z, b.z)) continue;
       const yaw = Math.atan2(dx, dz);
       quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       position.set((ax + bx) / 2, WALL_HEIGHT / 2, (az + bz) / 2);
@@ -1425,99 +1385,12 @@ export function buildFlatCircuit(
   scene.add(walls, caps, plinth);
   triangles += 12 * wallIndex * 2;
 
-  // --- Portique de départ ------------------------------------------------
-  // Mâts, poutre et bandeau sont posés à la *même* distance. La version
-  // précédente plantait les mâts sur la ligne et envoyait la poutre et le
-  // bandeau huit mètres plus loin : le panneau flottait au-dessus de la piste
-  // sans rien qui le tienne.
-  const start = wallSamples[0];
-  const right = rightOf(start);
-  const gantryMat = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.55, metalness: 0.45 });
-  const footingMat = new THREE.MeshStandardMaterial({ color: 0xa5a29a, roughness: 0.92, metalness: 0.02 });
-  const GANTRY_HALF = WALL_OFFSET + 2.5;
-  /** Axe de la poutre au-dessus de la piste. */
-  const GANTRY_Y = 7.2;
-  const BEAM_HEIGHT = 1;
-  const BEAM_DEPTH = 0.9;
-  /** Les mâts montent jusqu'au-dessus de la poutre : elle les traverse. */
-  const MAST_TOP = GANTRY_Y + BEAM_HEIGHT / 2 + 0.12;
-  // La poutre doit être *en travers* de la piste : sa largeur locale suit X,
-  // donc le cap de la piste suffit. Le +π/2 de la première version la posait
-  // dans l'axe de la ligne droite, comme un rail au-dessus des voitures.
-  const gantryYaw = Math.atan2(start.tx, start.tz);
-  const anchor = {
-    x: start.x + start.tx * START_LINE,
-    z: start.z + start.tz * START_LINE,
-  };
-  for (const side of [-1, 1]) {
-    const x = anchor.x + right.x * GANTRY_HALF * side;
-    const z = anchor.z + right.z * GANTRY_HALF * side;
-    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.72, MAST_TOP, 0.72), gantryMat);
-    mast.position.set(x, MAST_TOP / 2, z);
-    mast.castShadow = true;
-    scene.add(mast);
-    // Semelle béton : un mât de sept mètres ne sort pas du sol comme un poteau.
-    const footing = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 1.6), footingMat);
-    footing.position.set(x, 0.25, z);
-    footing.castShadow = true;
-    footing.receiveShadow = true;
-    scene.add(footing);
-  }
-  const beam = new THREE.Mesh(new THREE.BoxGeometry((GANTRY_HALF + 0.5) * 2, BEAM_HEIGHT, BEAM_DEPTH), gantryMat);
-  beam.position.set(anchor.x, GANTRY_Y, anchor.z);
-  beam.rotation.y = gantryYaw;
-  beam.castShadow = true;
-  scene.add(beam);
-  // Cinq feux de départ sous la poutre, dans leur boîtier, face à la voiture.
-  const lightMat = new THREE.MeshStandardMaterial({
-    color: 0x2a0a0a,
-    emissive: 0x3a0505,
-    roughness: 0.35,
-  });
-  const housingMat = new THREE.MeshStandardMaterial({ color: 0x191b1f, roughness: 0.5, metalness: 0.3 });
-  const housingY = GANTRY_Y - BEAM_HEIGHT / 2 - 0.34;
-  for (let i = 0; i < 5; i++) {
-    const offset = (i - 2) * 1.15;
-    const housing = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.68, 0.3), housingMat);
-    housing.position.set(
-      anchor.x + Math.cos(gantryYaw) * offset,
-      housingY,
-      anchor.z - Math.sin(gantryYaw) * offset,
-    );
-    housing.rotation.y = gantryYaw + Math.PI;
-    housing.castShadow = true;
-    scene.add(housing);
-    const light = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.52, 0.1), lightMat);
-    light.position.set(
-      housing.position.x - start.tx * 0.16,
-      housing.position.y,
-      housing.position.z - start.tz * 0.16,
-    );
-    light.rotation.y = gantryYaw + Math.PI;
-    scene.add(light);
-  }
-  // Deux faces dos à dos, chacune sur une face de la poutre, centrées sur son
-  // axe : le bandeau est *posé sur* la poutre, pas suspendu en dessous.
-  const gantryMaterial = new THREE.MeshBasicMaterial({ map: gantryBannerTexture() });
-  const bannerHeight = 2.2;
-  for (const [turn, shift] of [[0, BEAM_DEPTH / 2 + 0.03], [Math.PI, -(BEAM_DEPTH / 2 + 0.03)]] as const) {
-    const face = new THREE.Mesh(new THREE.PlaneGeometry(24, bannerHeight), gantryMaterial);
-    face.position.set(
-      anchor.x + Math.sin(gantryYaw) * shift,
-      GANTRY_Y,
-      anchor.z + Math.cos(gantryYaw) * shift,
-    );
-    face.rotation.y = gantryYaw + turn;
-    scene.add(face);
-  }
-  // Cornières haut et bas : elles cachent la tranche du panneau et le lient
-  // visuellement à la poutre.
-  for (const y of [GANTRY_Y + bannerHeight / 2, GANTRY_Y - bannerHeight / 2]) {
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(24.3, 0.09, BEAM_DEPTH + 0.09), gantryMat);
-    trim.position.set(anchor.x, y, anchor.z);
-    trim.rotation.y = gantryYaw;
-    scene.add(trim);
-  }
+  // Le portique de départ-arrivée n'est plus bâti ici : les deux modèles
+  // fournis (starting_line et finish_line) le remplacent dans pitProps.ts.
+
+  // L'aire de gymkhana, au centre du circuit, reliée à la ligne droite.
+  const driftPad = buildDriftPad(scene, options.anisotropy);
+  triangles += driftPad.triangles;
 
   const scenery = buildScenery(scene, world, options.anisotropy, options.lowFx);
   triangles += scenery;
