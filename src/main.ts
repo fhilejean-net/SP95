@@ -2773,14 +2773,16 @@ function wireMenuOnly(): void {
   const on = (id: string, params: Record<string, string>): void => {
     document.getElementById(id)?.addEventListener('click', () => go(params));
   };
-  on('btn-free', { start: 'free' });
-  on('btn-race', { start: 'race' });
+  // Chaque entrée porte sa carte : sans `map`, la navigation reviendrait sur
+  // cet écran vide (MENU_ONLY teste justement l'absence de carte).
+  on('btn-free', { map: 'sp95', start: 'free' });
+  on('btn-race', { map: 'ville', start: 'race' });
   on('btn-circuit', { map: 'suzuka', start: 'free' });
   on('btn-flat', { map: 'sp95', start: 'free' });
-  on('btn-col', { start: 'free', spawn: 'col' });
-  on('btn-rally', { start: 'free', spawn: 'rally' });
-  on('btn-sommet', { start: 'free', spawn: 'summit' });
-  on('btn-moto', { start: 'moto' });
+  on('btn-col', { map: 'ville', start: 'free', spawn: 'col' });
+  on('btn-rally', { map: 'ville', start: 'free', spawn: 'rally' });
+  on('btn-sommet', { map: 'ville', start: 'free', spawn: 'summit' });
+  on('btn-moto', { map: 'ville', start: 'moto' });
   // Showroom, atelier et son vivent sur la piste plate : y aller les ouvre.
   on('btn-cars', { map: 'sp95', open: 'showroom' });
   on('btn-garage', { map: 'sp95', open: 'garage' });
