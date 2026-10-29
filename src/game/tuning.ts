@@ -247,7 +247,7 @@ const TIRES = [
 
 const STEERING = [
   { maxSteer: 0.72, steerRate: 3.0 },
-  { maxSteer: 1.15, steerRate: 4.2 },
+  { maxSteer: 1.23, steerRate: 4.2 },
 ];
 
 /** Multiples du couple de freinage d'origine. */

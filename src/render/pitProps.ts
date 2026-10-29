@@ -370,6 +370,20 @@ export async function buildPitProps(
       return;
     }
     const root = result.value.scene;
+    // L'arbre urbain arrive avec un matériau blanc sans texture : on lui rend
+    // un feuillage vert, sinon il neige sur le paddock.
+    if (name === 'urbanTree') {
+      root.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of materials) {
+          if (material instanceof THREE.MeshStandardMaterial && !material.map) {
+            material.color.setHex(0x4f7a3a);
+            material.roughness = 0.9;
+          }
+        }
+      });
+    }
     const size = normalize(root, PROPS[name]);
     prepare(root, anisotropy);
     const built = instance(root, spots[name], PROPS[name], scene, PROPS[name].file.replace('.glb', ''));
