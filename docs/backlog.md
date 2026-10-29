@@ -6,6 +6,13 @@ commit hash so the history stays readable.
 
 ## Ready
 
+- [x] ~~**Circuit look: portique, palissade, gravier, stands**~~ — `M`. Le portique laissait son
+  bandeau dans le vide, les panneaux de pub se coupaient dans les virages, les bacs à gravier
+  étaient des plaques coupées net et la voie des stands n'avait que des pointillés.
+  *Done when:* une capture montre le bandeau du portique tenu par ses deux mâts, la palissade
+  continue sur le muret, un bac à gravier fondu dans l'herbe et des emplacements numérotés.
+  *Cycle 13:* `9e93ede` — portique rattaché, palissade continue, gravier progressif, stands détaillés ; 3 tests, tsc ok, 107/107
+
 - [x] ~~**Ombres portées sur la piste et la ville**~~ — `M`. Le jeu n'a qu'une directionnelle et
   aucune ombre sur les 183 000 triangles du circuit : les côtés de la piste sont peints sombres
   dans la texture en attendant (l'asphalte est uniforme au centre, les vibreurs et les bords
