@@ -321,6 +321,12 @@ export class Vehicle {
    * pulling the rear back under the car the moment it spins up.
    */
   tcsEnabled = true;
+  /**
+   * Autorité de l'antipatinage, 0..1. Elle suit le frein à main en douceur :
+   * l'assist se coupait d'un cran au lâcher, et le couple revenait d'un bloc
+   * au moment précis où les roues raccrochaient.
+   */
+  private tcAuthority = 1;
 
   /**
    * Freins ABS. Actif, la pédale est dosée pour que la roue reste près de son
@@ -571,11 +577,23 @@ export class Vehicle {
     // was sliding more than 20°, and that was exactly backwards on gravel: the
     // first hint of angle let all four wheels light up, the front tires lost
     // the lateral grip that was holding the line, and the slide fed itself.
-    const tcActive = tc > 0 && !input.handbrake;
+    const tcWanted = input.handbrake ? 0 : 1;
+    this.tcAuthority += (tcWanted - this.tcAuthority) * Math.min(1, dt * 6);
+    const tcActive = tc > 0 && this.tcAuthority > 0.02;
     // Allowed wheelspin grows as the assist is turned down. It does *not* grow
     // with the slide angle: letting the wheels spin harder once the car is
     // already sideways takes lateral grip off the rear and feeds the spin.
     const targetSlip = 0.11 + (1 - tc) * 0.22;
+    // En glisse, l'essieu arrière doit patiner pour tenir l'angle. Un pneu
+    // arrière qui *roule* au lieu de pousser frotte latéralement : il ne
+    // propulse plus et il vide la vitesse. Mesuré sur le banc (scripts/probe-drift.ts) :
+    // une glisse tenue au gaz plein tombait de 93 à 24 km/h en deux secondes,
+    // roues arrière à 0,03 de glissement. On ouvre donc leur cible à mesure que
+    // la caisse est en travers, et seulement à l'arrière : l'avant garde son
+    // cap, sinon la voiture ne tourne plus du tout. Plafond à +0,26, soit le
+    // double du pic, pour que la glisse reste tenable et pas un tonneau.
+    const slideAngle = Math.abs(bodySlip);
+    const targetSlipRear = targetSlip + clamp((slideAngle - 0.1) * 1.1, 0, 0.26);
     this.driveTorque = 0;
     // In reverse the brake pedal is the reverse throttle, so the throttle pedal
     // is what slows the car down on its way back to first gear.
@@ -723,20 +741,28 @@ export class Vehicle {
       if (share > 0.01) {
         wheelDrive = drive.axleTorque * share * 0.5;
         if (tcActive) {
+          const target = wheel.front ? targetSlip : targetSlipRear;
           const atTarget = tireForces({
-            kappa: targetSlip,
+            kappa: target,
             alpha: 0,
             fz: springForce,
             mu,
             peakAngle,
-          });
-          const cap = Math.abs(atTarget.fx) * wheel.radius * 1.05;
-          wheelDrive = clamp(wheelDrive, -cap, cap);
+          });          const cap = Math.abs(atTarget.fx) * wheel.radius * 1.05;
+          let capped = clamp(wheelDrive, -cap, cap);
+
           // Proportional trim above the target: spinning harder gets less
           // torque, but never none, so the wheel keeps pulling instead of
-          // gripping, spinning and gripping again every few ticks.
-          const over = Math.abs(wheel.slipRatio) - targetSlip;
-          if (over > 0) wheelDrive *= clamp(1 - over * 6, 0.25, 1);
+          // gripping, spinning and gripping again every few ticks. La pente
+          // était si raide (×6, plancher à 25 %) qu'un dixième de glissement en
+          // trop retirait les trois quarts du couple d'un coup : c'est ce saut
+          // qui envoyait la voiture de travers quand les roues raccrochaient.
+          const over = Math.abs(wheel.slipRatio) - target;
+          if (over > 0) capped *= clamp(1 - over * 3.5, 0.45, 1);
+
+          // Fondu entre le couple plafonné et le couple brut. À 1 l'assist
+          // tient le pneu à sa cible, à 0 il ne reste que la pédale du joueur.
+          wheelDrive = capped * this.tcAuthority + wheelDrive * (1 - this.tcAuthority);
         }
         this.driveTorque += wheelDrive;
       }

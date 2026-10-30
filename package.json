@@ -14,6 +14,7 @@
     "models:prep": "node scripts/prep-models.mjs",
     "models:verify": "node --experimental-strip-types scripts/verify-models.mjs",
     "car:analyze": "node --experimental-strip-types scripts/analyze-car.mjs",
+    "physics:probe": "node scripts/probe-drift.ts",
     "shot": "node scripts/shoot.mjs",
     "chrome:libs": "bash scripts/chrome-libs.sh"
   },
