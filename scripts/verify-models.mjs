@@ -12,7 +12,7 @@
  *   node --experimental-strip-types scripts/verify-models.mjs
  */
 import { inspect, readPrimitive } from './inspect-glb.mjs';
-import { clusterWheels, pickWheels } from '../src/render/wheels.ts';
+import { clusterWheels, contactHubs, pickWheels } from '../src/render/wheels.ts';
 import { CARS } from '../src/game/cars.ts';
 
 // Bornes de vraisemblance, un peu plus larges que le seuil du loader : un pneu
@@ -101,19 +101,26 @@ for (const car of CARS) {
 
   if (!picks) {
     // Même repli que le loader : regrouper les sommets bas des pièces qui
-    // contiennent plusieurs roues (jantes F1 livrées en un maillage).
+    // contiennent plusieurs roues (jantes F1 livrées en un maillage, kart dont
+    // aucun objet ne porte de nom).
+    const namedParts = report.meshEntries.some((entry) =>
+      NAMED_WHEEL.test(`${entry.nodeName} ${entry.material}`),
+    );
     const parts = [];
     for (const entry of report.meshEntries) {
       const label = `${entry.nodeName} ${entry.material}`;
-      if (!NAMED_WHEEL.test(label) || FIXED_WHEEL.test(label)) continue;
-      const span = Math.max(
-        entry.max[0] - entry.min[0],
-        entry.max[2] - entry.min[2],
-      );
+      if (FIXED_WHEEL.test(label)) continue;
+      if (namedParts && !NAMED_WHEEL.test(label)) continue;
+      const span = Math.max(entry.max[0] - entry.min[0], entry.max[2] - entry.min[2]);
       if (span <= length * 0.15) continue;
       parts.push(readPrimitive(file, entry));
     }
-    picks = parts.length > 0 ? clusterWheels(parts, bodyBox) : null;
+    picks =
+      parts.length > 0
+        ? namedParts
+          ? clusterWheels(parts, bodyBox)
+          : contactHubs(parts, bodyBox)
+        : null;
   }
 
   if (!picks) {

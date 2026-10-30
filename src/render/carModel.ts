@@ -6,6 +6,7 @@ import type { CarDef } from '../game/cars.ts';
 import type { VehicleSpec } from '../physics/vehicle.ts';
 import {
   clusterWheels,
+  contactHubs,
   pickWheels,
   type Box3Data,
   type WheelCandidate,
@@ -53,9 +54,11 @@ const WHEEL_RADIUS_MAX_RATIO = 0.22;
 const WHEEL_CONTAINMENT = 1.02;
 /**
  * Réflexions : le ciel et les néons de la piste arrivent par l'environnement.
- * Au-dessus de 1, la peinture prend des reflets francs sans cramer les chromes.
+ * À 1, une peinture claire sous le plein soleil sortait blanche sur toute sa
+ * surface : le clearcoat renvoyait le ciel entier. 0,62 garde le vernis sans
+ * brûler la couleur de base.
  */
-const ENV_INTENSITY = 1.0;
+const ENV_INTENSITY = 0.62;
 /** Peinture vernie : une couche de clearcoat par-dessus la couleur de base. */
 const PAINT_MATERIAL = /paint|body|colou?r|carrosserie|peinture/i;
 const PAINT_CLEARCOAT = 1;
@@ -188,16 +191,46 @@ function subGeometry(source: THREE.BufferGeometry, vertices: number[]): THREE.Bu
 }
 
 /**
- * Répartit les triangles de pièces fusionnées vers le moyeu le plus proche.
- * Chaque morceau garde la matière de sa pièce d'origine : la jante reste une
- * jante, le pneu reste un pneu.
+ * Distance du sommet le plus éloigné d'un moyeu, dans le plan de la roue.
+ *
+ * La boîte englobante d'un pneu est un carré autour d'un cercle : ses coins
+ * mesurent √2 fois le rayon. Une jante passait donc pour une pièce 41 % trop
+ * grande, était refusée, et restait collée à la carrosserie — les pneus
+ * tournaient, les jantes non. La mesure se fait sur les vrais sommets.
  */
-function sliceByHubs(
+function radialExtent(geometry: THREE.BufferGeometry, hub: THREE.Vector3): number {
+  const position = geometry.attributes.position as THREE.BufferAttribute;
+  let farthest = 0;
+  for (let i = 0; i < position.count; i++) {
+    const radius = Math.hypot(position.getY(i) - hub.y, position.getZ(i) - hub.z);
+    if (radius > farthest) farthest = radius;
+  }
+  return farthest;
+}
+
+/**
+ * Découpe des roues dans des maillages qui ne les nomment pas.
+ *
+ * Le kart livre six objets muets, dont aucun ne s'appelle « roue » et dont
+ * chacun traverse la voiture. On ne peut donc pas les prendre en bloc : on
+ * garde les triangles qui tiennent **entiers** dans le cylindre d'un moyeu
+ * (largeur et rayon), et tout le reste retourne à la carrosserie. Sans ce
+ * test, le découpage vidait la caisse.
+ */
+function carveWheels(
   meshes: THREE.Mesh[],
   geometries: Map<THREE.Mesh, THREE.BufferGeometry>,
   picks: WheelPick[],
-): { geometry: THREE.BufferGeometry; material: THREE.Material | THREE.Material[]; corner: number }[] | null {
-  const pieces: {
+): {
+  body: { geometry: THREE.BufferGeometry; material: THREE.Material | THREE.Material[] }[];
+  wheels: {
+    geometry: THREE.BufferGeometry;
+    material: THREE.Material | THREE.Material[];
+    corner: number;
+  }[];
+} | null {
+  const body: { geometry: THREE.BufferGeometry; material: THREE.Material | THREE.Material[] }[] = [];
+  const wheels: {
     geometry: THREE.BufferGeometry;
     material: THREE.Material | THREE.Material[];
     corner: number;
@@ -207,32 +240,53 @@ function sliceByHubs(
     const position = source.attributes.position as THREE.BufferAttribute;
     const index = source.index;
     const count = index ? index.count : position.count;
+    const rest: number[] = [];
     const buckets: number[][] = [[], [], [], []];
     for (let i = 0; i < count; i += 3) {
       const a = index ? index.getX(i) : i;
       const b = index ? index.getX(i + 1) : i + 1;
       const c = index ? index.getX(i + 2) : i + 2;
-      const x = (position.getX(a) + position.getX(b) + position.getX(c)) / 3;
-      const z = (position.getZ(a) + position.getZ(b) + position.getZ(c)) / 3;
-      let best = 0;
-      let bestDistance = Infinity;
-      for (let k = 0; k < 4; k++) {
-        const dx = x - picks[k].hub[0];
-        const dz = z - picks[k].hub[2];
-        const distance = dx * dx + dz * dz;
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          best = k;
+      let corner = -1;
+      for (let k = 0; k < picks.length; k++) {
+        const pick = picks[k];
+        const halfWidth = (pick.halfWidth ?? pick.radius * 0.6) * 1.15;
+        let inside = true;
+        for (const vertex of [a, b, c]) {
+          if (Math.abs(position.getX(vertex) - pick.hub[0]) > halfWidth) {
+            inside = false;
+            break;
+          }
+          const dy = position.getY(vertex) - pick.hub[1];
+          const dz = position.getZ(vertex) - pick.hub[2];
+          if (Math.hypot(dy, dz) > pick.radius * 1.1) {
+            inside = false;
+            break;
+          }
+        }
+        if (inside) {
+          corner = k;
+          break;
         }
       }
-      buckets[best].push(a, b, c);
+      if (corner < 0) rest.push(a, b, c);
+      else buckets[corner].push(a, b, c);
     }
-    for (let corner = 0; corner < 4; corner++) {
-      if (buckets[corner].length === 0) continue;
-      pieces.push({ geometry: subGeometry(source, buckets[corner]), material: mesh.material, corner });
+    if (rest.length > 0) body.push({ geometry: subGeometry(source, rest), material: mesh.material });
+    for (let k = 0; k < picks.length; k++) {
+      // Un maillage ne contient pas forcément les quatre roues (le siège n'en
+      // a aucune) : on émet les morceaux non vides et on contrôle à la fin.
+      if (buckets[k].length === 0) continue;
+      wheels.push({
+        geometry: subGeometry(source, buckets[k]),
+        material: mesh.material,
+        corner: picks[k].corner,
+      });
     }
   }
-  return pieces.length > 0 ? pieces : null;
+  // Chaque coin doit avoir reçu de la matière : sinon le découpage a raté une
+  // roue, et mieux vaut des roues procédurales qu'une voiture à trois pattes.
+  if (new Set(wheels.map((piece) => piece.corner)).size !== picks.length) return null;
+  return { body, wheels };
 }
 
 function meshList(root: THREE.Object3D): THREE.Mesh[] {
@@ -619,40 +673,63 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
       box: boxOf(geometries.get(mesh)!),
     }));
     let detected = pickWheels(candidates, bodyData);
+    let carvedWheels = false;
     if (!detected) {
       // Modèles qui livrent leurs quatre roues dans un maillage par matière :
       // la boîte d'une telle pièce fait la taille de la voiture. On regroupe
       // alors les sommets bas en quatre moyeux, puis on répartit les triangles
       // de **ces pièces-là** — jamais ceux de la carrosserie, qui resterait
       // éclatée.
+      // Un fichier sans le moindre nom de roue (le kart) : toutes les pièces
+      // un peu grandes sont candidates. Sinon on ne touche qu'aux pièces qui
+      // s'appellent « wheel », comme avant.
+      const namedParts = meshes.some((mesh) => NAMED_WHEEL_PARTS.test(labels.get(mesh)!));
       const merged = meshes.filter((mesh) => {
         const label = labels.get(mesh)!;
-        if (!NAMED_WHEEL_PARTS.test(label) || FIXED_WHEEL_PARTS.test(label)) return false;
+        if (FIXED_WHEEL_PARTS.test(label)) return false;
+        if (namedParts && !NAMED_WHEEL_PARTS.test(label)) return false;
         const box = box3Of(mesh);
         const span = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
         return span > modelLength * 0.15;
       });
       const clusters =
         merged.length > 0
-          ? clusterWheels(
-              merged.map((mesh) => geometryPart(geometries.get(mesh)!)),
-              bodyData,
-            )
+          ? namedParts
+            ? clusterWheels(
+                merged.map((mesh) => geometryPart(geometries.get(mesh)!)),
+                bodyData,
+              )
+            : // Aucun nom de roue : seul le sol dit où elles sont.
+              contactHubs(
+                merged.map((mesh) => geometryPart(geometries.get(mesh)!)),
+                bodyData,
+              )
           : null;
-      const pieces = clusters ? sliceByHubs(merged, geometries, clusters) : null;
-      if (clusters && pieces) {
+      const carved = clusters ? carveWheels(merged, geometries, clusters) : null;
+      if (clusters && carved) {
         for (const mesh of merged) {
           meshes.splice(meshes.indexOf(mesh), 1);
           geometries.delete(mesh);
         }
-        for (const piece of pieces) {
+        for (const piece of carved.body) {
+          const mesh = new THREE.Mesh(piece.geometry, piece.material);
+          meshes.push(mesh);
+          geometries.set(mesh, piece.geometry);
+          labels.set(mesh, 'body');
+        }
+        for (const piece of carved.wheels) {
           const mesh = new THREE.Mesh(piece.geometry, piece.material);
           meshes.push(mesh);
           geometries.set(mesh, piece.geometry);
           labels.set(mesh, 'wheel');
+          owner.set(mesh, piece.corner);
         }
         detected = clusters;
-        console.log(`${def.id}: ${clusters.length} moyeux regroupés dans ${merged.length} maillages fusionnés`);
+        carvedWheels = true;
+        console.log(
+          `${def.id}: ${clusters.length} moyeux découpés dans ${merged.length} maillages ` +
+            `(${carved.wheels.length} morceaux de roue)`,
+        );
       }
     }
     if (!detected) {
@@ -663,26 +740,16 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
     radii = detected.map(() => detected[0].radius);
     halfWidths = detected.map(() => detected[0].radius * 0.5);
     // Chaque pièce rejoint le moyeu le plus proche, à condition de tenir dans
-    // son pneu.
-    for (const mesh of meshes) {
+    // son pneu. Un découpage par cylindre a déjà posé les morceaux de roue.
+    if (!carvedWheels) for (const mesh of meshes) {
       const box = box3Of(mesh);
       let best = -1;
       let bestDistance = Infinity;
       for (let index = 0; index < 4; index++) {
         const hub = hubs[index];
-        let farthest = 0;
-        let distance = 0;
-        for (let corner = 0; corner < 8; corner++) {
-          const point = new THREE.Vector3(
-            corner & 1 ? box.max.x : box.min.x,
-            corner & 2 ? box.max.y : box.min.y,
-            corner & 4 ? box.max.z : box.min.z,
-          );
-          const radial = Math.hypot(point.y - hub.y, point.z - hub.z);
-          farthest = Math.max(farthest, radial);
-          distance += radial / 8;
-        }
+        const farthest = radialExtent(geometries.get(mesh)!, hub);
         if (farthest > radii[index] * WHEEL_CONTAINMENT) continue;
+        const distance = farthest;
         if (Math.abs(box.max.x - hub.x) > halfWidths[index] * 1.3) continue;
         if (Math.abs(box.min.x - hub.x) > halfWidths[index] * 1.3) continue;
         if (distance < bestDistance) {
@@ -695,7 +762,7 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
     console.log(
       `${def.id}: roues mesurées à la forme — ` +
         detected.map((pick) => `coin ${pick.corner}`).join(', ') +
-        `, rayon ${detected[0].radius.toFixed(3)}`,
+        `, rayon ${detected[0].radius.toFixed(3)}, ${owner.size} maillages`,
     );
   } else {
     // Les pièces reconnues rejoignent leur coin.
@@ -716,19 +783,9 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
         const hub = hubs[index];
         if (Math.abs(box.max.x - hub.x) > halfWidths[index] * 1.25) continue;
         if (Math.abs(box.min.x - hub.x) > halfWidths[index] * 1.25) continue;
-        let farthest = 0;
-        let distance = 0;
-        for (let corner = 0; corner < 8; corner++) {
-          const point = new THREE.Vector3(
-            corner & 1 ? box.max.x : box.min.x,
-            corner & 2 ? box.max.y : box.min.y,
-            corner & 4 ? box.max.z : box.min.z,
-          );
-          const radial = Math.hypot(point.y - hub.y, point.z - hub.z);
-          farthest = Math.max(farthest, radial);
-          distance += radial / 8;
-        }
+        const farthest = radialExtent(geometries.get(mesh)!, hub);
         if (farthest > radii[index] * WHEEL_CONTAINMENT) continue;
+        const distance = farthest;
         if (distance < bestDistance) {
           bestDistance = distance;
           best = index;

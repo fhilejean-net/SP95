@@ -21,6 +21,8 @@ export interface WheelPick {
   corner: 0 | 1 | 2 | 3;
   hub: [number, number, number];
   radius: number;
+  /** Demi-largeur réellement mesurée du paquet de sommets, en unités du modèle. */
+  halfWidth?: number;
 }
 
 /** Un nœud ou un matériau qui sent la roue : jante, pneu, disque, frein. */
@@ -141,7 +143,12 @@ export interface WheelPart {
  * Renvoie `null` si les paquets ne ressemblent pas à quatre roues : mieux vaut
  * des roues procédurales qu'un découpage au hasard.
  */
-export function clusterWheels(parts: WheelPart[], body: Box3Data): WheelPick[] | null {
+export function clusterWheels(
+  parts: WheelPart[],
+  body: Box3Data,
+  options: { outboard?: number } = {},
+): WheelPick[] | null {
+  const outboard = options.outboard ?? 0;
   const size = [0, 1, 2].map((axis) => body.max[axis] - body.min[axis]);
   const length = Math.max(size[0], size[2]);
   const centre = [0, 1, 2].map((axis) => (body.min[axis] + body.max[axis]) / 2);
@@ -162,6 +169,10 @@ export function clusterWheels(parts: WheelPart[], body: Box3Data): WheelPick[] |
       // caisse est un pare-brise, un aileron ou un casque.
       if (!(y <= centre[1])) continue;
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+      // Une roue est une masse *extérieure* et basse. Sans ce filtre, le
+      // plancher et le moteur du kart noient les quatre paquets : le
+      // regroupement rendait quatre quartiers de châssis, donc aucun moyeu.
+      if (outboard > 0 && Math.abs(x - centre[0]) < size[0] * outboard) continue;
       xs.push(x);
       ys.push(y);
       zs.push(z);
@@ -254,8 +265,9 @@ export function clusterWheels(parts: WheelPart[], body: Box3Data): WheelPick[] |
     }
     if (!(radius > length * 0.04) || !(radius < length * 0.25)) return null;
     const corner = ((hubX >= centre[0] ? 1 : 0) + (hubZ >= centre[2] ? 2 : 0)) as 0 | 1 | 2 | 3;
-    picks.push({ corner, hub: [hubX, hubY, hubZ], radius });
-    halfWidths.push((maxX - minX) / 2);
+    const halfWidth = (maxX - minX) / 2;
+    picks.push({ corner, hub: [hubX, hubY, hubZ], radius, halfWidth });
+    halfWidths.push(halfWidth);
   }
 
   // Quatre coins distincts, sinon le regroupement a avalé deux roues ensemble.
@@ -263,4 +275,163 @@ export function clusterWheels(parts: WheelPart[], body: Box3Data): WheelPick[] |
   const halfTrack = picks.reduce((sum, pick) => sum + Math.abs(pick.hub[0]), 0) / 4;
   if (!(halfTrack > length * 0.08)) return null;
   return picks.sort((a, b) => a.corner - b.corner);
+}
+
+/**
+ * Retrouve quatre moyeux par les zones de contact au sol.
+ *
+ * Un kart n'a aucun nom de roue et ses six objets traversent toute la
+ * voiture : ni les noms ni les boîtes ne disent où sont les roues. Ce qui les
+ * trahit, c'est le sol — seules les roues y touchent. On prend donc la bande
+ * la plus basse du modèle, on la regroupe en quatre paquets (x/z), puis on
+ * mesure chaque roue sur la colonne de sommets qui lui correspond : sa hauteur
+ * donne le diamètre, sa largeur donne la demi-largeur.
+ */
+export function contactHubs(parts: WheelPart[], body: Box3Data): WheelPick[] | null {
+  const size = [0, 1, 2].map((axis) => body.max[axis] - body.min[axis]);
+  const length = Math.max(size[0], size[2]);
+  const centre = [0, 1, 2].map((axis) => (body.min[axis] + body.max[axis]) / 2);
+  const groundY = body.min[1];
+  if (!(length > 0) || !(size[0] > 0)) return null;
+
+  const band = groundY + size[1] * 0.14;
+  const xs: number[] = [];
+  const zs: number[] = [];
+  for (const part of parts) {
+    const count = part.indices.length;
+    const step = Math.max(1, Math.floor(count / 20000));
+    for (let i = 0; i < count; i += step) {
+      const vertex = part.indices[i] * 3;
+      const y = part.positions[vertex + 1];
+      if (!(y <= band)) continue;
+      const x = part.positions[vertex];
+      const z = part.positions[vertex + 2];
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      xs.push(x);
+      zs.push(z);
+    }
+  }
+  if (xs.length < 120) return null;
+
+  const centres = [
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+  ].map(([sx, sz]) => {
+    let n = 0;
+    let mx = 0;
+    let mz = 0;
+    for (let i = 0; i < xs.length; i++) {
+      if ((xs[i] >= centre[0] ? 1 : -1) !== sx) continue;
+      if ((zs[i] >= centre[2] ? 1 : -1) !== sz) continue;
+      mx += xs[i];
+      mz += zs[i];
+      n++;
+    }
+    return n > 0 ? [mx / n, mz / n] : [centre[0] + sx * length * 0.3, centre[2] + sz * length * 0.3];
+  });
+
+  const assignment = new Int8Array(xs.length).fill(-1);
+  for (let iteration = 0; iteration < 18; iteration++) {
+    let moved = 0;
+    for (let i = 0; i < xs.length; i++) {
+      let best = 0;
+      let bestDistance = Infinity;
+      for (let k = 0; k < 4; k++) {
+        const dx = xs[i] - centres[k][0];
+        const dz = zs[i] - centres[k][1];
+        const distance = dx * dx + dz * dz;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = k;
+        }
+      }
+      if (assignment[i] !== best) {
+        assignment[i] = best;
+        moved++;
+      }
+    }
+    for (let k = 0; k < 4; k++) {
+      let n = 0;
+      let mx = 0;
+      let mz = 0;
+      for (let i = 0; i < xs.length; i++) {
+        if (assignment[i] !== k) continue;
+        mx += xs[i];
+        mz += zs[i];
+        n++;
+      }
+      if (n > 0) centres[k] = [mx / n, mz / n];
+    }
+    if (moved === 0) break;
+  }
+
+  const window = Math.max(size[0] * 0.15, length * 0.04);
+  const picks: WheelPick[] = [];
+  for (let k = 0; k < 4; k++) {
+    let n = 0;
+    let sumX = 0;
+    let sumZ = 0;
+    for (let i = 0; i < xs.length; i++) {
+      if (assignment[i] !== k) continue;
+      sumX += xs[i];
+      sumZ += zs[i];
+      n++;
+    }
+    if (n < 20) return null;
+    const hubX = sumX / n;
+    const hubZ = sumZ / n;
+
+    // La colonne de sommets au-dessus de ce contact : c'est la roue.
+    let top = groundY;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (const part of parts) {
+      const count = part.indices.length;
+      const step = Math.max(1, Math.floor(count / 30000));
+      for (let i = 0; i < count; i += step) {
+        const vertex = part.indices[i] * 3;
+        const x = part.positions[vertex];
+        const z = part.positions[vertex + 2];
+        if (Math.abs(x - hubX) > window || Math.abs(z - hubZ) > window) continue;
+        const y = part.positions[vertex + 1];
+        if (y > top) top = y;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+      }
+    }
+    const radius = (top - groundY) / 2;
+    const halfWidth = (maxX - minX) / 2;
+    if (!(halfWidth > 0)) return null;
+    const corner = ((hubX >= centre[0] ? 1 : 0) + (hubZ >= centre[2] ? 2 : 0)) as 0 | 1 | 2 | 3;
+    picks.push({ corner, hub: [hubX, groundY + radius, hubZ], radius, halfWidth });
+  }
+  if (new Set(picks.map((pick) => pick.corner)).size !== 4) return null;
+
+  // Une voiture est symétrique. Sur le kart, la carrosserie au-dessus des
+  // roues avant gonflait leur hauteur (rayons 17,8 et 12,5 pour un même pneu) :
+  // la médiane des quatre mesures redonne quatre roues identiques et des
+  // moyeux alignés, au lieu de suivre le défaut du modèle.
+  const radius = median(picks.map((pick) => pick.radius));
+  const halfWidth = median(picks.map((pick) => pick.halfWidth ?? radius * 0.5));
+  const halfTrack = median(picks.map((pick) => Math.abs(pick.hub[0] - centre[0])));
+  const frontZ = median(picks.filter((pick) => pick.corner < 2).map((pick) => pick.hub[2]));
+  const rearZ = median(picks.filter((pick) => pick.corner >= 2).map((pick) => pick.hub[2]));
+  if (!(radius > length * 0.04) || !(radius < length * 0.25)) return null;
+  if (!(halfTrack > length * 0.08)) return null;
+  if (!(Math.abs(rearZ - frontZ) > length * 0.15)) return null;
+
+  return picks
+    .map((pick) => ({
+      corner: pick.corner,
+      hub: [
+        centre[0] + (pick.corner % 2 === 1 ? halfTrack : -halfTrack),
+        groundY + radius,
+        pick.corner >= 2 ? rearZ : frontZ,
+      ] as [number, number, number],
+      radius,
+      halfWidth,
+    }))
+    .sort((a, b) => a.corner - b.corner);
 }

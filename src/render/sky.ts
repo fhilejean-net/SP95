@@ -7,8 +7,9 @@ import { Sky } from 'three/addons/objects/Sky.js';
  * ressemblait à une autre. Chaque preset règle le soleil, le ciel, l'ambiance,
  * le brouillard, la couleur de fond et surtout l'exposition du rendu.
  *
- * Les valeurs sont mesurées à l'écran : une exposition de 0,74 avec un soleil
- * bas donne une scène lisible sans brûler les carrosseries claires.
+ * Les valeurs sont mesurées à l'écran : sous le plein soleil, 0,62 d'exposition
+ * garde le ciel bleu et les carrosseries claires detailées, là où 0,74 les
+ * sortait blanches.
  */
 export interface SkyPreset {
   id: string;
@@ -45,12 +46,12 @@ export const SKY_PRESETS: SkyPreset[] = [
     mieCoefficient: 0.004,
     mieDirectionalG: 0.78,
     sunColor: 0xffdcae,
-    sunIntensity: 1.8,
+    sunIntensity: 1.6,
     hemisphereSky: 0x9fb8d6,
     hemisphereGround: 0x4a4538,
     hemisphereIntensity: 0.26,
-    environmentIntensity: 0.4,
-    exposure: 0.78,
+    environmentIntensity: 0.3,
+    exposure: 0.66,
     fogColor: 0xaebcc4,
     fogNear: 460,
     fogFar: 1950,
@@ -70,8 +71,8 @@ export const SKY_PRESETS: SkyPreset[] = [
     hemisphereSky: 0xb2c2cf,
     hemisphereGround: 0x504b3e,
     hemisphereIntensity: 0.38,
-    environmentIntensity: 0.38,
-    exposure: 0.86,
+    environmentIntensity: 0.3,
+    exposure: 0.74,
     fogColor: 0xbfc8cc,
     fogNear: 240,
     fogFar: 1250,
@@ -91,8 +92,8 @@ export const SKY_PRESETS: SkyPreset[] = [
     hemisphereSky: 0xa7b6c4,
     hemisphereGround: 0x46463f,
     hemisphereIntensity: 0.62,
-    environmentIntensity: 0.55,
-    exposure: 0.88,
+    environmentIntensity: 0.42,
+    exposure: 0.76,
     fogColor: 0x9fa9b0,
     fogNear: 320,
     fogFar: 1500,
@@ -108,12 +109,12 @@ export const SKY_PRESETS: SkyPreset[] = [
     mieCoefficient: 0.003,
     mieDirectionalG: 0.76,
     sunColor: 0xfff3e0,
-    sunIntensity: 2.2,
+    sunIntensity: 1.95,
     hemisphereSky: 0xa8c4e6,
     hemisphereGround: 0x5a5544,
     hemisphereIntensity: 0.3,
-    environmentIntensity: 0.48,
-    exposure: 0.74,
+    environmentIntensity: 0.36,
+    exposure: 0.62,
     fogColor: 0xa9c0d2,
     fogNear: 520,
     fogFar: 2100,

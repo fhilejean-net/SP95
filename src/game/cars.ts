@@ -669,14 +669,19 @@ export const CARS: CarDef[] = [
       arbFront: 30000,
       arbRear: 22000,
       rideHeight: 0.14,
-      wheelRadius: 0.22,
-      wheelTravel: 0.06,
+      // Cotes mesurées sur le GLB une fois mis à l'échelle de son empattement :
+      // rayon 13,9 et demi-voie 42,9 pour 72,75 d'empattement, soit 0,315 m et
+      // 1,95 m de voie. L'ancienne fiche (0,22 m de rayon, 1,35 m de voie,
+      // 2,3 m de long) était 30 % plus petite que le modèle : la caisse
+      // débordait de son collider et le kart semblait flotter puis rebondir.
+      wheelRadius: 0.32,
+      wheelTravel: 0.08,
       brakeTorque: 2600,
       maxSteer: 1.15,
       steerRate: 4.4,
       wheelbase: 1.65,
-      track: 1.35,
-      bodyHalf: { x: 0.75, y: 0.3, z: 1.15 },
+      track: 1.95,
+      bodyHalf: { x: 1, y: 0.5, z: 1.9 },
       driveFront: 0,
       tractionControl: 0.85,
     },

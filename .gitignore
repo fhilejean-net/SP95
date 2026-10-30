@@ -8,3 +8,6 @@ dev-server.log
 .preview.pid
 preview.log
 artifacts/
+# Bibliothèques système de Chromium extraites sans root, et cache apt local.
+.sysroot/
+.apt/

@@ -12,7 +12,10 @@
     "smoke": "node scripts/smoke.mjs",
     "typecheck": "tsc --noEmit",
     "models:prep": "node scripts/prep-models.mjs",
-    "models:verify": "node --experimental-strip-types scripts/verify-models.mjs"
+    "models:verify": "node --experimental-strip-types scripts/verify-models.mjs",
+    "car:analyze": "node --experimental-strip-types scripts/analyze-car.mjs",
+    "shot": "node scripts/shoot.mjs",
+    "chrome:libs": "bash scripts/chrome-libs.sh"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

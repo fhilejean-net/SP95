@@ -166,7 +166,7 @@ function makeRenderer(lowFx: boolean): THREE.WebGLRenderer {
   // disponible, et le choisir explicitement évite l'avertissement par défaut.
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.92;
+  renderer.toneMappingExposure = 0.82;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // Debug telemetry should count every pass of the frame.
   renderer.info.autoReset = false;
