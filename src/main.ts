@@ -56,6 +56,7 @@ import { createSky, NIGHT_PRESET, pickSkyPreset } from './render/sky.ts';
 import { createCar, updateCarVisual, type CarVisual } from './render/car.ts';
 import { createBike, type BikeVisual } from './render/bike.ts';
 import { loadBikeVisual } from './render/bikeModel.ts';
+import { loadDeerModel } from './render/deerModel.ts';
 import { createSparks } from './render/sparks.ts';
 import { createTireSmoke } from './render/tireSmoke.ts';
 import { loadCarVisual } from './render/carModel.ts';
@@ -554,33 +555,47 @@ async function boot() {
     composer.addPass(new OutputPass());
   }
 
-  // Un chevreuil peut traverser devant la voiture ; sa collision suit sa pose.
-  let deer: { group: THREE.Group; body: RAPIER.RigidBody; origin: THREE.Vector3; direction: THREE.Vector3; elapsed: number } | null = null;
+  // Un cerf peut traverser devant la voiture ; sa collision suit sa pose.
+  let deer: {
+    group: THREE.Group;
+    body: RAPIER.RigidBody;
+    origin: THREE.Vector3;
+    direction: THREE.Vector3;
+    elapsed: number;
+    mixer: THREE.AnimationMixer | null;
+    ready: boolean;
+  } | null = null;
   let deerTimer = 32;
   if (MOUNTAIN_MAP) {
     const group = new THREE.Group();
-    const fur = new THREE.MeshStandardMaterial({ color: 0x856547, roughness: 1 });
-    const part = (w: number, h: number, d: number, x: number, y: number, z: number) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), fur);
-      mesh.position.set(x, y, z);
-      group.add(mesh);
-    };
-    part(0.55, 0.55, 1.1, 0, 0.9, 0);
-    part(0.32, 0.6, 0.32, 0, 1.3, -0.5);
-    part(0.35, 0.3, 0.45, 0, 1.6, -0.65);
-    for (const x of [-0.2, 0.2]) for (const z of [-0.38, 0.38]) part(0.1, 0.75, 0.1, x, 0.38, z);
-    part(0.12, 0.25, 0.1, -0.16, 1.82, -0.62);
-    part(0.12, 0.25, 0.1, 0.16, 1.82, -0.62);
+    group.name = 'deer';
     group.visible = false;
     scene.add(group);
     const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -100, 0));
-    world.createCollider(RAPIER.ColliderDesc.cuboid(0.35, 0.8, 0.6)
-      .setTranslation(0, 0.8, 0).setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD), body);
-    deer = { group, body, origin: new THREE.Vector3(), direction: new THREE.Vector3(), elapsed: -1 };
+    world.createCollider(RAPIER.ColliderDesc.cuboid(0.4, 0.9, 1)
+      .setTranslation(0, 0.9, 0).setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD), body);
+    deer = {
+      group,
+      body,
+      origin: new THREE.Vector3(),
+      direction: new THREE.Vector3(),
+      elapsed: -1,
+      mixer: null,
+      ready: false,
+    };
+    // Le GLB pèse 13 Mo : il arrive après le premier tour de roue, pas devant.
+    void loadDeerModel()
+      .then((model) => {
+        if (!deer) return;
+        deer.group.add(model.object);
+        deer.mixer = model.mixer;
+        deer.ready = true;
+      })
+      .catch((error) => console.warn('Modèle de cerf indisponible.', error));
   }
 
   function updateDeer(dt: number): void {
-    if (!deer || mode === 'menu' || paused || replay) return;
+    if (!deer || !deer.ready || mode === 'menu' || paused || replay) return;
     if (deer.elapsed < 0) {
       deerTimer -= dt;
       if (deerTimer > 0 || vehicle.telemetryState.speedKmh < 15) return;
@@ -602,6 +617,7 @@ async function boot() {
       deer.group.rotation.y = Math.atan2(-deer.direction.x, -deer.direction.z);
       deer.group.visible = true;
       deer.elapsed = 0;
+      deer.mixer?.setTime(0);
     }
     deer.elapsed += dt;
     const pos = deer.origin.clone().addScaledVector(deer.direction, Math.min(24, deer.elapsed * 5));
@@ -609,6 +625,7 @@ async function boot() {
     pos.y = Math.max(groundAt(pos.x, pos.z), deer.origin.y);
     deer.group.position.copy(pos);
     deer.body.setNextKinematicTranslation(pos);
+    deer.mixer?.update(dt);
     if (deer.elapsed > 5) {
       deer.group.visible = false;
       deer.body.setNextKinematicTranslation({ x: 0, y: -100, z: 0 });
