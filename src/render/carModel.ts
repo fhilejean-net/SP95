@@ -674,6 +674,18 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
     }));
     let detected = pickWheels(candidates, bodyData);
     let carvedWheels = false;
+    // Un fichier qui ne nomme aucune roue (le kart : six objets muets qui
+    // traversent toute la voiture) ne se découpe pas de façon fiable : le
+    // cylindre du moyeu attrape les bas de caisse et l'échappement, qui se
+    // mettent alors à tourner avec la roue. On garde la carrosserie entière et
+    // on monte des roues procédurales dans ses passages de roue.
+    const nameless =
+      !meshes.some((mesh) => NAMED_WHEEL_PARTS.test(labels.get(mesh)!)) &&
+      !detected;
+    if (nameless) {
+      console.warn(`${def.id}: aucun nom de roue — roues procédurales`);
+      return buildFallbackCar(spec, meshes, geometries, body);
+    }
     if (!detected) {
       // Modèles qui livrent leurs quatre roues dans un maillage par matière :
       // la boîte d'une telle pièce fait la taille de la voiture. On regroupe

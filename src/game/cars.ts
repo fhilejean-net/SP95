@@ -601,8 +601,11 @@ export const CARS: CarDef[] = [
     origin: '2012',
     // Ré-exporté sans simplification (10 839 triangles) : 1,2 → 0,66 Mo.
     model: 'models/vehicles/crz_opt.glb',
-    // Ce modèle-ci est authoré nez vers -Z : rien à retourner.
-    yaw: 0,
+    // Ce modèle est authoré nez vers +Z comme la F1 et la Supra : sans la
+    // demi-tour il roulait en marche arrière et ses vraies roues avant
+    // tombaient dans les emplacements arrière — ce sont donc les arrière qui
+    // braquaient. Le commentaire d'origine affirmait le contraire.
+    yaw: Math.PI,
     spec: {
       ...STOCK_SPEC,
       name: 'CR-Z',

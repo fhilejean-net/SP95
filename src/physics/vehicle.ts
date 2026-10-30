@@ -374,9 +374,16 @@ export class Vehicle {
     });
     this.restLength = spec.rideHeight + (spec.mass * 9.81) / (4 * spec.springK);
     this.maxLength = this.restLength + spec.wheelTravel;
-    this.bumpStop = this.restLength - 0.22;
+    // La butée doit rester **sous** la longueur libre : sur une caisse légère et
+    // basse (le kart, 0,149 m de course), `restLength - 0,22` tombait à -0,07 et
+    // la butée poussait en permanence — le kart rebondissait sur du vide. La
+    // moitié de la course garde le débattement utile sur les voitures basses
+    // et ne change rien au-dessus de 0,44 m.
+    this.bumpStop = Math.max(this.restLength - 0.22, this.restLength * 0.5);
     this.wheelInertia = 1.6 * Math.pow(spec.wheelRadius / 0.34, 2);
-    this.maxSpringForce = Math.max(30000, spec.mass * 33);
+    // Le plancher de 30 kN valait quatorze fois le poids du kart : une butée
+    // touchée le lançait en l'air. Le plancher suit maintenant la masse.
+    this.maxSpringForce = Math.max(8000, spec.mass * 33);
 
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
