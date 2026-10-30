@@ -98,12 +98,13 @@ commit hash so the history stays readable.
   capture strip shows a left and a right corner with mirrored chevrons.
   *Cycle 14:* `9d5f926` — Panneaux gauche/droite différenciés, tests des directions et atlas contrôlé ; tsc, 114 tests et build ok
 
-- [ ] **The debug surface is declared twice** — `S`. `window.__sp95` is a seventy-field object
+- [x] ~~**The debug surface is declared twice**~~ — `S`. `window.__sp95` is a seventy-field object
   literal plus a hand-written type literal, and they have already drifted: `replayState` was
   added to one and not the other, leaving `tsc` red on `main`. Derive the global type from the
   object itself so a field cannot compile out of sync.
   *Done when:* the hand-written type block in `src/main.ts` is gone, the window type is derived
   with `typeof`, and `npx tsc --noEmit` plus `npm test` pass.
+  *Cycle 15:* `e0b60f5` — Type global dérivé de la surface exposée ; tsc, 114 tests et build ok
 
 ## Ideas (not scheduled)
 

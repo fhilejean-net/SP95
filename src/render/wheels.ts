@@ -121,3 +121,146 @@ function median(values: number[]): number {
   const middle = sorted.length >> 1;
   return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
+
+/** Positions d'une pièce, déjà cuites en repère voiture. */
+export interface WheelPart {
+  positions: ArrayLike<number>;
+  indices: ArrayLike<number>;
+}
+
+/**
+ * Retrouve quatre moyeux dans des pièces qui contiennent plusieurs roues.
+ *
+ * La F1 livre ses quatre jantes dans un maillage par matière : la boîte d'une
+ * telle pièce fait la taille de la voiture, et un découpage par quadrant
+ * ramassait les demi-arbres avec les roues (des morceaux de deux mètres de
+ * long). On regroupe donc les **sommets bas** en quatre paquets (k-means sur
+ * x/z, amorcé par les quadrants) : les roues sont les seules masses basses et
+ * extérieures, ce qui donne un moyeu par coin.
+ *
+ * Renvoie `null` si les paquets ne ressemblent pas à quatre roues : mieux vaut
+ * des roues procédurales qu'un découpage au hasard.
+ */
+export function clusterWheels(parts: WheelPart[], body: Box3Data): WheelPick[] | null {
+  const size = [0, 1, 2].map((axis) => body.max[axis] - body.min[axis]);
+  const length = Math.max(size[0], size[2]);
+  const centre = [0, 1, 2].map((axis) => (body.min[axis] + body.max[axis]) / 2);
+  if (!(length > 0)) return null;
+
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const zs: number[] = [];
+  for (const part of parts) {
+    const count = part.indices.length;
+    const step = Math.max(1, Math.floor(count / 24000));
+    for (let i = 0; i < count; i += step) {
+      const vertex = part.indices[i] * 3;
+      const x = part.positions[vertex];
+      const y = part.positions[vertex + 1];
+      const z = part.positions[vertex + 2];
+      // Une roue touche le sol : tout ce qui est au-dessus de la ceinture de
+      // caisse est un pare-brise, un aileron ou un casque.
+      if (!(y <= centre[1])) continue;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+      xs.push(x);
+      ys.push(y);
+      zs.push(z);
+    }
+  }
+  if (xs.length < 200) return null;
+
+  // Amorçage : moyenne de chaque quadrant autour du centre de la caisse.
+  const centres = [
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+  ].map(([sx, sz]) => {
+    let n = 0;
+    let mx = 0;
+    let mz = 0;
+    for (let i = 0; i < xs.length; i++) {
+      if ((xs[i] >= centre[0] ? 1 : -1) !== sx) continue;
+      if ((zs[i] >= centre[2] ? 1 : -1) !== sz) continue;
+      mx += xs[i];
+      mz += zs[i];
+      n++;
+    }
+    return n > 0 ? [mx / n, mz / n] : [centre[0] + sx * length * 0.3, centre[2] + sz * length * 0.3];
+  });
+
+  const assignment = new Int8Array(xs.length).fill(-1);
+  for (let iteration = 0; iteration < 18; iteration++) {
+    let moved = 0;
+    for (let i = 0; i < xs.length; i++) {
+      let best = 0;
+      let bestDistance = Infinity;
+      for (let k = 0; k < 4; k++) {
+        const dx = xs[i] - centres[k][0];
+        const dz = zs[i] - centres[k][1];
+        const distance = dx * dx + dz * dz;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = k;
+        }
+      }
+      if (assignment[i] !== best) {
+        assignment[i] = best;
+        moved++;
+      }
+    }
+    for (let k = 0; k < 4; k++) {
+      let n = 0;
+      let mx = 0;
+      let mz = 0;
+      for (let i = 0; i < xs.length; i++) {
+        if (assignment[i] !== k) continue;
+        mx += xs[i];
+        mz += zs[i];
+        n++;
+      }
+      if (n > 0) centres[k] = [mx / n, mz / n];
+    }
+    if (moved === 0) break;
+  }
+
+  const picks: WheelPick[] = [];
+  const halfWidths: number[] = [];
+  for (let k = 0; k < 4; k++) {
+    let n = 0;
+    let sumX = 0;
+    let sumY = 0;
+    let sumZ = 0;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (let i = 0; i < xs.length; i++) {
+      if (assignment[i] !== k) continue;
+      sumX += xs[i];
+      sumY += ys[i];
+      sumZ += zs[i];
+      minX = Math.min(minX, xs[i]);
+      maxX = Math.max(maxX, xs[i]);
+      n++;
+    }
+    if (n < 50) return null;
+    const hubX = sumX / n;
+    const hubY = sumY / n;
+    const hubZ = sumZ / n;
+    let radius = 0;
+    for (let i = 0; i < xs.length; i++) {
+      if (assignment[i] !== k) continue;
+      // Le rayon se lit dans le plan de la roue (y/z), pas en largeur.
+      radius = Math.max(radius, Math.hypot(ys[i] - hubY, zs[i] - hubZ));
+    }
+    if (!(radius > length * 0.04) || !(radius < length * 0.25)) return null;
+    const corner = ((hubX >= centre[0] ? 1 : 0) + (hubZ >= centre[2] ? 2 : 0)) as 0 | 1 | 2 | 3;
+    picks.push({ corner, hub: [hubX, hubY, hubZ], radius });
+    halfWidths.push((maxX - minX) / 2);
+  }
+
+  // Quatre coins distincts, sinon le regroupement a avalé deux roues ensemble.
+  if (new Set(picks.map((pick) => pick.corner)).size !== 4) return null;
+  const halfTrack = picks.reduce((sum, pick) => sum + Math.abs(pick.hub[0]), 0) / 4;
+  if (!(halfTrack > length * 0.08)) return null;
+  return picks.sort((a, b) => a.corner - b.corner);
+}

@@ -14,11 +14,11 @@ modifie pas le bloc d'état à la main.
 <!-- state:start -->
 status: idle
 task: —
-cycle: 14
+cycle: 15
 started: —
-heartbeat: 2026-10-29T22:30:53Z
-commit: 9d5f926
-owner: session-12533
+heartbeat: 2026-10-29T22:36:04Z
+commit: e0b60f5
+owner: session-14139
 <!-- state:end -->
 
 ## Journal
@@ -39,3 +39,4 @@ owner: session-12533
 | 12 | 2026-10-28 | Braking markers before every corner | `5fb74fd` | Panneaux 150/100/50 dans le dégagement avant les entrées de virage, faces vers la voiture, plan pur + rendu partagé ; 4 tests, tsc ok, 104/104, build ok, planche de captures ; type du panneau de debug replay corrigé (tsc était rouge sur main) |
 | 13 | 2026-10-29 | Circuit look: portique, palissade, gravier, stands | `9e93ede` | portique rattaché, palissade continue, gravier progressif, stands détaillés ; 3 tests, tsc ok, 107/107 |
 | 14 | 2026-10-29 | Braking boards should point at the corner | `9d5f926` | Panneaux gauche/droite différenciés, tests des directions et atlas contrôlé ; tsc, 114 tests et build ok |
+| 15 | 2026-10-29 | The debug surface is declared twice | `e0b60f5` | Type global dérivé de la surface exposée ; tsc, 114 tests et build ok |

@@ -427,9 +427,8 @@ export const CARS: CarDef[] = [
     label: 'McLaren MCL35M',
     detail: 'V6 1,6 L hybride · 1 000 ch · 752 kg',
     origin: 'Formule 1 · 2021',
-    // Version optimisée du GLB fourni : 23,4 Mo → 3,8 Mo (meshopt + WebP),
-    // sans perte visible à l'écran. Le décodeur meshopt est branché dans
-    // carModel.ts, sinon la géométrie n'arrive pas.
+    // Ré-exporté depuis le GLB fourni sans simplification (102 081 triangles,
+    // comme l'original) et avec ses textures 4096 en WebP q92 : 23,4 → 13,5 Mo.
     model: 'models/vehicles/f1_mclaren_mcl35m_opt.glb',
     // Le nez du modèle pointe vers +Z : sans la demi-tour, la voiture roulait
     // en marche arrière et les roues avant du jeu tombaient sur les arrières
@@ -480,7 +479,7 @@ export const CARS: CarDef[] = [
     label: 'Toyota Supra MK IV',
     detail: '2JZ-GTE 3,0 L biturbo · 450 Nm · propulsion',
     origin: 'Fast & Furious · 1994',
-    // Version optimisée (meshopt + WebP) : 15,1 Mo → 2,8 Mo.
+    // Ré-exporté sans simplification (220 583 triangles) : 15,1 → 11,7 Mo.
     model: 'models/vehicles/supra_opt.glb',
     // Le pack Sketchfab est authoré nez vers +Z, comme la F1.
     yaw: Math.PI,
@@ -520,7 +519,7 @@ export const CARS: CarDef[] = [
     label: 'Mazda RX-7 Veilside',
     detail: '13B-REW birotor biturbo · 360 Nm · propulsion',
     origin: 'Tokyo Drift · 1997',
-    // Version optimisée : 13,1 Mo → 2,4 Mo.
+    // Ré-exporté sans simplification (212 953 triangles) : 13,1 → 9,9 Mo.
     model: 'models/vehicles/rx7_veilside_opt.glb',
     yaw: Math.PI,
     spec: {
@@ -559,7 +558,7 @@ export const CARS: CarDef[] = [
     label: 'Nissan Skyline GT-R R34',
     detail: 'RB26DETT 2,6 L biturbo · 460 Nm · ATTESA',
     origin: '2 Fast 2 Furious · 1999',
-    // Version optimisée : 15,9 Mo → 4,5 Mo.
+    // Ré-exporté sans simplification (266 060 triangles) : 15,9 → 12,0 Mo.
     model: 'models/vehicles/skyline_r34_opt.glb',
     yaw: Math.PI,
     spec: {
@@ -600,7 +599,7 @@ export const CARS: CarDef[] = [
     label: 'Honda CR-Z',
     detail: '1,5 L hybride · 174 Nm · traction',
     origin: '2012',
-    // Version optimisée : 1,2 Mo → 234 Ko.
+    // Ré-exporté sans simplification (10 839 triangles) : 1,2 → 0,66 Mo.
     model: 'models/vehicles/crz_opt.glb',
     // Ce modèle-ci est authoré nez vers -Z : rien à retourner.
     yaw: 0,
@@ -644,7 +643,7 @@ export const CARS: CarDef[] = [
     label: 'Kart « Piss Missile »',
     detail: 'Monocylindre débridé · 220 kg · le troll du paddock',
     origin: 'Kart de location, moteur changé',
-    // Version optimisée : 9,5 Mo → 830 Ko.
+    // Ré-exporté sans simplification (22 060 triangles) : 9,5 → 2,5 Mo.
     model: 'models/vehicles/go_kart_opt.glb',
     yaw: Math.PI,
     spec: {
