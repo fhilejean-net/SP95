@@ -63,8 +63,33 @@ test('les évitements et la route sont des surfaces asphaltées avec collision',
   assert.ok(Math.abs(p.y + 5 - hit.timeOfImpact - (p.y + 0.09)) < 0.2);
   assert.ok(scene.getObjectByName('col-laybys'));
   assert.ok(scene.getObjectByName('guardrails'));
+  assert.ok(guardrails.placements.every((place) => Number.isFinite(place.pitch)));
   assert.ok(guardrails.placements.length > 300, 'la corniche est couverte de tronçons');
   assert.equal(guardrails.segment, 4.7);
+  // Tous les tronçons sont côté ravin (à droite du sens de départ), et non sur
+  // la roche en amont.
+  for (const place of guardrails.placements) {
+    let nearest = 0;
+    let best = Infinity;
+    for (let i = 0; i < road.points.length; i++) {
+      const p = road.points[i];
+      const d = (p.x - place.x) ** 2 + (p.z - place.z) ** 2;
+      if (d < best) {
+        best = d;
+        nearest = i;
+      }
+    }
+    const p = road.points[nearest];
+    const prev = road.points[Math.max(0, nearest - 1)];
+    const next = road.points[Math.min(road.points.length - 1, nearest + 1)];
+    const rightX = -(next.z - prev.z);
+    const rightZ = next.x - prev.x;
+    assert.ok(
+      (place.x - p.x) * rightX + (place.z - p.z) * rightZ > 0,
+      `tronçon ${nearest} du mauvais côté de la route`,
+    );
+    assert.ok(place.stretch > 0.5 && place.stretch < 1.6, 'tronçon étiré pour rester jointif');
+  }
   const car = new Vehicle(world, { x: p.x, y: p.y + 0.9, z: p.z, heading: Math.atan2(-dx, -dz), surfaceAt });
   world.timestep = 1 / 120;
   for (let step = 0; step < 240; step++) {

@@ -18,7 +18,6 @@ import {
   heightAt,
 } from './layout.ts';
 import type { EnvironmentMaterials } from '../render/materials.ts';
-import type { GuardrailPlacement } from '../render/guardrailModel.ts';
 import { GROUP_GROUND, GROUP_WORLD } from '../physics/vehicle.ts';
 
 /** Static ground: the tires cast into it, the chassis shell ignores it. */
@@ -594,6 +593,18 @@ export function buildGradedRoads(scene: THREE.Scene, mats: EnvironmentMaterials,
 /** Longueur d'un tronçon de glissière, en mètres. */
 const GUARDRAIL_SEGMENT = 4.7;
 
+/** Un tronçon de glissière posé le long de la corniche. */
+export interface GuardrailPlacement {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  /** Allongement le long du tronçon : deux sections voisines se touchent. */
+  stretch: number;
+  /** Inclinaison du tronçon pour suivre la pente de la route. */
+  pitch: number;
+}
+
 export interface GuardrailRun {
   /** Un tronçon tous les `segment` mètres, le long de la corniche. */
   placements: GuardrailPlacement[];
@@ -613,8 +624,10 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): Guardr
   if (!road) return { placements: [], fallback: [], segment: GUARDRAIL_SEGMENT };
   const points = road.points;
   const lift = 0.09;
-  const low = 0.45;
-  const high = 0.95;
+  // Le GLB mesure 71 cm une fois étiré : la collision couvre le faisceau,
+  // pas le vide au-dessus.
+  const low = 0.22;
+  const high = 0.72;
   const half = road.def.width * 0.5 + 0.3;
   const up = new THREE.Vector3(0, 1, 0);
   const tangent = new THREE.Vector3();
@@ -627,6 +640,8 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): Guardr
   const postQuat = new THREE.Quaternion();
   const postPos = new THREE.Vector3();
   const one = new THREE.Vector3(1, 1, 1);
+  /** Ligne de glissière côté ravin, un point par point de route. */
+  const railLine: THREE.Vector3[] = [];
 
   // Dans le sens du départ, seul le bord droit surplombe le ravin ; le gauche
   // reste ouvert sur les rochers et la forêt. Le signe correspond à up × tangent.
@@ -644,6 +659,7 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): Guardr
       const x = points[i].x + normal.x * reach * side;
       const z = points[i].z + normal.z * reach * side;
       const y = points[i].y + lift;
+      railLine.push(new THREE.Vector3(x, y, z));
       if (i > 0) run += Math.hypot(x - lastX, z - lastZ);
       lastX = x;
       lastZ = z;
@@ -660,41 +676,56 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): Guardr
       // Un poteau tous les ~6 m : la mémoire d'un poteau, c'est le ruban qui
       // porte la collision, pas lui.
       if (outsideParking && i % 6 === 0) {
-        postPos.set(x, y + 0.42, z);
+        postPos.set(x, y + 0.3, z);
         postQuat.setFromAxisAngle(up, Math.atan2(normal.x, normal.z));
         posts.push(new THREE.Matrix4().compose(postPos, postQuat, one));
       }
     }
   }
 
-  // Le modèle de glissière fait 2 m : on le pose tous les 4,7 m, interpolés sur
-  // le tracé, pour qu'il suive les épingles sans laisser de trou.
+  // Tronçons posés sur la ligne de glissière elle-même (côté ravin), pas sur
+  // l'axe de la route. Chaque section est étirée à la longueur de sa corde et
+  // posée entre deux points de découpe communs : deux voisines partagent leur
+  // jonction, donc le rail reste continu même dans les épingles.
   const placements: GuardrailPlacement[] = [];
-  let travelled = 0;
-  let next = 0;
-  for (let i = 1; i < points.length; i++) {
-    const from = points[i - 1], to = points[i];
-    const dx = to.x - from.x, dz = to.z - from.z;
-    const step = Math.hypot(dx, dz);
-    if (step < 1e-4) continue;
-    while (next <= travelled + step) {
-      const t = (next - travelled) / step;
-      const x = from.x + dx * t, z = from.z + dz * t;
-      const y = from.y + (to.y - from.y) * t + lift;
-      // Le parking reste ouvert : pas de rail au milieu du bitume.
-      if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) > SUMMIT.radius + 1) {
-        const nx = -dz / step, nz = dx / step;
-        const reach = half + colLaybyWidth(road.samples[i].s, road.length);
-        placements.push({
-          x: x + nx * reach * -1,
-          y,
-          z: z + nz * reach * -1,
-          yaw: Math.atan2(-dz, dx),
-        });
+  const cut: THREE.Vector3[] = [];
+  if (railLine.length > 1) {
+    cut.push(railLine[0].clone());
+    let travelled = 0;
+    let next = GUARDRAIL_SEGMENT;
+    for (let i = 1; i < railLine.length; i++) {
+      const a = railLine[i - 1], b = railLine[i];
+      const step = a.distanceTo(b);
+      if (step < 1e-4) continue;
+      while (next <= travelled + step) {
+        cut.push(new THREE.Vector3().lerpVectors(a, b, (next - travelled) / step));
+        next += GUARDRAIL_SEGMENT;
       }
-      next += GUARDRAIL_SEGMENT;
+      travelled += step;
     }
-    travelled += step;
+    const end = railLine[railLine.length - 1];
+    // Un dernier tronçon minuscule serait plus une bavure qu'un rail : on le
+    // fond dans le précédent.
+    if (cut[cut.length - 1].distanceTo(end) > 1.2) cut.push(end.clone());
+    else cut[cut.length - 1].copy(end);
+
+    for (let i = 1; i < cut.length; i++) {
+      const a = cut[i - 1], b = cut[i];
+      const dx = b.x - a.x, dz = b.z - a.z;
+      const length = Math.hypot(dx, dz);
+      if (length < 0.2) continue;
+      const x = (a.x + b.x) / 2, z = (a.z + b.z) / 2;
+      // Le parking reste ouvert : pas de rail au milieu du bitume.
+      if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) <= SUMMIT.radius + 1) continue;
+      placements.push({
+        x,
+        y: (a.y + b.y) / 2,
+        z,
+        yaw: Math.atan2(-dz, dx),
+        pitch: Math.atan2(b.y - a.y, length),
+        stretch: length / GUARDRAIL_SEGMENT,
+      });
+    }
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -717,7 +748,7 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): Guardr
   scene.add(rail);
 
   const postMesh = new THREE.InstancedMesh(
-    new THREE.BoxGeometry(0.12, 1.05, 0.12),
+    new THREE.BoxGeometry(0.12, 0.76, 0.12),
     new THREE.MeshStandardMaterial({ color: 0x8e9298, metalness: 0.5, roughness: 0.6 }),
     Math.max(1, posts.length),
   );

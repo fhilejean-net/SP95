@@ -10,12 +10,35 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
  * son axe et les pattes sur le sol : la pose cinématique, elle, reste au groupe
  * qui l'entoure.
  */
+export interface DeerRestBone {
+  bone: THREE.Bone;
+  position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  scale: THREE.Vector3;
+}
+
 export interface DeerModel {
   object: THREE.Group;
   /** La scène GLB mise à l'échelle, celle que pilotent les os. */
   scene: THREE.Object3D;
   mixer: THREE.AnimationMixer | null;
   action: THREE.AnimationAction | null;
+  /** Pose de repos des os, pour effacer les restes d'un ragdoll. */
+  rest: DeerRestBone[];
+}
+
+/**
+ * Le ragdoll écrit directement dans les os ; sans cette remise à zéro, la bête
+ * réapparaît avec la pose disloquée de sa dernière mort (souvent à l'envers et
+ * au-dessus de la route).
+ */
+export function resetDeerPose(scene: THREE.Object3D, rest: DeerRestBone[]): void {
+  for (const entry of rest) {
+    entry.bone.position.copy(entry.position);
+    entry.bone.quaternion.copy(entry.quaternion);
+    entry.bone.scale.copy(entry.scale);
+  }
+  scene.updateMatrixWorld(true);
 }
 
 /** Longueur museau-queue visée, en mètres. */
@@ -43,6 +66,19 @@ export async function loadDeerModel(): Promise<DeerModel> {
     child.frustumCulled = false;
   });
 
+  // La pose par défaut du GLB, avant toute animation : c'est elle qu'on
+  // restaure après un ragdoll.
+  const rest: DeerRestBone[] = [];
+  scene.traverse((child) => {
+    if (!(child instanceof THREE.Bone)) return;
+    rest.push({
+      bone: child,
+      position: child.position.clone(),
+      quaternion: child.quaternion.clone(),
+      scale: child.scale.clone(),
+    });
+  });
+
   const object = new THREE.Group();
   object.add(scene);
   let mixer: THREE.AnimationMixer | null = null;
@@ -52,5 +88,5 @@ export async function loadDeerModel(): Promise<DeerModel> {
     action = mixer.clipAction(gltf.animations[0]).setLoop(THREE.LoopRepeat, Infinity);
     action.play();
   }
-  return { object, scene, mixer, action };
+  return { object, scene, mixer, action, rest };
 }

@@ -56,7 +56,7 @@ import { createSky, NIGHT_PRESET, pickSkyPreset } from './render/sky.ts';
 import { createCar, updateCarVisual, type CarVisual } from './render/car.ts';
 import { createBike, type BikeVisual } from './render/bike.ts';
 import { loadBikeVisual } from './render/bikeModel.ts';
-import { loadDeerModel } from './render/deerModel.ts';
+import { loadDeerModel, resetDeerPose, type DeerRestBone } from './render/deerModel.ts';
 import { spawnDeerRagdoll, type DeerRagdoll } from './render/deerRagdoll.ts';
 import { addGuardrailModel } from './render/guardrailModel.ts';
 import { deerWithinCarFootprint, speedAfterDeerImpact } from './game/deerImpact.ts';
@@ -572,6 +572,7 @@ async function boot() {
     scene: THREE.Object3D | null;
     mixer: THREE.AnimationMixer | null;
     action: THREE.AnimationAction | null;
+    rest: DeerRestBone[];
     origin: THREE.Vector3;
     direction: THREE.Vector3;
     crossing: THREE.Vector3;
@@ -630,6 +631,7 @@ async function boot() {
     deer.group.visible = false;
     deer.ragdoll?.dispose();
     deer.ragdoll = null;
+    if (deer.scene) resetDeerPose(deer.scene, deer.rest);
     deer.phase = 'off';
     deer.phaseTime = 0;
     deer.body?.setNextKinematicTranslation({ x: 0, y: -100, z: 0 });
@@ -670,6 +672,7 @@ async function boot() {
       scene: null,
       mixer: null,
       action: null,
+      rest: [],
       origin: new THREE.Vector3(),
       direction: new THREE.Vector3(),
       crossing: new THREE.Vector3(),
@@ -691,6 +694,7 @@ async function boot() {
         deer.scene = model.scene;
         deer.mixer = model.mixer;
         deer.action = model.action;
+        deer.rest = model.rest;
         deer.ready = true;
       })
       .catch((error) => console.warn('Modèle de cerf indisponible.', error));
@@ -745,8 +749,12 @@ async function boot() {
       deer.group.visible = true;
       if (!deer.body) deer.body = createDeerBody();
       deer.body.setTranslation(deer.position, true);
+      if (deer.scene) resetDeerPose(deer.scene, deer.rest);
       deer.action?.reset().play();
       deer.mixer?.setTime(0);
+      // Applique tout de suite la première image : sinon le groupe s'affiche
+      // une image avec la pose du ragdoll précédent.
+      deer.mixer?.update(0);
       return;
     }
 

@@ -14,13 +14,6 @@ import type { GuardrailRun } from '../world/terrain.ts';
 const MODEL_URL = `${import.meta.env.BASE_URL}models/col/guard_rail.glb`;
 const loader = new GLTFLoader();
 
-export interface GuardrailPlacement {
-  x: number;
-  y: number;
-  z: number;
-  yaw: number;
-}
-
 export async function addGuardrailModel(scene: THREE.Scene, run: GuardrailRun): Promise<void> {
   if (run.placements.length === 0) return;
   const gltf = await loader.loadAsync(MODEL_URL);
@@ -50,11 +43,23 @@ export async function addGuardrailModel(scene: THREE.Scene, run: GuardrailRun): 
     // La pose du GLB (rotations Sketchfab comprises) est cuite dans la
     // géométrie : chaque instance n'a plus qu'un cap et une position.
     geometry.applyMatrix4(child.matrixWorld);
+    // Le faisceau du modèle regarde +Z ; sur le bord ravin la route est à
+    // gauche : on retourne le tronçon une fois pour qu'il lui fasse face.
+    geometry.rotateY(Math.PI);
     const material = Array.isArray(child.material) ? child.material[0] : child.material;
     const mesh = new THREE.InstancedMesh(geometry, material, run.placements.length);
+    const yawQuat = new THREE.Quaternion();
+    const pitchQuat = new THREE.Quaternion();
+    const localZ = new THREE.Vector3(0, 0, 1);
+    const up = new THREE.Vector3(0, 1, 0);
     run.placements.forEach((place, i) => {
       dummy.position.set(place.x, place.y, place.z);
-      dummy.rotation.set(0, place.yaw, 0);
+      yawQuat.setFromAxisAngle(up, place.yaw);
+      pitchQuat.setFromAxisAngle(localZ, place.pitch);
+      dummy.quaternion.copy(yawQuat).multiply(pitchQuat);
+      // Chaque tronçon est étiré à la longueur de sa corde : les sections se
+      // touchent dans les virages au lieu de laisser des coins de vide.
+      dummy.scale.set(place.stretch, 1, 1);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
     });
