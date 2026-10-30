@@ -4,6 +4,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   CITY,
   DIRT_TRACKS,
+  MASSIF,
+  MOUNTAIN_MAP,
+  MOUNTAIN_ROADS,
   SAMPLED_ROADS,
   SUMMIT,
   WORLD_SIZE,
@@ -357,7 +360,10 @@ export async function buildVegetation(
   }
 
   const rand = mulberry32(0x5f95);
-  const treeCount = lowFx ? 140 : 780;
+  // Le col est une carte forestière : plus d'arbres, et surtout plus serrés.
+  const treeCount = lowFx ? 140 : MOUNTAIN_MAP ? 1150 : 780;
+  /** Les routes qui bordent la forêt : les rues, le col, les spéciales. */
+  const roadside = [...SAMPLED_ROADS, ...MOUNTAIN_ROADS, ...DIRT_TRACKS];
   const placements: Placement[][] = treeVariants.map(() => []);
   const trunks: { x: number; y: number; z: number; height: number; radius: number }[] = [];
   const spacing: { x: number; z: number }[] = [];
@@ -395,11 +401,10 @@ export async function buildVegetation(
     } else if (roll < 0.78) {
       const angle = rand() * Math.PI * 2;
       const radius = 25 + rand() * 300;
-      x = -480 + Math.cos(angle) * radius;
-      z = -420 + Math.sin(angle) * radius;
-    } else if (roll < 0.86) {
-      const roads = [...SAMPLED_ROADS, ...DIRT_TRACKS];
-      const road = roads[Math.floor(rand() * roads.length)];
+      x = MASSIF.cx + Math.cos(angle) * radius;
+      z = MASSIF.cz + Math.sin(angle) * radius;
+    } else if (roll < 0.86 && roadside.length > 0) {
+      const road = roadside[Math.floor(rand() * roadside.length)];
       const point = road.points[Math.floor(rand() * road.points.length)];
       const angle = rand() * Math.PI * 2;
       const radius = road.def.width * 0.5 + 9 + rand() * 52;
@@ -415,13 +420,19 @@ export async function buildVegetation(
     if (Math.abs(x) > WORLD_SIZE / 2 - 30 || Math.abs(z) > WORLD_SIZE / 2 - 30) continue;
     // Le parc du circuit a ses propres arbres : pas de forêt plantée dessus.
     if (circuitEdgeDistance(x, z) < 0) continue;
-    if (x > CITY.minX - 8 && x < CITY.maxX + 8 && z > CITY.minZ - 8 && z < CITY.maxZ + 8) continue;
+    // La ville n'existe que sur sa carte : ailleurs, son emprise ne doit pas
+    // creuser un rectangle sans arbres au milieu de la forêt.
+    if (!MOUNTAIN_MAP && x > CITY.minX - 8 && x < CITY.maxX + 8 && z > CITY.minZ - 8 && z < CITY.maxZ + 8) continue;
     if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius + 9) continue;
     if (padEdgeDistance(x, z) < 9) continue;
     // The housing lots sit a few metres off the pavement: near the city a
     // trunk needs a much wider berth, or the canopy comes out of a roof.
     const nearCity =
-      x > CITY.minX - 60 && x < CITY.maxX + 60 && z > CITY.minZ - 60 && z < CITY.maxZ + 60;
+      !MOUNTAIN_MAP &&
+      x > CITY.minX - 60 &&
+      x < CITY.maxX + 60 &&
+      z > CITY.minZ - 60 &&
+      z < CITY.maxZ + 60;
     if (roadClearance(x, z) < (nearCity ? 16 : 7)) continue;
     if (surfaceAt(x, z).kind !== 'herbe') continue;
 
@@ -490,14 +501,14 @@ export async function buildVegetation(
 
   const grassPlacements: Placement[][] = grassVariants.map(() => []);
   const grassCount = lowFx ? 600 : 2400;
-  const roads = [...SAMPLED_ROADS, ...DIRT_TRACKS];
+  const roads = roadside;
   let placedGrass = 0;
   attempts = 0;
   while (placedGrass < grassCount && attempts < grassCount * 60) {
     attempts++;
     // Most tufts line the verges of the asphalt and dirt roads: that is where
     // the player sees them from the saddle. A few fill the meadows.
-    const alongRoad = rand() < 0.78;
+    const alongRoad = roads.length > 0 && rand() < 0.78;
     let x: number;
     let z: number;
     let referenceHeight: number | null = null;

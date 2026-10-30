@@ -7,11 +7,14 @@ const VILLAGE_WORLD_SIZE = 2000;
 const SUZUKA_WORLD_SIZE = 2400;
 /** Le circuit SP95 tient dans 1,6 km : sa piste fait 1,5 km de tour. */
 const FLAT_WORLD_SIZE = 2000;
+/** La carte du col : 2,4 km de montagne, une seule route et de la forêt. */
+const MOUNTAIN_WORLD_SIZE = 2400;
 
 /** Taille du monde de chaque carte. */
 export function worldSizeFor(map: MapId): number {
   if (map === 'suzuka') return SUZUKA_WORLD_SIZE;
   if (map === 'sp95') return FLAT_WORLD_SIZE;
+  if (map === 'col') return MOUNTAIN_WORLD_SIZE;
   return VILLAGE_WORLD_SIZE;
 }
 
@@ -19,6 +22,9 @@ export function worldSizeFor(map: MapId): number {
 export function terrainSegmentsFor(map: MapId): number {
   if (map === 'suzuka') return 420;
   if (map === 'sp95') return 250;
+  // 6 m de maille sur le col : assez fin pour que les lacets ne soient pas
+  // lissés en rampes, assez large pour tenir dans la mémoire du navigateur.
+  if (map === 'col') return 400;
   return 300;
 }
 
@@ -68,6 +74,12 @@ export const VILLAGE_MAP = villageFeaturesOn(MAP_ID);
  * besoin d'une seconde couche de collision.
  */
 export const FLAT_MAP = MAP_ID === 'sp95';
+/**
+ * La carte du col : une montagne au centre, une seule route en lacets, pas de
+ * ville. C'est la carte des rallyes : aucune rue, aucun immeuble, que du relief
+ * et de la forêt.
+ */
+export const MOUNTAIN_MAP = MAP_ID === 'col';
 
 export type SurfaceKind = 'asphalte' | 'terre' | 'herbe';
 
@@ -83,7 +95,7 @@ export interface RoadDef {
   surface?: 'asphalt' | 'dirt';
 }
 
-export const ROADS: RoadDef[] = [
+const CITY_ROADS: RoadDef[] = [
   {
     id: 'ring',
     name: 'Route de ceinture',
@@ -158,15 +170,31 @@ export const ROADS: RoadDef[] = [
 ];
 
 /**
- * The col: a massif in the south-west corner, climbed by a switchback road
- * that ends on a flat summit where the drift sessions happen.
+ * Les rues de la ville. La carte du col n'en a aucune : sa seule route est
+ * taillée dans le relief, et un corridor de bitume fantôme laisserait des
+ * trouées sans arbres au milieu de la forêt.
  */
-export const MASSIF = { cx: -480, cz: -420, radius: 240, height: 70 };
+export const ROADS: RoadDef[] = MOUNTAIN_MAP ? [] : CITY_ROADS;
+
+/**
+ * The col: a massif in the south-west corner, climbed by a switchback road
+ * that ends on a flat summit where the drift sessions happen. Sur sa propre
+ * carte, le massif occupe tout le centre et monte trois fois plus haut.
+ */
+export const MASSIF = MOUNTAIN_MAP
+  ? { cx: 0, cz: 0, radius: 620, height: 210 }
+  : { cx: -480, cz: -420, radius: 240, height: 70 };
 
 /** Height added by the massif alone, before any terrain mixing. */
 export function massifHeight(x: number, z: number): number {
   const r = Math.hypot(x - MASSIF.cx, z - MASSIF.cz) / MASSIF.radius;
   if (r >= 1) return 0;
+  if (MOUNTAIN_MAP) {
+    // Un plateau au sommet : le dernier lacet et l'aire du col sont à plat.
+    // Sans lui, la rampe finale grimpait à 25 % et la route finissait en mur.
+    const t = smoothstep(0.2, 1, r);
+    return MASSIF.height * (1 - t * t * (3 - 2 * t));
+  }
   const t = 1 - r;
   return MASSIF.height * t * t * (3 - 2 * t);
 }
@@ -298,15 +326,30 @@ interface Leg {
   r2: number;
 }
 
-const COL_LEGS: Leg[] = [
-  { r0: 238, r1: 224, r2: 196 },
-  { r0: 196, r1: 182, r2: 154 },
-  { r0: 154, r1: 140, r2: 112 },
-  { r0: 112, r1: 99, r2: 76 },
-  { r0: 76, r1: 66, r2: 60 },
-];
+/**
+ * Les lacets de la carte du col : sept traversées qui s'enroulent sur le
+ * massif, de son pied jusqu'au plateau. Chaque épingle perd ~35 m de rayon,
+ * donc monte d'un étage — c'est la pente qu'on sent au volant.
+ */
+const COL_LEGS: Leg[] = MOUNTAIN_MAP
+  ? [
+      { r0: 585, r1: 566, r2: 528 },
+      { r0: 528, r1: 508, r2: 468 },
+      { r0: 468, r1: 448, r2: 406 },
+      { r0: 406, r1: 386, r2: 342 },
+      { r0: 342, r1: 322, r2: 276 },
+      { r0: 276, r1: 256, r2: 212 },
+    ]
+  : [
+      { r0: 238, r1: 224, r2: 196 },
+      { r0: 196, r1: 182, r2: 154 },
+      { r0: 154, r1: 140, r2: 112 },
+      { r0: 112, r1: 99, r2: 76 },
+      { r0: 76, r1: 66, r2: 60 },
+    ];
 
-const COL_SWEEP = 1.3;
+/** Plus large sur sa carte : les lacets font le tour complet du massif. */
+const COL_SWEEP = MOUNTAIN_MAP ? 1.55 : 1.3;
 
 const COL_POINTS: [number, number][] = (() => {
   const points: [number, number][] = [];
@@ -322,8 +365,15 @@ const COL_POINTS: [number, number][] = (() => {
   // up: a tighter join than that kinks the road into a 3 m radius hairpin.
   const firstAngle = a0 - 0.22;
   const first = at(firstAngle, COL_LEGS[0].r0);
-  push(-238, -302);
-  push((-238 + first[0]) / 2, (-302 + first[1]) / 2);
+  if (MOUNTAIN_MAP) {
+    // Départ au pied de la montagne : deux points d'élan dans l'axe de la
+    // première traversée, sinon la spline attaque le premier lacet en biais.
+    push(...at(firstAngle, COL_LEGS[0].r0 + 72));
+    push(...at(firstAngle, COL_LEGS[0].r0 + 34));
+  } else {
+    push(-238, -302);
+    push((-238 + first[0]) / 2, (-302 + first[1]) / 2);
+  }
 
   let angle = firstAngle;
   let dir = -1;
@@ -342,6 +392,9 @@ const COL_POINTS: [number, number][] = (() => {
     const centreAngle = angle + sweep;
     const last = i === COL_LEGS.length - 1;
     if (last) {
+      // Sur la carte du col, la route s'arrête sur son aire de sommet : elle
+      // est posée au bout du tracé (voir SUMMIT), pas au centre du massif.
+      if (MOUNTAIN_MAP) break;
       // Final approach: a gentle arc onto the summit pad.
       const finalSteps = 14;
       for (let s = 1; s <= finalSteps; s++) {
@@ -379,7 +432,8 @@ export const COL_ROAD: RoadDef = {
   name: 'Route du Col',
   points: COL_POINTS,
   closed: false,
-  width: 10.5,
+  // 6,4 m sur la carte du col : deux voitures se croisent au rétroviseur.
+  width: MOUNTAIN_MAP ? 6.4 : 10.5,
   kind: 'rural',
 };
 
@@ -433,7 +487,7 @@ export const RALLY_LINK: RoadDef = {
   surface: 'dirt',
 };
 
-export const DIRT_ROADS: RoadDef[] = [RALLY_LOOP, RALLY_LINK];
+export const DIRT_ROADS: RoadDef[] = MOUNTAIN_MAP ? [] : [RALLY_LOOP, RALLY_LINK];
 
 function edgeRidge(x: number, z: number): number {
   const r = Math.max(Math.abs(x), Math.abs(z));
@@ -577,6 +631,11 @@ export function naturalHeightAt(x: number, z: number): number {
   // dans le monde jouable. Le seul relief est la barrière du bord, très loin.
   if (FLAT_MAP) return 0;
   const base = baseHeight(x, z);
+  if (MOUNTAIN_MAP) {
+    // Une montagne au centre, un piémont doux, la ceinture de pics au bord :
+    // aucune route de ville ne vient creuser de corridor dans ce relief.
+    return base * 0.35 + rollingHills(x, z) * 0.45 + massifHeight(x, z) + edgeRidge(x, z);
+  }
   // La carte du circuit n'a ni route à longer, ni massif à contourner : son
   // relief se réduit aux collines et à la ceinture de montagnes du bord.
   if (!VILLAGE_MAP) return base + rollingHills(x, z) + edgeRidge(x, z);
@@ -711,7 +770,13 @@ function buildGraded(def: RoadDef, options: GradedOptions): GradedRoad {
 }
 
 export const MOUNTAIN_ROADS: SampledRoad[] = [
-  buildGraded(COL_ROAD, { maxGrade: 0.145, flat: 7.6, blend: 32, drop: 0.03, junction: 16 }),
+  buildGraded(
+    COL_ROAD,
+    MOUNTAIN_MAP
+      ? // Un col de rallye : 13 % de pente max, chaussée étroite, talus serré.
+        { maxGrade: 0.13, flat: 5.4, blend: 22, drop: 0.03 }
+      : { maxGrade: 0.145, flat: 7.6, blend: 32, drop: 0.03, junction: 16 },
+  ),
 ];
 
 export const DIRT_TRACKS: SampledRoad[] = DIRT_ROADS.map((def) =>
@@ -814,6 +879,9 @@ export function roadClearance(x: number, z: number): number {
 export const SUMMIT = (() => {
   const road = MOUNTAIN_ROADS[0];
   const last = road.samples[road.samples.length - 1];
+  // Sur sa carte, le col se termine là où la route arrive : l'aire du sommet
+  // est un belvédère posé au bout du dernier lacet, pas un plateau central.
+  if (MOUNTAIN_MAP) return { cx: last.x, cz: last.z, y: last.y, radius: 46, blend: 62 };
   return { cx: MASSIF.cx, cz: MASSIF.cz, y: last.y, radius: 54, blend: 66 };
 })();
 
@@ -900,6 +968,13 @@ function drySurfaceAt(x: number, z: number): SurfaceInfo {
   if (circuit) return SURFACES[circuit];
   const authored = trackSurfaceSource?.(x, z);
   if (authored) return SURFACES[authored];
+  if (MOUNTAIN_MAP) {
+    // Le col n'a que sa route et son aire de sommet : tout le reste est herbe.
+    const col = nearestGraded(x, z);
+    if (col && col.dist <= col.width * 0.5 + 0.4) return SURFACES.asphalte;
+    if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius) return SURFACES.asphalte;
+    return SURFACES.herbe;
+  }
   // Sa carte n'a pas d'autre route : hors dalle, c'est l'herbe, où que la ville
   // aurait posé son bitume.
   if (!VILLAGE_MAP) return SURFACES.herbe;
@@ -937,6 +1012,30 @@ export function heightAt(x: number, z: number): number {
  * de la hauteur définitive et pas du seul relief naturel.
  */
 export function terrainBaseHeight(x: number, z: number): number {
+  if (MOUNTAIN_MAP) {
+    // Le col : l'aire du sommet est nivelée, la route est taillée en corniche,
+    // et rien d'autre ne touche au relief.
+    let h = naturalHeightAt(x, z);
+    const summit = Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz);
+    if (summit < SUMMIT.blend) {
+      const t = smoothstep(SUMMIT.radius, SUMMIT.blend, summit);
+      h = SUMMIT.y * (1 - t) + h * t;
+    }
+    const col = nearestGraded(x, z);
+    if (col && col.dist < col.road.options.blend) {
+      const { blend, drop } = col.road.options;
+      const t = smoothstep(col.width * 0.5 + 0.6, blend, col.dist);
+      h = (col.y - drop) * (1 - t) + h * t;
+    }
+    if (summit < SUMMIT.radius + 10) {
+      const t = smoothstep(SUMMIT.radius, SUMMIT.radius + 10, summit);
+      h = Math.max(h, SUMMIT.y * (1 - t) + h * t);
+    }
+    // Le bitume gagne toujours : sans ce plancher, le talus de l'épingle
+    // au-dessus enterrait la route qui passe dessous.
+    if (col && col.dist < col.width * 0.5 + 1.2) h = Math.min(h, col.y - 0.02);
+    return h;
+  }
   // La carte du circuit n'a ni rues encaissées, ni col, ni aire de drift : son
   // seul relief artificiel est la dalle du modèle, posée plus haut par heightAt.
   if (!VILLAGE_MAP) return naturalHeightAt(x, z);
@@ -1004,19 +1103,23 @@ export function terrainBaseHeight(x: number, z: number): number {
  * it. Seeded from the natural ground it sat four metres above the avenue and
  * the access road, which then tunnelled under a floating slab of concrete.
  */
-DRIFT_PAD.y = nearestRoad(DRIFT_PAD.cx - DRIFT_PAD.halfX + 6, DRIFT_PAD.cz).y;
+if (!MOUNTAIN_MAP) DRIFT_PAD.y = nearestRoad(DRIFT_PAD.cx - DRIFT_PAD.halfX + 6, DRIFT_PAD.cz).y;
 
 /** Foot of the climb, where the col joins the ring road. */
 export const COL_START = (() => {
   const road = MOUNTAIN_ROADS[0];
-  const p = road.points[2];
-  const next = road.points[3];
+  // Sur la carte du col, les deux premiers points sont l'élan au pied.
+  const index = MOUNTAIN_MAP ? 1 : 2;
+  const p = road.points[index];
+  const next = road.points[index + 1];
   return { x: p.x, z: p.z, heading: Math.atan2(-(next.x - p.x), -(next.z - p.z)) };
 })();
 
 /** Start line of the rally stage, on the gravel loop. */
 export const RALLY_START = (() => {
   const loop = DIRT_TRACKS[0];
+  // La carte du col n'a pas de spéciale en terre : on repart du pied du col.
+  if (!loop) return { ...COL_START };
   const i = Math.floor(loop.points.length * 0.02);
   const p = loop.points[i];
   const next = loop.points[(i + 1) % loop.points.length];
@@ -1039,9 +1142,10 @@ export function roadHeadingAt(road: SampledRoad, index: number): number {
   return Math.atan2(a.x - b.x, a.z - b.z);
 }
 
-export const RING: SampledRoad = SAMPLED_ROADS.find((r) => r.def.id === 'ring')!;
+export const RING: SampledRoad | null = SAMPLED_ROADS.find((r) => r.def.id === 'ring') ?? null;
 
 export function ringPoseAt(t: number): { x: number; z: number; heading: number } {
+  if (!RING) return { x: 0, z: 0, heading: 0 };
   const n = RING.points.length;
   const idx = Math.floor(t * n) % n;
   const p = RING.points[idx];

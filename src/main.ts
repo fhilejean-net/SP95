@@ -14,6 +14,7 @@ import {
 import {
   CIRCUIT,
   COL_START,
+  MOUNTAIN_MAP,
   RACE_START,
   RALLY_START,
   SPAWN,
@@ -28,6 +29,7 @@ import {
 import {
   buildArenaPads,
   buildGradedRoads,
+  buildGuardrails,
   buildRaceGates,
   buildRoads,
   buildTerrain,
@@ -418,23 +420,33 @@ async function boot() {
 
   if (!TRACK_MAP) {
     await setLoading(0.52, 'Tracé des routes…');
-    buildRoads(scene, materials);
     buildGradedRoads(scene, materials);
     buildArenaPads(world);
-    puddles = buildPuddles(scene);
 
-    await setLoading(0.68, 'Construction de la ville…');
-    props = await buildCity(scene, world, materials);
+    // La carte du col n'a que sa route de montagne : pas de rues, pas de ville,
+    // pas de mobilier urbain, pas de course sur la ceinture. Des glissières à
+    // la place, et une forêt dense.
+    if (MOUNTAIN_MAP) {
+      buildGuardrails(scene, world);
+    } else {
+      buildRoads(scene, materials);
+      puddles = buildPuddles(scene);
 
-    await setLoading(0.74, 'Mobilier urbain…');
-    streetKit = await buildStreetKit(scene, world, materials);
+      await setLoading(0.68, 'Construction de la ville…');
+      props = await buildCity(scene, world, materials);
+
+      await setLoading(0.74, 'Mobilier urbain…');
+      streetKit = await buildStreetKit(scene, world, materials);
+    }
 
     await setLoading(0.8, 'Plantation des arbres…');
     vegetation = await buildVegetation(scene, world, lowFx, sky.sunDirection);
 
-    await setLoading(0.85, 'Installation du circuit…');
-    checkpoints = buildRaceCheckpoints(12);
-    buildRaceGates(scene, materials, checkpoints);
+    if (!MOUNTAIN_MAP) {
+      await setLoading(0.85, 'Installation du circuit…');
+      checkpoints = buildRaceCheckpoints(12);
+      buildRaceGates(scene, materials, checkpoints);
+    }
   }
 
   await setLoading(0.88, 'Montage de la voiture…');
@@ -463,7 +475,9 @@ async function boot() {
   /** Où la voiture attend : la ligne des stands sur le circuit, la rue en ville. */
   const startPose = circuit
     ? { x: circuit.spawn.x, z: circuit.spawn.z, heading: circuit.spawn.heading }
-    : { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading };
+    : MOUNTAIN_MAP
+      ? { x: COL_START.x, z: COL_START.z, heading: COL_START.heading }
+      : { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading };
   const spawnY = dropHeightAt(startPose.x, startPose.z) + rideHeightFor(spec);
   /**
    * Cote du sol pour la physique : la dalle du circuit d'abord, le terrain
@@ -1287,6 +1301,24 @@ async function boot() {
     }
   }
 
+  /**
+   * Menu de la carte du col : elle n'a ni course, ni rallye, ni sommet — les
+   * boutons correspondants sont cachés par `body.map-col`. Le départ libre se
+   * prend au pied de la route, et le circuit ramène en ville.
+   */
+  function applyMapMenu(): void {
+    document.body.classList.add('map-col');
+    const labels: Record<string, string> = {
+      'btn-free': 'Col · pied de la route',
+      'btn-pause-free': 'Col · pied de la route',
+      'btn-circuit': 'Retour en ville',
+    };
+    for (const [id, label] of Object.entries(labels)) {
+      const button = document.getElementById(id);
+      if (button) button.textContent = label;
+    }
+  }
+
   document.getElementById('btn-free')?.addEventListener('click', () => startMode('free'));
   document.getElementById('btn-moto')?.addEventListener('click', () => void startBikeMode());
   document.getElementById('btn-pause-moto')?.addEventListener('click', () => void startBikeMode());
@@ -1298,10 +1330,12 @@ async function boot() {
   document.getElementById('btn-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-pause-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-col')?.addEventListener('click', () => startMode('free', 'col'));
+  // La carte dédiée au col : un rechargement, comme les circuits.
+  document.getElementById('btn-colmap')?.addEventListener('click', () => openMap('col'));
   // Le circuit a sa propre carte : le bouton y bascule, et en revient.
   document
     .getElementById('btn-circuit')
-    ?.addEventListener('click', () => openMap(TRACK_MAP ? 'ville' : 'suzuka'));
+    ?.addEventListener('click', () => openMap(TRACK_MAP || MOUNTAIN_MAP ? 'ville' : 'suzuka'));
   // La piste plate du jeu, joignable depuis n'importe quelle carte.
   document
     .getElementById('btn-flat')
@@ -1403,6 +1437,7 @@ async function boot() {
   syncDriveModes();
   setCarPose(startPose.x, startPose.z, startPose.heading);
   if (TRACK_MAP) applyTrackMenu();
+  if (MOUNTAIN_MAP) applyMapMenu();
   await setLoading(1, 'Prêt');
   await new Promise((resolve) => setTimeout(resolve, 220));
   loading.classList.add('done');

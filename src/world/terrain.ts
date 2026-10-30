@@ -5,6 +5,7 @@ import {
   DIRT_TRACKS,
   DRIFT_PAD,
   FLAT_MAP,
+  MOUNTAIN_MAP,
   MOUNTAIN_ROADS,
   RACE_START,
   RING,
@@ -16,7 +17,7 @@ import {
   heightAt,
 } from './layout.ts';
 import type { EnvironmentMaterials } from '../render/materials.ts';
-import { GROUP_GROUND } from '../physics/vehicle.ts';
+import { GROUP_GROUND, GROUP_WORLD } from '../physics/vehicle.ts';
 
 /** Static ground: the tires cast into it, the chassis shell ignores it. */
 const GROUND_GROUP = (GROUP_GROUND << 16) | 0xffff;
@@ -377,12 +378,19 @@ export function buildRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void
   driftArrows.position.set(DRIFT_PAD.cx, DRIFT_PAD.y + 0.04, DRIFT_PAD.cz);
   scene.add(driftArrows);
 
-  // Start / finish line on the ring.
-  const startLine = new THREE.Mesh(new THREE.PlaneGeometry(RING.def.width - 0.6, 2.6), mats.checker);
-  startLine.rotation.x = -Math.PI / 2;
-  startLine.rotation.z = RACE_START.heading;
-  startLine.position.set(RACE_START.x, heightAt(RACE_START.x, RACE_START.z) + ROAD_LIFT + 0.012, RACE_START.z);
-  scene.add(startLine);
+  // Start / finish line on the ring. La carte du col n'a pas de ceinture :
+  // il n'y a pas de ligne à poser.
+  if (RING) {
+    const startLine = new THREE.Mesh(new THREE.PlaneGeometry(RING.def.width - 0.6, 2.6), mats.checker);
+    startLine.rotation.x = -Math.PI / 2;
+    startLine.rotation.z = RACE_START.heading;
+    startLine.position.set(
+      RACE_START.x,
+      heightAt(RACE_START.x, RACE_START.z) + ROAD_LIFT + 0.012,
+      RACE_START.z,
+    );
+    scene.add(startLine);
+  }
 
   // A street that simply stopped left its asphalt and shoulder hanging over the
   // bank, black underside and all. Each dead end now finishes on a turning
@@ -431,6 +439,9 @@ export function buildArenaPads(world: RAPIER.World): void {
       .setCollisionGroups(GROUND_GROUP),
     body,
   );
+  // La carte du col n'a pas d'aire de drift : sa dalle n'existe pas, et son
+  // collider flotterait au-dessus de la forêt.
+  if (MOUNTAIN_MAP) return;
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(DRIFT_PAD.halfX, HALF, DRIFT_PAD.halfZ)
       .setTranslation(DRIFT_PAD.cx, DRIFT_PAD.y + 0.022 - HALF, DRIFT_PAD.cz)
@@ -518,6 +529,106 @@ export function buildGradedRoads(scene: THREE.Scene, mats: EnvironmentMaterials)
     ring.position.set(SUMMIT.cx, SUMMIT.y + 0.05, SUMMIT.cz);
     scene.add(ring);
   }
+}
+
+/**
+ * Glissières du col : deux rubans d'acier plantés au bord de la chaussée, un
+ * poteau tous les six mètres. Le ruban a sa propre collision : sans elle, la
+ * première épingle envoyait la voiture dans le vide, deux cents mètres plus
+ * bas, et la montagne ne pardonnait rien.
+ */
+export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): void {
+  const road = MOUNTAIN_ROADS[0];
+  if (!road) return;
+  const points = road.points;
+  const lift = 0.09;
+  const low = 0.45;
+  const high = 0.95;
+  const half = road.def.width * 0.5 + 0.3;
+  const up = new THREE.Vector3(0, 1, 0);
+  const tangent = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const posts: THREE.Matrix4[] = [];
+  const postQuat = new THREE.Quaternion();
+  const postPos = new THREE.Vector3();
+  const one = new THREE.Vector3(1, 1, 1);
+
+  for (const side of [-1, 1]) {
+    const base = positions.length / 3;
+    let run = 0;
+    let lastX = 0;
+    let lastZ = 0;
+    for (let i = 0; i < points.length; i++) {
+      const prev = points[Math.max(0, i - 1)];
+      const next = points[Math.min(points.length - 1, i + 1)];
+      tangent.subVectors(next, prev).setY(0).normalize();
+      normal.crossVectors(up, tangent).normalize();
+      const x = points[i].x + normal.x * half * side;
+      const z = points[i].z + normal.z * half * side;
+      const y = points[i].y + lift;
+      if (i > 0) run += Math.hypot(x - lastX, z - lastZ);
+      lastX = x;
+      lastZ = z;
+      positions.push(x, y + low, z, x, y + high, z);
+      normals.push(normal.x, 0, normal.z, normal.x, 0, normal.z);
+      uvs.push(run / 4, 0, run / 4, 1);
+      if (i > 0) {
+        const a = base + (i - 1) * 2;
+        indices.push(a, a + 1, a + 2, a + 2, a + 1, a + 3);
+      }
+      // Un poteau tous les ~6 m : la mémoire d'un poteau, c'est le ruban qui
+      // porte la collision, pas lui.
+      if (i % 6 === 0) {
+        postPos.set(x, y + 0.42, z);
+        postQuat.setFromAxisAngle(up, Math.atan2(normal.x, normal.z));
+        posts.push(new THREE.Matrix4().compose(postPos, postQuat, one));
+      }
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  const rail = new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({
+      color: 0xb6bac0,
+      metalness: 0.6,
+      roughness: 0.45,
+      side: THREE.DoubleSide,
+    }),
+  );
+  rail.castShadow = true;
+  rail.receiveShadow = true;
+  rail.name = 'guardrails';
+  scene.add(rail);
+
+  const postMesh = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(0.12, 1.05, 0.12),
+    new THREE.MeshStandardMaterial({ color: 0x8e9298, metalness: 0.5, roughness: 0.6 }),
+    Math.max(1, posts.length),
+  );
+  postMesh.count = posts.length;
+  postMesh.castShadow = true;
+  posts.forEach((matrix, i) => postMesh.setMatrixAt(i, matrix));
+  postMesh.instanceMatrix.needsUpdate = true;
+  postMesh.name = 'guardrail-posts';
+  scene.add(postMesh);
+
+  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  world.createCollider(
+    RAPIER.ColliderDesc.trimesh(new Float32Array(positions), new Uint32Array(indices))
+      .setFriction(0.3)
+      .setRestitution(0.1)
+      .setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD),
+    body,
+  );
 }
 
 export interface RaceGate {
