@@ -686,9 +686,12 @@ async function boot() {
     const ground = surfaceUnder(x, z);
     const height = ridingBike ? bikeSpec.cgHeight : rideHeightFor(spec);
     vehicle.respawn(x, ground + height, z, heading);
-    // Let the springs settle so the tires sit on the ground immediately.
+    // Les ressorts se tassent à l'arrêt pour que les pneus touchent tout de
+    // suite. Frein à main **seul** : soixante pas de `brake: 1` à l'arrêt font
+    // passer la boîte en marche arrière (0,35 s suffisent), et le kart
+    // démarrait en R, gaz au fond, à reculons.
     for (let i = 0; i < 60; i++) {
-      vehicle.step(FIXED, { throttle: 0, brake: 1, steer: 0, handbrake: true }, world);
+      vehicle.step(FIXED, { throttle: 0, brake: 0, steer: 0, handbrake: true }, world);
       world.step();
     }
     const p = vehicle.position;

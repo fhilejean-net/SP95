@@ -406,9 +406,17 @@ export class Vehicle {
         .setCanSleep(false),
     );
 
+    // Le plancher de la boîte doit rester au-dessus de la route : le trimesh de
+    // piste collisionne avec le châssis, et un cuboid qui dépasse du sol y reste
+    // enfoncé — la voiture rebondit, glisse toute seule et finit par passer
+    // dessous. Une fiche trop haute pour sa garde au sol est donc relevée du
+    // minimum nécessaire au lieu d'être crue sur parole.
+    const restHeight = spec.wheelRadius + spec.rideHeight - 0.12;
+    const colliderY = Math.max(0.02 + CHASSIS_LIFT, spec.bodyHalf.y - restHeight + 0.05);
+
     this.collider = world.createCollider(
       RAPIER.ColliderDesc.cuboid(spec.bodyHalf.x, spec.bodyHalf.y, spec.bodyHalf.z)
-        .setTranslation(0, 0.02 + CHASSIS_LIFT, 0)
+        .setTranslation(0, colliderY, 0)
         .setCollisionGroups(CHASSIS_UPRIGHT)
         .setMassProperties(
           spec.mass,

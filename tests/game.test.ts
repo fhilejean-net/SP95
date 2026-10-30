@@ -576,9 +576,10 @@ test('every car in the registry loads its own model, and ids stay unique', () =>
   for (const car of CARS) {
     assert.ok(car.model.endsWith('.glb'), `${car.id} : modèle manquant`);
     assert.ok(car.label.length > 2 && car.detail.length > 2, `${car.id} : libellé trop court`);
-    // Un kart est un vrai véhicule : 1,65 m d'empattement et 220 kg. Les bornes
-    // acceptent ce cas sans laisser passer une spec vide ou négative.
-    assert.ok(car.spec.wheelbase > 1.2 && car.spec.mass > 150, `${car.id} : specs invraisemblables`);
+    // Le plus petit véhicule du jeu est le kart : 1,68 m de long, 0,73 m
+    // d'empattement et 220 kg, cotes relevées sur son GLB. La borne basse
+    // laisse passer ce cas sans accepter une spec vide, nulle ou négative.
+    assert.ok(car.spec.wheelbase > 0.6 && car.spec.mass > 150, `${car.id} : specs invraisemblables`);
   }
   assert.ok(CARS.length >= 10, `${CARS.length} voitures au registre`);
   // Les modèles arrivent d'ateliers différents : chaque voiture doit dire dans

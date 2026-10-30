@@ -384,6 +384,10 @@ function buildFallbackCar(
   meshes: THREE.Mesh[],
   geometries: Map<THREE.Mesh, THREE.BufferGeometry>,
   body: THREE.Box3,
+  /** Abscisse des essieux dans le repère du modèle : le milieu des deux est
+   *  ramené à l'origine, comme le fait le découpage, sinon les roues
+   *  procédurales tombent à côté des passages de roue. */
+  axleZ: number | null = null,
 ): CarVisual {
   const size = body.getSize(new THREE.Vector3());
   const centre = body.getCenter(new THREE.Vector3());
@@ -407,7 +411,7 @@ function buildFallbackCar(
   const offset = new THREE.Vector3(
     -centre.x * scale,
     hubY - radius + 0.03 - scaledMinY,
-    -centre.z * scale,
+    -(axleZ ?? centre.z) * scale,
   );
 
   const group = new THREE.Group();
@@ -674,18 +678,8 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
     }));
     let detected = pickWheels(candidates, bodyData);
     let carvedWheels = false;
-    // Un fichier qui ne nomme aucune roue (le kart : six objets muets qui
-    // traversent toute la voiture) ne se découpe pas de façon fiable : le
-    // cylindre du moyeu attrape les bas de caisse et l'échappement, qui se
-    // mettent alors à tourner avec la roue. On garde la carrosserie entière et
-    // on monte des roues procédurales dans ses passages de roue.
-    const nameless =
-      !meshes.some((mesh) => NAMED_WHEEL_PARTS.test(labels.get(mesh)!)) &&
-      !detected;
-    if (nameless) {
-      console.warn(`${def.id}: aucun nom de roue — roues procédurales`);
-      return buildFallbackCar(spec, meshes, geometries, body);
-    }
+    /** Milieu des essieux mesurés, en unités du modèle, pour le repli. */
+    let measuredAxleZ: number | null = null;
     if (!detected) {
       // Modèles qui livrent leurs quatre roues dans un maillage par matière :
       // la boîte d'une telle pièce fait la taille de la voiture. On regroupe
@@ -717,6 +711,7 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
                 bodyData,
               )
           : null;
+      if (clusters) measuredAxleZ = (clusters[0].hub[2] + clusters[2].hub[2]) / 2;
       const carved = clusters ? carveWheels(merged, geometries, clusters) : null;
       if (clusters && carved) {
         for (const mesh of merged) {
@@ -745,8 +740,13 @@ export async function loadCarVisual(def: CarDef, spec: VehicleSpec): Promise<Car
       }
     }
     if (!detected) {
+      // Le kart est fait de six objets muets qui traversent tous la voiture :
+      // aucun cylindre ne peut en isoler les roues sans emporter un bas de
+      // caisse ou l'échappement, qui tournent alors avec la jante. On garde la
+      // carrosserie entière et on monte des roues procédurales dans ses
+      // passages — recadrées sur les essieux mesurés, comme le découpage.
       console.warn(`${def.id}: roues non extraites — roues procédurales montées sur la carrosserie`);
-      return buildFallbackCar(spec, meshes, geometries, body);
+      return buildFallbackCar(spec, meshes, geometries, body, measuredAxleZ);
     }
     hubs = detected.map((pick) => new THREE.Vector3(pick.hub[0], pick.hub[1], pick.hub[2]));
     radii = detected.map(() => detected[0].radius);

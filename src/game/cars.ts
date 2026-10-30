@@ -648,7 +648,10 @@ export const CARS: CarDef[] = [
     origin: 'Kart de location, moteur changé',
     // Ré-exporté sans simplification (22 060 triangles) : 9,5 → 2,5 Mo.
     model: 'models/vehicles/go_kart_opt.glb',
-    yaw: Math.PI,
+    // Le kart est authoré nez vers -Z, comme la F1 et la Supra : le demi-tour
+    // le faisait rouler en marche arrière (le pare-chocs arrière passait
+    // devant).
+    yaw: 0,
     spec: {
       ...STOCK_SPEC,
       name: 'Piss Missile',
@@ -671,20 +674,26 @@ export const CARS: CarDef[] = [
       springC: 6200,
       arbFront: 30000,
       arbRear: 22000,
-      rideHeight: 0.14,
-      // Cotes mesurées sur le GLB une fois mis à l'échelle de son empattement :
-      // rayon 13,9 et demi-voie 42,9 pour 72,75 d'empattement, soit 0,315 m et
-      // 1,95 m de voie. L'ancienne fiche (0,22 m de rayon, 1,35 m de voie,
-      // 2,3 m de long) était 30 % plus petite que le modèle : la caisse
-      // débordait de son collider et le kart semblait flotter puis rebondir.
-      wheelRadius: 0.32,
-      wheelTravel: 0.08,
+      // `rideHeight` est la longueur libre de la suspension, pas la garde au
+      // sol : elle doit valoir le rayon de roue, sinon le pneu est enterré au
+      // repos et la butée pousse en permanence.
+      rideHeight: 0.15,
+      // Cotes du GLB, converties à l'identique (il est en centimètres) :
+      // 168,4 × 124,8 × 50,5, moyeux à ±42,9 en x et -43,0/+29,7 en z, pneus de
+      // rayon 13,9. La fiche précédente gardait ces rapports mais multipliait
+      // tout par 2,26 (empattement 1,65 m, voie 1,95 m) : le kart faisait 3,8 m
+      // de long, ses roues procédurales tombaient 15 cm à côté des passages de
+      // roue et son collider de 1 m de haut traversait la route.
+      wheelRadius: 0.139,
+      wheelTravel: 0.06,
       brakeTorque: 2600,
       maxSteer: 1.15,
       steerRate: 4.4,
-      wheelbase: 1.65,
-      track: 1.95,
-      bodyHalf: { x: 1, y: 0.5, z: 1.9 },
+      wheelbase: 0.73,
+      // Voie prise au centre des bandes de contact, pas au plancher : les pneus
+      // du kart sont à ±0,53, à ras de la caisse (124,8 de large).
+      track: 1.06,
+      bodyHalf: { x: 0.62, y: 0.25, z: 0.84 },
       driveFront: 0,
       tractionControl: 0.85,
     },
