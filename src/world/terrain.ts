@@ -18,6 +18,7 @@ import {
   heightAt,
 } from './layout.ts';
 import type { EnvironmentMaterials } from '../render/materials.ts';
+import type { GuardrailPlacement } from '../render/guardrailModel.ts';
 import { GROUP_GROUND, GROUP_WORLD } from '../physics/vehicle.ts';
 
 /** Static ground: the tires cast into it, the chassis shell ignores it. */
@@ -590,15 +591,26 @@ export function buildGradedRoads(scene: THREE.Scene, mats: EnvironmentMaterials,
   }
 }
 
+/** Longueur d'un tronçon de glissière, en mètres. */
+const GUARDRAIL_SEGMENT = 4.7;
+
+export interface GuardrailRun {
+  /** Un tronçon tous les `segment` mètres, le long de la corniche. */
+  placements: GuardrailPlacement[];
+  /** Ruban et poteaux procéduraux, masqués quand le GLB est posé. */
+  fallback: THREE.Object3D[];
+  segment: number;
+}
+
 /**
  * Glissières du col : deux rubans d'acier plantés au bord de la chaussée, un
  * poteau tous les six mètres. Le ruban a sa propre collision : sans elle, la
  * première épingle envoyait la voiture dans le vide, deux cents mètres plus
  * bas, et la montagne ne pardonnait rien.
  */
-export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): void {
+export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): GuardrailRun {
   const road = MOUNTAIN_ROADS[0];
-  if (!road) return;
+  if (!road) return { placements: [], fallback: [], segment: GUARDRAIL_SEGMENT };
   const points = road.points;
   const lift = 0.09;
   const low = 0.45;
@@ -653,6 +665,36 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): void {
         posts.push(new THREE.Matrix4().compose(postPos, postQuat, one));
       }
     }
+  }
+
+  // Le modèle de glissière fait 2 m : on le pose tous les 4,7 m, interpolés sur
+  // le tracé, pour qu'il suive les épingles sans laisser de trou.
+  const placements: GuardrailPlacement[] = [];
+  let travelled = 0;
+  let next = 0;
+  for (let i = 1; i < points.length; i++) {
+    const from = points[i - 1], to = points[i];
+    const dx = to.x - from.x, dz = to.z - from.z;
+    const step = Math.hypot(dx, dz);
+    if (step < 1e-4) continue;
+    while (next <= travelled + step) {
+      const t = (next - travelled) / step;
+      const x = from.x + dx * t, z = from.z + dz * t;
+      const y = from.y + (to.y - from.y) * t + lift;
+      // Le parking reste ouvert : pas de rail au milieu du bitume.
+      if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) > SUMMIT.radius + 1) {
+        const nx = -dz / step, nz = dx / step;
+        const reach = half + colLaybyWidth(road.samples[i].s, road.length);
+        placements.push({
+          x: x + nx * reach * -1,
+          y,
+          z: z + nz * reach * -1,
+          yaw: Math.atan2(-dz, dx),
+        });
+      }
+      next += GUARDRAIL_SEGMENT;
+    }
+    travelled += step;
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -721,6 +763,7 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): void {
       .setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD),
     body,
   );
+  return { placements, fallback: [rail, postMesh], segment: GUARDRAIL_SEGMENT };
 }
 
 export interface RaceGate {

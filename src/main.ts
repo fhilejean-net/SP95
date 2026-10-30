@@ -58,6 +58,7 @@ import { createBike, type BikeVisual } from './render/bike.ts';
 import { loadBikeVisual } from './render/bikeModel.ts';
 import { loadDeerModel } from './render/deerModel.ts';
 import { spawnDeerRagdoll, type DeerRagdoll } from './render/deerRagdoll.ts';
+import { addGuardrailModel } from './render/guardrailModel.ts';
 import { deerWithinCarFootprint, speedAfterDeerImpact } from './game/deerImpact.ts';
 import { createSparks } from './render/sparks.ts';
 import { createTireSmoke } from './render/tireSmoke.ts';
@@ -437,7 +438,12 @@ async function boot() {
     // pas de mobilier urbain, pas de course sur la ceinture. Des glissières à
     // la place, et une forêt dense.
     if (MOUNTAIN_MAP) {
-      buildGuardrails(scene, world);
+      const guardrails = buildGuardrails(scene, world);
+      await setLoading(0.58, 'Glissières du col…');
+      // Le GLB est plus lourd que le ruban : s'il manque, le repli reste visible.
+      await addGuardrailModel(scene, guardrails).catch((error) =>
+        console.warn('Modèle de glissière indisponible.', error),
+      );
     } else {
       buildRoads(scene, materials);
       puddles = buildPuddles(scene);
@@ -704,19 +710,32 @@ async function boot() {
         const d = (p.x - carPosition.x) ** 2 + (p.z - carPosition.z) ** 2;
         if (d < distance) { distance = d; nearest = i; }
       }
-      // Cherche une apparition devant la voiture, aussi en sens inverse.
+      // Le point de traversée est posé devant la voiture, à la distance qu'elle
+      // parcourt en deux secondes : la bête entre sur la route quand elle arrive.
       const p0 = road.points[nearest];
       const p1 = road.points[Math.min(nearest + 1, road.points.length - 1)];
       const travel = (p1.x - p0.x) * carForward.x + (p1.z - p0.z) * carForward.z >= 0 ? 1 : -1;
-      const index = Math.max(1, Math.min(road.points.length - 2, nearest + travel * 15));
+      let lead = Math.min(70, Math.max(30, Math.max(vehicle.telemetryState.speed, 6) * 2.4));
+      let index = nearest;
+      while (lead > 0 && index > 0 && index < road.points.length - 1) {
+        index += travel;
+        lead -= road.points[index].distanceTo(road.points[index - travel]);
+      }
+      index = Math.max(1, Math.min(road.points.length - 2, index));
       const p = road.points[index], a = road.points[index - 1], b = road.points[index + 1];
-      deer.crossing.set(-(b.z - a.z), 0, b.x - a.x).normalize();
-      deer.direction.copy(deer.crossing);
-      deer.origin.copy(p).addScaledVector(deer.direction, -12);
+      const normal = new THREE.Vector3(-(b.z - a.z), 0, b.x - a.x).normalize();
+      // Un côté tiré au sort : elle peut sortir de la forêt ou du ravin.
+      const side = Math.random() < 0.5 ? -1 : 1;
+      // Elle démarre sur l'accotement, à un mètre du bitume, et non douze
+      // mètres plus loin : elle est au bord quand la voiture arrive.
+      const shoulder = road.def.width * 0.5 + 1.1;
+      deer.direction.copy(normal).multiplyScalar(-side);
+      deer.crossing.copy(deer.direction);
+      deer.origin.copy(p).addScaledVector(normal, side * shoulder);
       deer.origin.y = groundAt(deer.origin.x, deer.origin.z);
       deer.position.copy(deer.origin);
       deer.walked = 0;
-      deer.limit = 26;
+      deer.limit = shoulder * 2 + 6;
       deer.phase = 'walk';
       deer.phaseTime = 0;
       deer.stared = false;
@@ -740,12 +759,15 @@ async function boot() {
     }
 
     if (deer.phase === 'walk') {
+      // Elle regarde toujours où elle marche, y compris en revenant d'un arrêt
+      // ou d'une charge : sinon elle repart de dos, face à la voiture.
+      deer.yaw = turnTowards(deer.yaw, Math.atan2(-deer.direction.x, -deer.direction.z), 4 * dt);
       // Elle rampe vers la route sans glisser : 6,25 s de clip par cycle.
       deer.walked += DEER_WALK_SPEED * dt;
       deer.position.copy(deer.origin).addScaledVector(deer.direction, deer.walked);
       deer.position.y = Math.max(groundAt(deer.position.x, deer.position.z), deer.origin.y);
       deer.mixer?.update(dt);
-      if (!deer.stared && deer.walked > 3 && gap < 45) {
+      if (!deer.stared && deer.walked > 0.9) {
         deer.phase = 'stare';
         deer.phaseTime = 0;
       }
@@ -762,7 +784,7 @@ async function boot() {
         2.2 * dt,
       );
       deer.mixer?.update(dt * 0.3);
-      if (deer.phaseTime > 1.2 && gap < 22) {
+      if (deer.phaseTime > 0.9 && gap < 26) {
         deer.phase = 'charge';
         deer.phaseTime = 0;
       } else if (deer.phaseTime > 4) {
@@ -1613,7 +1635,6 @@ async function boot() {
   document.getElementById('btn-pause-cars')?.addEventListener('click', openShowroom);
   document.getElementById('btn-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-pause-sound')?.addEventListener('click', openSound);
-  document.getElementById('btn-col')?.addEventListener('click', () => startMode('free', 'col'));
   // La carte dédiée au col : un rechargement, comme les circuits.
   document.getElementById('btn-colmap')?.addEventListener('click', () => openMap('col'));
   // Le circuit a sa propre carte : le bouton y bascule, et en revient.
@@ -2993,7 +3014,6 @@ function wireMenuOnly(): void {
   on('btn-race', { map: 'ville', start: 'race' });
   on('btn-circuit', { map: 'suzuka', start: 'free' });
   on('btn-flat', { map: 'sp95', start: 'free' });
-  on('btn-col', { map: 'ville', start: 'free', spawn: 'col' });
   on('btn-rally', { map: 'ville', start: 'free', spawn: 'rally' });
   on('btn-sommet', { map: 'ville', start: 'free', spawn: 'summit' });
   on('btn-moto', { map: 'ville', start: 'moto' });

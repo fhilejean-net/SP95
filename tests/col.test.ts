@@ -50,7 +50,7 @@ test('les évitements et la route sont des surfaces asphaltées avec collision',
   const material = new THREE.MeshStandardMaterial();
   const mats = { asphalt: material, asphaltPad: material, lines: material } as unknown as EnvironmentMaterials;
   buildGradedRoads(scene, mats, world);
-  buildGuardrails(scene, world);
+  const guardrails = buildGuardrails(scene, world);
   const i = Math.round((road.points.length - 1) * 0.34);
   const p = road.points[i], a = road.points[i - 1], b = road.points[i + 1];
   const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
@@ -63,6 +63,8 @@ test('les évitements et la route sont des surfaces asphaltées avec collision',
   assert.ok(Math.abs(p.y + 5 - hit.timeOfImpact - (p.y + 0.09)) < 0.2);
   assert.ok(scene.getObjectByName('col-laybys'));
   assert.ok(scene.getObjectByName('guardrails'));
+  assert.ok(guardrails.placements.length > 300, 'la corniche est couverte de tronçons');
+  assert.equal(guardrails.segment, 4.7);
   const car = new Vehicle(world, { x: p.x, y: p.y + 0.9, z: p.z, heading: Math.atan2(-dx, -dz), surfaceAt });
   world.timestep = 1 / 120;
   for (let step = 0; step < 240; step++) {

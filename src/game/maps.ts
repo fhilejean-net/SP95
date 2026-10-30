@@ -34,7 +34,7 @@ export const MAPS: Record<MapId, MapInfo> = {
   },
   col: {
     id: 'col',
-    name: 'Col de montagne',
+    name: 'Col de nuit',
     blurb: 'Le Mollendruz de nuit : route forestière, corniche et parking au col.',
   },
 };
