@@ -284,6 +284,15 @@ const BUMP_K_HARD = 260_000;
  * they spin up.
  */
 const ENGINE_INERTIA = 0.22;
+/**
+ * Patinage arrière autorisé en glisse. Un pneu qui patine aligne sa force sur
+ * sa roue : c'est ce qui propulse la voiture en travers. Tant qu'il roule, il
+ * frotte latéralement et vide la vitesse. La pente est par radian de dérive,
+ * au-delà de 0,1 rad, et le plafond vaut 160 % de glissement (une glisse se
+ * tient au gaz, pas au ralenti).
+ */
+const SLIDE_SPIN_GAIN = 4.5;
+const SLIDE_SPIN_MAX = 1.6;
 
 export class Vehicle {
   readonly body: RAPIER.RigidBody;
@@ -583,7 +592,12 @@ export class Vehicle {
     // Allowed wheelspin grows as the assist is turned down. It does *not* grow
     // with the slide angle: letting the wheels spin harder once the car is
     // already sideways takes lateral grip off the rear and feeds the spin.
-    const targetSlip = 0.11 + (1 - tc) * 0.22;
+    // Cible longitudinale de l'assist, en unité de glissement. Elle reste au
+    // niveau du pic du pneu : au-delà, un pneu ne transmet pas plus de force,
+    // il chauffe. L'ancienne formule valait 0,22 à mi-assist, soit le double du
+    // pic : l'antipatinage laissait donc les roues brûler en permanence, et le
+    // burn arrivait au premier coup de gaz.
+    const targetSlip = KAPPA_PEAK * (0.85 + (1 - tc) * 0.9);
     // En glisse, l'essieu arrière doit patiner pour tenir l'angle. Un pneu
     // arrière qui *roule* au lieu de pousser frotte latéralement : il ne
     // propulse plus et il vide la vitesse. Mesuré sur le banc (scripts/probe-drift.ts) :
@@ -593,7 +607,8 @@ export class Vehicle {
     // cap, sinon la voiture ne tourne plus du tout. Plafond à +0,26, soit le
     // double du pic, pour que la glisse reste tenable et pas un tonneau.
     const slideAngle = Math.abs(bodySlip);
-    const targetSlipRear = targetSlip + clamp((slideAngle - 0.1) * 1.1, 0, 0.26);
+    const targetSlipRear =
+      targetSlip + clamp((slideAngle - 0.1) * SLIDE_SPIN_GAIN, 0, SLIDE_SPIN_MAX);
     this.driveTorque = 0;
     // In reverse the brake pedal is the reverse throttle, so the throttle pedal
     // is what slows the car down on its way back to first gear.
@@ -742,9 +757,15 @@ export class Vehicle {
         wheelDrive = drive.axleTorque * share * 0.5;
         if (tcActive) {
           const target = wheel.front ? targetSlip : targetSlipRear;
+          // Le plafond est calculé *avec* l'angle de dérive du pneu. En
+          // l'ignorant (alpha: 0), on autorisait le couple d'un pneu qui pousse
+          // droit alors qu'en virage il partage déjà son adhérence avec le
+          // latéral : la roue partait en surrégime (glissement mesuré 8,09, soit
+          // neuf fois la vitesse de la route), perdait tout grip latéral et
+          // emmenait la voiture au tête-à-queue.
           const atTarget = tireForces({
             kappa: target,
-            alpha: 0,
+            alpha,
             fz: springForce,
             mu,
             peakAngle,
@@ -758,7 +779,7 @@ export class Vehicle {
           // trop retirait les trois quarts du couple d'un coup : c'est ce saut
           // qui envoyait la voiture de travers quand les roues raccrochaient.
           const over = Math.abs(wheel.slipRatio) - target;
-          if (over > 0) capped *= clamp(1 - over * 3.5, 0.45, 1);
+          if (over > 0) capped *= clamp(1 - over * 3.5, 0.1, 1);
 
           // Fondu entre le couple plafonné et le couple brut. À 1 l'assist
           // tient le pneu à sa cible, à 0 il ne reste que la pédale du joueur.
@@ -893,6 +914,7 @@ export class Vehicle {
     }
     const downforce = 0.5 * 1.225 * this.spec.downforceArea * speed * speed;
     this.body.applyImpulse({ x: 0, y: -downforce * dt, z: 0 }, true);
+
 
     // --- Telemetry ----------------------------------------------------------
     this.accelLong = (vLong - this.prevSpeed) / Math.max(dt, 1e-4);
