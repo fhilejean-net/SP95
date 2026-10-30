@@ -35,7 +35,7 @@ export const MAPS: Record<MapId, MapInfo> = {
   col: {
     id: 'col',
     name: 'Col de montagne',
-    blurb: 'Une route étroite en lacets, glissières et forêt : le terrain des rallyes.',
+    blurb: 'Le Mollendruz de nuit : route forestière, corniche et parking au col.',
   },
 };
 

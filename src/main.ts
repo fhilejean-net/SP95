@@ -1,7 +1,11 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import RAPIER from '@dimforge/rapier3d-compat';
 import './styles.css';
-import { Vehicle, type VehicleInput, type VehicleSpec } from './physics/vehicle.ts';
+import { GROUP_WORLD, Vehicle, type VehicleInput, type VehicleSpec } from './physics/vehicle.ts';
 import { Bike } from './physics/bike.ts';
 import { SUPERMOTARD } from './game/bikes.ts';
 import {
@@ -15,6 +19,7 @@ import {
   CIRCUIT,
   COL_START,
   MOUNTAIN_MAP,
+  MOUNTAIN_ROADS,
   RACE_START,
   RALLY_START,
   SPAWN,
@@ -47,7 +52,7 @@ import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
 import { buildPuddles, type PuddleField } from './world/puddles.ts';
 import { buildVegetation, type VegetationSummary } from './world/vegetation.ts';
 import { createEnvironmentMaterials } from './render/materials.ts';
-import { createSky, pickSkyPreset } from './render/sky.ts';
+import { createSky, NIGHT_PRESET, pickSkyPreset } from './render/sky.ts';
 import { createCar, updateCarVisual, type CarVisual } from './render/car.ts';
 import { createBike, type BikeVisual } from './render/bike.ts';
 import { loadBikeVisual } from './render/bikeModel.ts';
@@ -231,12 +236,14 @@ async function boot() {
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.2, 2600);
   const renderer = makeRenderer(lowFx);
   const chase = new ChaseCamera(camera);
+  // La vue capot est la vue par défaut du col, C permet toujours de la changer.
+  if (MOUNTAIN_MAP) chase.mode = 'hood';
 
   await setLoading(0.18, 'Ciel et éclairage…');
   // La lumière du jour est tirée une fois par chargement (ou forcée par
   // `?light=`), et son exposition vient avec : c'est elle qui cramait les
   // carrosseries claires et le sol sous le plein soleil.
-  const sky = createSky(scene, renderer, pickSkyPreset());
+  const sky = createSky(scene, renderer, MOUNTAIN_MAP ? NIGHT_PRESET : pickSkyPreset());
   renderer.toneMappingExposure = sky.preset.exposure;
   console.log(`Lumière : ${sky.preset.label} (exposition ${sky.preset.exposure})`);
 
@@ -420,7 +427,7 @@ async function boot() {
 
   if (!TRACK_MAP) {
     await setLoading(0.52, 'Tracé des routes…');
-    buildGradedRoads(scene, materials);
+    buildGradedRoads(scene, materials, world);
     buildArenaPads(world);
 
     // La carte du col n'a que sa route de montagne : pas de rues, pas de ville,
@@ -527,6 +534,88 @@ async function boot() {
   car.setWheelRadius(spec.wheelRadius);
   car.group.position.set(startPose.x, spawnY, startPose.z);
   scene.add(car.group);
+
+  // Deux faisceaux réels suivent le véhicule, même après un changement de modèle.
+  // Aucun profil photométrique IES n'est fourni dans les assets : cônes lissés.
+  const headlamps = MOUNTAIN_MAP ? [-0.65, 0.65].map((side) => {
+    const light = new THREE.SpotLight(0xfff4dc, 2600, 125, Math.PI / 6.5, 0.72, 2);
+    light.castShadow = false;
+    light.userData.side = side;
+    scene.add(light, light.target);
+    return light;
+  }) : [];
+
+  // Post-traitement léger, uniquement sur le col : aucune traînée à l'arrêt.
+  const composer = MOUNTAIN_MAP && !lowFx ? new EffectComposer(renderer) : null;
+  const motion = composer ? new AfterimagePass(0) : null;
+  if (composer && motion) {
+    composer.addPass(new RenderPass(scene, camera));
+    composer.addPass(motion);
+    composer.addPass(new OutputPass());
+  }
+
+  // Un chevreuil peut traverser devant la voiture ; sa collision suit sa pose.
+  let deer: { group: THREE.Group; body: RAPIER.RigidBody; origin: THREE.Vector3; direction: THREE.Vector3; elapsed: number } | null = null;
+  let deerTimer = 32;
+  if (MOUNTAIN_MAP) {
+    const group = new THREE.Group();
+    const fur = new THREE.MeshStandardMaterial({ color: 0x856547, roughness: 1 });
+    const part = (w: number, h: number, d: number, x: number, y: number, z: number) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), fur);
+      mesh.position.set(x, y, z);
+      group.add(mesh);
+    };
+    part(0.55, 0.55, 1.1, 0, 0.9, 0);
+    part(0.32, 0.6, 0.32, 0, 1.3, -0.5);
+    part(0.35, 0.3, 0.45, 0, 1.6, -0.65);
+    for (const x of [-0.2, 0.2]) for (const z of [-0.38, 0.38]) part(0.1, 0.75, 0.1, x, 0.38, z);
+    part(0.12, 0.25, 0.1, -0.16, 1.82, -0.62);
+    part(0.12, 0.25, 0.1, 0.16, 1.82, -0.62);
+    group.visible = false;
+    scene.add(group);
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -100, 0));
+    world.createCollider(RAPIER.ColliderDesc.cuboid(0.35, 0.8, 0.6)
+      .setTranslation(0, 0.8, 0).setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD), body);
+    deer = { group, body, origin: new THREE.Vector3(), direction: new THREE.Vector3(), elapsed: -1 };
+  }
+
+  function updateDeer(dt: number): void {
+    if (!deer || mode === 'menu' || paused || replay) return;
+    if (deer.elapsed < 0) {
+      deerTimer -= dt;
+      if (deerTimer > 0 || vehicle.telemetryState.speedKmh < 15) return;
+      const road = MOUNTAIN_ROADS[0];
+      let nearest = 0, distance = Infinity;
+      for (let i = 0; i < road.points.length; i++) {
+        const p = road.points[i];
+        const d = (p.x - carPosition.x) ** 2 + (p.z - carPosition.z) ** 2;
+        if (d < distance) { distance = d; nearest = i; }
+      }
+      // Cherche une apparition devant la voiture, aussi en sens inverse.
+      const p0 = road.points[nearest];
+      const p1 = road.points[Math.min(nearest + 1, road.points.length - 1)];
+      const travel = (p1.x - p0.x) * carForward.x + (p1.z - p0.z) * carForward.z >= 0 ? 1 : -1;
+      const index = Math.max(1, Math.min(road.points.length - 2, nearest + travel * 15));
+      const p = road.points[index], a = road.points[index - 1], b = road.points[index + 1];
+      deer.direction.set(-(b.z - a.z), 0, b.x - a.x).normalize();
+      deer.origin.copy(p).addScaledVector(deer.direction, -12);
+      deer.group.rotation.y = Math.atan2(-deer.direction.x, -deer.direction.z);
+      deer.group.visible = true;
+      deer.elapsed = 0;
+    }
+    deer.elapsed += dt;
+    const pos = deer.origin.clone().addScaledVector(deer.direction, Math.min(24, deer.elapsed * 5));
+    // Le terrain seul passe sous le ruban : le cerf marche sur la chaussée.
+    pos.y = Math.max(groundAt(pos.x, pos.z), deer.origin.y);
+    deer.group.position.copy(pos);
+    deer.body.setNextKinematicTranslation(pos);
+    if (deer.elapsed > 5) {
+      deer.group.visible = false;
+      deer.body.setNextKinematicTranslation({ x: 0, y: -100, z: 0 });
+      deer.elapsed = -1;
+      deerTimer = 35 + Math.random() * 35;
+    }
+  }
 
   const input = new InputManager(canvas);
   const hud = new Hud();
@@ -1420,6 +1509,7 @@ async function boot() {
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
+    composer?.setSize(width, height);
   });
 
   // If the GPU process resets, three can rebuild its resources as long as the
@@ -2055,6 +2145,15 @@ async function boot() {
       }
     }
 
+    for (const lamp of headlamps) {
+      const side = lamp.userData.side as number;
+      lamp.position.set(carPosition.x - carForward.z * side, carPosition.y + 0.65, carPosition.z + carForward.x * side)
+        .addScaledVector(carForward, ridingBike ? 0.6 : 1.8);
+      lamp.target.position.copy(lamp.position).addScaledVector(carForward, 48);
+      lamp.target.position.y -= 1.5;
+      lamp.target.updateMatrixWorld();
+    }
+
     lightPos.copy(carPosition).addScaledVector(sky.sunDirection, 260);
     sky.sun.position.copy(lightPos);
     sky.sun.target.position.copy(carPosition);
@@ -2094,6 +2193,13 @@ async function boot() {
         cameraClearance,
         ridingBike ? 'bike' : 'car',
       );
+      if (MOUNTAIN_MAP && !paused) {
+        const vibration = Math.min(1, telemetry.rpm / (ridingBike ? bikeSpec.redlineRpm : spec.redlineRpm)) * 0.006
+          + Math.min(1, Math.abs(telemetry.speed) / 35) * 0.012;
+        const time = performance.now() / 1000;
+        camera.position.y += Math.sin(time * 31) * vibration;
+        camera.position.x += Math.sin(time * 23) * vibration * 0.45;
+      }
     }
 
     // Point sizes are in pixels: convert from metres at the current fov.
@@ -2147,7 +2253,10 @@ async function boot() {
 
   function render(): void {
     renderer.info.reset();
-    renderer.render(scene, camera);
+    if (composer && motion) {
+      motion.damp = mode === 'menu' || paused ? 0 : Math.min(0.42, Math.max(0, (Math.abs(vehicle.telemetryState.speed) - 12) / 60));
+      composer.render();
+    } else renderer.render(scene, camera);
   }
 
   function frame(now: number): void {
@@ -2224,6 +2333,7 @@ async function boot() {
       simulate(dt, controls);
     }
     updateVisuals(dt);
+    updateDeer(dt);
     render();
   }
 

@@ -14,6 +14,7 @@ import {
   TERRAIN_SEGMENTS,
   TERRAIN_SPAN,
   WORLD_SIZE,
+  colLaybyWidth,
   heightAt,
 } from './layout.ts';
 import type { EnvironmentMaterials } from '../render/materials.ts';
@@ -456,7 +457,7 @@ export function buildArenaPads(world: RAPIER.World): void {
  * the ribbon is laid a few centimetres above it. Dirt roads get a gravel
  * surface and a pair of wheel ruts instead of paint.
  */
-export function buildGradedRoads(scene: THREE.Scene, mats: EnvironmentMaterials): void {
+export function buildGradedRoads(scene: THREE.Scene, mats: EnvironmentMaterials, world?: RAPIER.World): void {
   for (const road of [...MOUNTAIN_ROADS, ...DIRT_TRACKS]) {
     const dirt = road.def.surface === 'dirt';
     const lift = dirt ? 0.06 : 0.09;
@@ -467,6 +468,50 @@ export function buildGradedRoads(scene: THREE.Scene, mats: EnvironmentMaterials)
     surface.receiveShadow = true;
     surface.name = `road-${road.def.id}`;
     scene.add(surface);
+
+    if (MOUNTAIN_MAP && world && road.def.id === 'col') {
+      // Une collision fidèle au ruban évite que la grille grossière du terrain
+      // ne fasse sauter les roues ou ne les laisse traverser l'asphalte.
+      const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+      const addGround = (geometry: THREE.BufferGeometry) => {
+        const pos = geometry.getAttribute('position');
+        const index = geometry.getIndex();
+        if (!index) return;
+        world.createCollider(
+          RAPIER.ColliderDesc.trimesh(new Float32Array(pos.array), new Uint32Array(index.array))
+            .setFriction(0.98).setCollisionGroups(GROUND_GROUP), body,
+        );
+      };
+      addGround(surface.geometry);
+      // Les évitements élargissent le bord droit et portent leur propre sol.
+      const vertices: number[] = [];
+      const indices: number[] = [];
+      for (let i = 0; i < road.points.length; i++) {
+        const p = road.points[i];
+        const prev = road.points[Math.max(0, i - 1)];
+        const next = road.points[Math.min(road.points.length - 1, i + 1)];
+        const dx = next.x - prev.x, dz = next.z - prev.z;
+        const length = Math.hypot(dx, dz) || 1;
+        const nx = -dz / length, nz = dx / length;
+        const inner = road.def.width * 0.5 - 0.03;
+        const outer = inner + colLaybyWidth(road.samples[i].s, road.length);
+        vertices.push(p.x + nx * inner, p.y + lift, p.z + nz * inner, p.x + nx * outer, p.y + lift, p.z + nz * outer);
+        // Les triangles de largeur nulle font échouer le solveur Rapier.
+        if (i > 0 && outer - inner > 0.01 && colLaybyWidth(road.samples[i - 1].s, road.length) > 0.01) {
+          const a = (i - 1) * 2;
+          indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      const laybys = new THREE.Mesh(geometry, mats.asphaltPad);
+      laybys.name = 'col-laybys';
+      laybys.receiveShadow = true;
+      scene.add(laybys);
+      addGround(geometry);
+    }
 
     if (dirt) {
       for (const side of [-1, 1]) {
@@ -514,6 +559,18 @@ export function buildGradedRoads(scene: THREE.Scene, mats: EnvironmentMaterials)
       line.name = `edge-${road.def.id}`;
       scene.add(line);
     }
+    if (MOUNTAIN_MAP && road.def.id === 'col') {
+      // Ligne centrale discontinue : les deux sens restent lisibles de nuit.
+      const dashes: THREE.BufferGeometry[] = [];
+      for (let i = 5; i + 1 < road.points.length; i += 4) {
+        dashes.push(ribbonGeometry(road.points.slice(i, i + 2), { width: 0.13, lift: lift + 0.012 }));
+      }
+      if (dashes.length) {
+        const center = new THREE.Mesh(mergeGeometries(dashes), mats.lines);
+        center.name = 'col-centre-line';
+        scene.add(center);
+      }
+    }
   }
 
   const pad = new THREE.Mesh(new THREE.CircleGeometry(SUMMIT.radius, 72), mats.asphaltPad);
@@ -523,6 +580,8 @@ export function buildGradedRoads(scene: THREE.Scene, mats: EnvironmentMaterials)
   pad.name = 'summit-pad';
   scene.add(pad);
 
+  // Le parking du col ne porte pas les cercles de l'arène de drift.
+  if (MOUNTAIN_MAP) return;
   for (const radius of [SUMMIT.radius - 2.5, 26]) {
     const ring = new THREE.Mesh(new THREE.RingGeometry(radius, radius + 0.55, 96), mats.lines);
     ring.rotation.x = -Math.PI / 2;
@@ -557,7 +616,9 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): void {
   const postPos = new THREE.Vector3();
   const one = new THREE.Vector3(1, 1, 1);
 
-  for (const side of [-1, 1]) {
+  // Dans le sens du départ, seul le bord droit surplombe le ravin ; le gauche
+  // reste ouvert sur les rochers et la forêt. Le signe correspond à up × tangent.
+  for (const side of [-1]) {
     const base = positions.length / 3;
     let run = 0;
     let lastX = 0;
@@ -567,8 +628,9 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): void {
       const next = points[Math.min(points.length - 1, i + 1)];
       tangent.subVectors(next, prev).setY(0).normalize();
       normal.crossVectors(up, tangent).normalize();
-      const x = points[i].x + normal.x * half * side;
-      const z = points[i].z + normal.z * half * side;
+      const reach = half + colLaybyWidth(road.samples[i].s, road.length);
+      const x = points[i].x + normal.x * reach * side;
+      const z = points[i].z + normal.z * reach * side;
       const y = points[i].y + lift;
       if (i > 0) run += Math.hypot(x - lastX, z - lastZ);
       lastX = x;
@@ -576,13 +638,16 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): void {
       positions.push(x, y + low, z, x, y + high, z);
       normals.push(normal.x, 0, normal.z, normal.x, 0, normal.z);
       uvs.push(run / 4, 0, run / 4, 1);
-      if (i > 0) {
+      // Le parking reste ouvert sur la route, sans rail au milieu du bitume.
+      const outsideParking = Math.hypot(points[i].x - SUMMIT.cx, points[i].z - SUMMIT.cz) > SUMMIT.radius + 1;
+      const prevOutside = Math.hypot(prev.x - SUMMIT.cx, prev.z - SUMMIT.cz) > SUMMIT.radius + 1;
+      if (i > 0 && outsideParking && prevOutside) {
         const a = base + (i - 1) * 2;
         indices.push(a, a + 1, a + 2, a + 2, a + 1, a + 3);
       }
       // Un poteau tous les ~6 m : la mémoire d'un poteau, c'est le ruban qui
       // porte la collision, pas lui.
-      if (i % 6 === 0) {
+      if (outsideParking && i % 6 === 0) {
         postPos.set(x, y + 0.42, z);
         postQuat.setFromAxisAngle(up, Math.atan2(normal.x, normal.z));
         posts.push(new THREE.Matrix4().compose(postPos, postQuat, one));
@@ -620,6 +685,33 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): void {
   postMesh.instanceMatrix.needsUpdate = true;
   postMesh.name = 'guardrail-posts';
   scene.add(postMesh);
+
+  // Rochers irréguliers côté amont, au-delà de l'accotement praticable.
+  const rockGeo = new THREE.DodecahedronGeometry(1, 0);
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x77766e, roughness: 1 });
+  const rocks = new THREE.InstancedMesh(rockGeo, rockMat, Math.ceil(points.length / 10));
+  const matrix = new THREE.Matrix4();
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const rotation = new THREE.Quaternion();
+  let count = 0;
+  for (let i = 10; i < points.length - 10; i += 10) {
+    const prev = points[i - 1], next = points[i + 1];
+    tangent.subVectors(next, prev).setY(0).normalize();
+    normal.crossVectors(up, tangent).normalize();
+    const offset = 12 + 3 * Math.sin(i * 0.17);
+    const x = points[i].x + normal.x * offset;
+    const z = points[i].z + normal.z * offset;
+    position.set(x, heightAt(x, z) + 0.5, z);
+    const size = 1.5 + 0.9 * (0.5 + 0.5 * Math.sin(i * 0.73));
+    scale.set(size * 1.4, size, size);
+    rotation.setFromAxisAngle(up, i * 0.3);
+    rocks.setMatrixAt(count++, matrix.compose(position, rotation, scale));
+  }
+  rocks.count = count;
+  rocks.instanceMatrix.needsUpdate = true;
+  rocks.name = 'col-rocks';
+  scene.add(rocks);
 
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   world.createCollider(

@@ -390,7 +390,15 @@ export async function buildVegetation(
     const roll = rand();
     let x: number;
     let z: number;
-    if (roll < 0.55) {
+    if (MOUNTAIN_MAP && roll < 0.78) {
+      // La forêt suit le tracé, plutôt que de se concentrer au centre de la carte.
+      const road = MOUNTAIN_ROADS[0];
+      const point = road.points[Math.floor(rand() * road.points.length)];
+      const angle = rand() * Math.PI * 2;
+      const radius = 12 + rand() * 65;
+      x = point.x + Math.cos(angle) * radius;
+      z = point.z + Math.sin(angle) * radius;
+    } else if (roll < 0.55) {
       // Inside a grove: gaussian scatter around its centre keeps the middle
       // dense and the edge ragged, which is how a forest thins out.
       const grove = forests[Math.floor(rand() * forests.length)];
@@ -424,7 +432,7 @@ export async function buildVegetation(
     // creuser un rectangle sans arbres au milieu de la forêt.
     if (!MOUNTAIN_MAP && x > CITY.minX - 8 && x < CITY.maxX + 8 && z > CITY.minZ - 8 && z < CITY.maxZ + 8) continue;
     if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius + 9) continue;
-    if (padEdgeDistance(x, z) < 9) continue;
+    if (!MOUNTAIN_MAP && padEdgeDistance(x, z) < 9) continue;
     // The housing lots sit a few metres off the pavement: near the city a
     // trunk needs a much wider berth, or the canopy comes out of a roof.
     const nearCity =

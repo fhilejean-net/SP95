@@ -351,7 +351,28 @@ const COL_LEGS: Leg[] = MOUNTAIN_MAP
 /** Plus large sur sa carte : les lacets font le tour complet du massif. */
 const COL_SWEEP = MOUNTAIN_MAP ? 1.55 : 1.3;
 
+// Relevé approximatif de la ligne verte sur la capture, en coordonnées image.
+// Le repère rouge est le parking ; le retour après l'épingle descend vers Mont-la-Ville.
+const MOLLENDRUZ_TRACE: [number, number][] = [
+  [140, 950], [230, 1006], [350, 1020], [410, 1040], [525, 1130],
+  [620, 1150], [700, 1185], [750, 1182], [800, 1194], [930, 1185],
+  [975, 1175], [1015, 1125], [1052, 1143], [1118, 1145], [1156, 1126],
+  [1160, 1076], [1160, 1035], [1185, 990], [1235, 955], [1280, 942],
+  [1340, 945], [1400, 925], [1430, 882], [1500, 870], [1580, 850],
+  [1700, 850], [1770, 848], [1820, 815], [1880, 770], [1925, 730],
+  [1970, 680], [2010, 620], [2040, 595], [2080, 580], [2110, 545],
+  [2140, 500], [2190, 465], [2230, 420], [2260, 370], [2300, 330],
+  [2340, 305], [2420, 280], [2490, 255], [2560, 205], [2620, 160],
+  [2660, 125], [2680, 122], [2690, 137], [2680, 155], [2655, 180],
+  [2630, 210], [2615, 250], [2595, 290], [2560, 340], [2525, 385],
+  [2500, 420], [2480, 460], [2470, 520], [2465, 590], [2470, 655],
+  [2500, 710], [2510, 750], [2500, 820], [2490, 890], [2470, 990],
+  [2440, 1075], [2420, 1130], [2420, 1190], [2390, 1240], [2350, 1300],
+  [2320, 1370],
+];
+
 const COL_POINTS: [number, number][] = (() => {
+  if (MOUNTAIN_MAP) return MOLLENDRUZ_TRACE.map(([x, z]) => [(x - 140) * 0.72 - 960, (z - 700) * 0.72]);
   const points: [number, number][] = [];
   const push = (x: number, z: number) => points.push([x, z]);
   const a0 = 0.45;
@@ -632,9 +653,9 @@ export function naturalHeightAt(x: number, z: number): number {
   if (FLAT_MAP) return 0;
   const base = baseHeight(x, z);
   if (MOUNTAIN_MAP) {
-    // Une montagne au centre, un piémont doux, la ceinture de pics au bord :
-    // aucune route de ville ne vient creuser de corridor dans ce relief.
-    return base * 0.35 + rollingHills(x, z) * 0.45 + massifHeight(x, z) + edgeRidge(x, z);
+    // Relief continu du haut du col vers la vallée, sans cône central : la
+    // corniche ci-dessous le découpe ensuite en versant amont et ravin aval.
+    return 110 - x * 0.065 - z * 0.05 + base * 0.35 + rollingHills(x, z) * 0.45 + edgeRidge(x, z);
   }
   // La carte du circuit n'a ni route à longer, ni massif à contourner : son
   // relief se réduit aux collines et à la ceinture de montagnes du bord.
@@ -722,7 +743,13 @@ function buildGraded(def: RoadDef, options: GradedOptions): GradedRoad {
     points.pop();
   }
 
-  const target = points.map((p) => naturalHeightAt(p.x, p.z));
+  // Depuis le parking du col on descend progressivement vers le village.
+  // Un profil en distance, non en X/Z, conserve le dénivelé après l'épingle.
+  const target = points.map((p, i) =>
+    MOUNTAIN_MAP && def.id === 'col'
+      ? 170 - 140 * smoothstep(0, 1, i / Math.max(1, points.length - 1))
+      : naturalHeightAt(p.x, p.z),
+  );
   const heights = fitRoadProfile(points, target, options.maxGrade);
   // The junction has to meet the ring road at its own surface level, or the
   // graded shelf pokes up through the ring asphalt.
@@ -774,7 +801,7 @@ export const MOUNTAIN_ROADS: SampledRoad[] = [
     COL_ROAD,
     MOUNTAIN_MAP
       ? // Un col de rallye : 13 % de pente max, chaussée étroite, talus serré.
-        { maxGrade: 0.13, flat: 5.4, blend: 22, drop: 0.03 }
+        { maxGrade: 0.13, flat: 10, blend: 42, drop: 0.03 }
       : { maxGrade: 0.145, flat: 7.6, blend: 32, drop: 0.03, junction: 16 },
   ),
 ];
@@ -815,6 +842,20 @@ export interface GradedHit {
   x: number;
   z: number;
   road: GradedRoad;
+  /** Distance signée : positive à droite dans le sens du tracé. */
+  side: number;
+  s: number;
+}
+
+/** Élargissements d'évitement côté ravin, en mètres. */
+export function colLaybyWidth(s: number, length: number): number {
+  const fraction = s / length;
+  let width = 0;
+  for (const center of [0.18, 0.34, 0.55, 0.75]) {
+    const distance = Math.abs(fraction - center) * length;
+    width = Math.max(width, 3.2 * (1 - smoothstep(7, 23, distance)));
+  }
+  return width;
 }
 
 /**
@@ -856,6 +897,8 @@ export function nearestGraded(x: number, z: number): GradedHit | null {
             x: from.x + (to.x - from.x) * hit.t,
             z: from.z + (to.z - from.z) * hit.t,
             road,
+            side: ((x - from.x) * -(to.z - from.z) + (z - from.z) * (to.x - from.x)) / Math.max(0.001, Math.hypot(to.x - from.x, to.z - from.z)),
+            s: from.s + (to.s - from.s) * hit.t,
           };
         }
       }
@@ -879,9 +922,11 @@ export function roadClearance(x: number, z: number): number {
 export const SUMMIT = (() => {
   const road = MOUNTAIN_ROADS[0];
   const last = road.samples[road.samples.length - 1];
-  // Sur sa carte, le col se termine là où la route arrive : l'aire du sommet
-  // est un belvédère posé au bout du dernier lacet, pas un plateau central.
-  if (MOUNTAIN_MAP) return { cx: last.x, cz: last.z, y: last.y, radius: 46, blend: 62 };
+  // Le repère rouge de la capture désigne le parking au début du tracé.
+  if (MOUNTAIN_MAP) {
+    const first = road.samples[0];
+    return { cx: first.x, cz: first.z, y: first.y, radius: 22, blend: 32 };
+  }
   return { cx: MASSIF.cx, cz: MASSIF.cz, y: last.y, radius: 54, blend: 66 };
 })();
 
@@ -971,7 +1016,7 @@ function drySurfaceAt(x: number, z: number): SurfaceInfo {
   if (MOUNTAIN_MAP) {
     // Le col n'a que sa route et son aire de sommet : tout le reste est herbe.
     const col = nearestGraded(x, z);
-    if (col && col.dist <= col.width * 0.5 + 0.4) return SURFACES.asphalte;
+    if (col && col.dist <= col.width * 0.5 + (col.side > 0 ? colLaybyWidth(col.s, col.road.length) : 0) + 0.4) return SURFACES.asphalte;
     if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius) return SURFACES.asphalte;
     return SURFACES.herbe;
   }
@@ -1013,27 +1058,24 @@ export function heightAt(x: number, z: number): number {
  */
 export function terrainBaseHeight(x: number, z: number): number {
   if (MOUNTAIN_MAP) {
-    // Le col : l'aire du sommet est nivelée, la route est taillée en corniche,
-    // et rien d'autre ne touche au relief.
+    // La corniche suit la route : rochers et forêt à gauche, ravin à droite.
+    // La transition large garde la grille de collision sous le ruban d'asphalte.
     let h = naturalHeightAt(x, z);
-    const summit = Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz);
-    if (summit < SUMMIT.blend) {
-      const t = smoothstep(SUMMIT.radius, SUMMIT.blend, summit);
-      h = SUMMIT.y * (1 - t) + h * t;
-    }
     const col = nearestGraded(x, z);
-    if (col && col.dist < col.road.options.blend) {
-      const { blend, drop } = col.road.options;
-      const t = smoothstep(col.width * 0.5 + 0.6, blend, col.dist);
-      h = (col.y - drop) * (1 - t) + h * t;
+    if (col && col.dist < 54) {
+      const layby = col.side > 0 ? colLaybyWidth(col.s, col.road.length) : 0;
+      const shoulder = col.width * 0.5 + layby + 5;
+      const slope = smoothstep(shoulder, shoulder + 20, col.dist);
+      const rock = 18 + 4 * Math.sin(col.s * 0.017);
+      const bank = col.y - 0.03 + (col.side < 0 ? rock : -27) * slope;
+      const fade = smoothstep(40, 54, col.dist);
+      h = bank * (1 - fade) + h * fade;
     }
-    if (summit < SUMMIT.radius + 10) {
-      const t = smoothstep(SUMMIT.radius, SUMMIT.radius + 10, summit);
-      h = Math.max(h, SUMMIT.y * (1 - t) + h * t);
+    const parking = Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz);
+    if (parking < SUMMIT.blend) {
+      const t = smoothstep(SUMMIT.radius, SUMMIT.blend, parking);
+      h = (SUMMIT.y - 0.03) * (1 - t) + h * t;
     }
-    // Le bitume gagne toujours : sans ce plancher, le talus de l'épingle
-    // au-dessus enterrait la route qui passe dessous.
-    if (col && col.dist < col.width * 0.5 + 1.2) h = Math.min(h, col.y - 0.02);
     return h;
   }
   // La carte du circuit n'a ni rues encaissées, ni col, ni aire de drift : son
@@ -1109,7 +1151,7 @@ if (!MOUNTAIN_MAP) DRIFT_PAD.y = nearestRoad(DRIFT_PAD.cx - DRIFT_PAD.halfX + 6,
 export const COL_START = (() => {
   const road = MOUNTAIN_ROADS[0];
   // Sur la carte du col, les deux premiers points sont l'élan au pied.
-  const index = MOUNTAIN_MAP ? 1 : 2;
+  const index = MOUNTAIN_MAP ? 4 : 2;
   const p = road.points[index];
   const next = road.points[index + 1];
   return { x: p.x, z: p.z, heading: Math.atan2(-(next.x - p.x), -(next.z - p.z)) };

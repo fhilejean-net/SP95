@@ -35,6 +35,15 @@ export interface SkyPreset {
   background: number;
 }
 
+export const NIGHT_PRESET: SkyPreset = {
+  id: 'nuit-col', label: 'Nuit en forêt', elevation: -8, azimuth: 142,
+  turbidity: 5, rayleigh: 0.2, mieCoefficient: 0.004, mieDirectionalG: 0.78,
+  sunColor: 0x9cb6d5, sunIntensity: 0.08,
+  hemisphereSky: 0x62758f, hemisphereGround: 0x1a201c, hemisphereIntensity: 0.25,
+  environmentIntensity: 0.06, exposure: 0.9,
+  fogColor: 0x0b1118, fogNear: 70, fogFar: 350, background: 0x090e15,
+};
+
 export const SKY_PRESETS: SkyPreset[] = [
   {
     id: 'apres-midi',
@@ -169,7 +178,7 @@ export function createSky(
     THREE.MathUtils.degToRad(preset.azimuth),
   );
   uniforms.sunPosition.value.copy(sunDirection);
-  scene.add(sky);
+  if (preset.id !== 'nuit-col') scene.add(sky);
 
   // Environment map from the same sky, so paint, glass and chrome reflect the
   // light of the moment instead of a fixed studio.
