@@ -6,8 +6,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
  * dessiné à une échelle arbitraire — le corps mesure près de 13 800 unités de
  * long — et son museau regarde déjà vers −Z, le cap du jeu.
  *
- * On le ramène à la longueur d'une biche, centré sur son axe et les sabots sur
- * le sol : la pose cinématique, elle, reste au groupe qui l'entoure.
+ * On le ramène à 3,4 m de long — un grand cerf, pas un chevreuil —, centré sur
+ * son axe et les pattes sur le sol : la pose cinématique, elle, reste au groupe
+ * qui l'entoure.
  */
 export interface DeerModel {
   object: THREE.Group;
@@ -15,7 +16,7 @@ export interface DeerModel {
 }
 
 /** Longueur museau-queue visée, en mètres. */
-const BODY_LENGTH = 1.95;
+const BODY_LENGTH = 3.4;
 const MODEL_URL = `${import.meta.env.BASE_URL}models/animals/the_human_deer.glb`;
 const loader = new GLTFLoader();
 

@@ -182,7 +182,7 @@ Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite su
 ## Crédits
 
 - **City Kit Roads 2.2** de [Kenney](https://www.kenney.nl) — licence [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). Les modèles et leur licence sont dans `public/models/kenney-city-roads/`.
-- **The Human Deer** de [ceeleste](https://sketchfab.com/ceeleste) — licence [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), source [Sketchfab](https://sketchfab.com/3d-models/the-human-deer-7644694337404bb18eb68e6b637740a1). C'est le cerf du col, dans `public/models/animals/` : normalisé à 1,95 m au chargement, pieds au sol, son animation de marche jouée en boucle.
+- **The Human Deer** de [ceeleste](https://sketchfab.com/ceeleste) — licence [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), source [Sketchfab](https://sketchfab.com/3d-models/the-human-deer-7644694337404bb18eb68e6b637740a1). C'est le cerf du col, dans `public/models/animals/` : normalisé à 3,4 m au chargement, pattes au sol, son animation d'origine jouée en boucle.
 - **Hyundai i20** (« Hyundai I20 ») par [ANDREO12](https://sketchfab.com/ANDREO12) — licence [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), source [Sketchfab](https://sketchfab.com/models/c1f8bb74d4ef4ec9aa56a6ad159476c3) ; modifié (une seule voiture conservée, roues séparées, matériaux convertis, textures recompressées). L'attribution est conservée dans les métadonnées du GLB.
 - **Lamborghini Aventador** — modèle « CAR Model » d'Ignition Labs, fourni par le propriétaire du dépôt. Licence à confirmer.
 - **Mazda RX-7 FD** — modèle d'IvOfficial, fourni par le propriétaire du dépôt. Licence à confirmer.

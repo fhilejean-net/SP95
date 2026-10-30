@@ -572,8 +572,8 @@ async function boot() {
     group.visible = false;
     scene.add(group);
     const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -100, 0));
-    world.createCollider(RAPIER.ColliderDesc.cuboid(0.4, 0.9, 1)
-      .setTranslation(0, 0.9, 0).setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD), body);
+    world.createCollider(RAPIER.ColliderDesc.cuboid(0.55, 1.4, 1.7)
+      .setTranslation(0, 1.4, 0).setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD), body);
     deer = {
       group,
       body,
