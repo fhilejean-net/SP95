@@ -245,8 +245,10 @@ export const STOCK_SPEC: VehicleSpec = {
  */
 export const GROUP_GROUND = 0x0001;
 export const GROUP_WORLD = 0x0002;
-const CHASSIS_UPRIGHT = (GROUP_WORLD << 16) | GROUP_WORLD;
-const CHASSIS_ROLLED = (GROUP_WORLD << 16) | (GROUP_WORLD | GROUP_GROUND);
+/** Morceaux de ragdoll : membres propres, mais solides pour la caisse. */
+export const GROUP_RAGDOLL = 0x0004;
+const CHASSIS_UPRIGHT = (GROUP_WORLD << 16) | (GROUP_WORLD | GROUP_RAGDOLL);
+const CHASSIS_ROLLED = (GROUP_WORLD << 16) | (GROUP_WORLD | GROUP_GROUND | GROUP_RAGDOLL);
 /** Above ~53° of roll the body is what lands, not the tires. */
 const ROLLED_UP_DOT = 0.6;
 /**

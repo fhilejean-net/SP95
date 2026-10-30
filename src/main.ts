@@ -57,6 +57,8 @@ import { createCar, updateCarVisual, type CarVisual } from './render/car.ts';
 import { createBike, type BikeVisual } from './render/bike.ts';
 import { loadBikeVisual } from './render/bikeModel.ts';
 import { loadDeerModel } from './render/deerModel.ts';
+import { spawnDeerRagdoll, type DeerRagdoll } from './render/deerRagdoll.ts';
+import { deerWithinCarFootprint, speedAfterDeerImpact } from './game/deerImpact.ts';
 import { createSparks } from './render/sparks.ts';
 import { createTireSmoke } from './render/tireSmoke.ts';
 import { loadCarVisual } from './render/carModel.ts';
@@ -555,32 +557,124 @@ async function boot() {
     composer.addPass(new OutputPass());
   }
 
-  // Un cerf peut traverser devant la voiture ; sa collision suit sa pose.
+  // Un cerf peut traverser devant la voiture ; sa collision suit sa pose. Il
+  // s'arrête, fixe la caisse, charge — puis part en ragdoll sous le choc.
+  type DeerPhase = 'off' | 'walk' | 'stare' | 'charge' | 'dead';
   let deer: {
     group: THREE.Group;
-    body: RAPIER.RigidBody;
+    body: RAPIER.RigidBody | null;
+    scene: THREE.Object3D | null;
+    mixer: THREE.AnimationMixer | null;
+    action: THREE.AnimationAction | null;
     origin: THREE.Vector3;
     direction: THREE.Vector3;
-    elapsed: number;
-    mixer: THREE.AnimationMixer | null;
+    crossing: THREE.Vector3;
+    position: THREE.Vector3;
+    walked: number;
+    limit: number;
+    phase: DeerPhase;
+    phaseTime: number;
+    yaw: number;
+    stared: boolean;
+    ragdoll: DeerRagdoll | null;
     ready: boolean;
   } | null = null;
   let deerTimer = 32;
+  /** Calé sur le clip : à 1,15 m/s la bête rampe sans glisser sur la route. */
+  const DEER_WALK_SPEED = 1.15;
+  const DEER_CHARGE_SPEED = 7.5;
+  const DEER_CORPSE_TIME = 7;
+  const DEER_UP = new THREE.Vector3(0, 1, 0);
+  const deerQuat = new THREE.Quaternion();
+
+  /** Corps cinématique du cerf : sa collision suit sa pose, sans le pousser. */
+  function createDeerBody(): RAPIER.RigidBody {
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -100, 0));
+    world.createCollider(RAPIER.ColliderDesc.cuboid(0.55, 1.4, 1.7)
+      .setTranslation(0, 1.4, 0).setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD), body);
+    return body;
+  }
+
+  /** Angle le plus court entre deux caps, borné par `step`. */
+  function turnTowards(current: number, target: number, step: number): number {
+    let delta = target - current;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    return current + Math.max(-step, Math.min(step, delta));
+  }
+
+  function deerDistance(): number {
+    if (!deer) return Infinity;
+    return Math.hypot(carPosition.x - deer.position.x, carPosition.z - deer.position.z);
+  }
+
+  /** Vrai quand la caisse touche vraiment la bête (les roues sont des rayons). */
+  function deerTouchesCar(): boolean {
+    if (!deer?.body) return false;
+    const deerCollider = deer.body.collider(0);
+    const carCollider = vehicle.body.collider(0);
+    if (!deerCollider || !carCollider) return false;
+    let touching = false;
+    world.contactPair(carCollider, deerCollider, () => { touching = true; });
+    return touching;
+  }
+
+  function despawnDeer(): void {
+    if (!deer) return;
+    deer.group.visible = false;
+    deer.ragdoll?.dispose();
+    deer.ragdoll = null;
+    deer.phase = 'off';
+    deer.phaseTime = 0;
+    deer.body?.setNextKinematicTranslation({ x: 0, y: -100, z: 0 });
+    deerTimer = 35 + Math.random() * 35;
+  }
+
+  /** La bête est fauchée : le squelette animé lâche la place au ragdoll. */
+  function hitDeer(): void {
+    if (!deer || deer.phase === 'dead' || !deer.scene) return;
+    const v = vehicle.body.linvel();
+    deer.phase = 'dead';
+    deer.phaseTime = 0;
+    deer.mixer?.stopAllAction();
+    deer.group.updateMatrixWorld(true);
+    deer.ragdoll = spawnDeerRagdoll(world, deer.scene, new THREE.Vector3(v.x, v.y, v.z));
+    if (deer.body) {
+      world.removeRigidBody(deer.body);
+      deer.body = null;
+    }
+    // Le choc doit se sentir : la caisse perd près de la moitié de sa vitesse.
+    const speed = Math.hypot(v.x, v.z);
+    const kept = speedAfterDeerImpact(speed);
+    const ratio = speed > 1e-3 ? kept / speed : 0;
+    vehicle.body.setLinvel({ x: v.x * ratio, y: Math.min(v.y, 1.5), z: v.z * ratio }, true);
+    lastCrashTime = performance.now() / 1000;
+    audio.impact(0.85);
+    hud.flash('Impact', { accent: true, duration: 900 });
+  }
+
   if (MOUNTAIN_MAP) {
     const group = new THREE.Group();
     group.name = 'deer';
     group.visible = false;
     scene.add(group);
-    const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -100, 0));
-    world.createCollider(RAPIER.ColliderDesc.cuboid(0.55, 1.4, 1.7)
-      .setTranslation(0, 1.4, 0).setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD), body);
     deer = {
       group,
-      body,
+      body: createDeerBody(),
+      scene: null,
+      mixer: null,
+      action: null,
       origin: new THREE.Vector3(),
       direction: new THREE.Vector3(),
-      elapsed: -1,
-      mixer: null,
+      crossing: new THREE.Vector3(),
+      position: new THREE.Vector3(),
+      walked: 0,
+      limit: 26,
+      phase: 'off',
+      phaseTime: 0,
+      yaw: 0,
+      stared: false,
+      ragdoll: null,
       ready: false,
     };
     // Le GLB pèse 13 Mo : il arrive après le premier tour de roue, pas devant.
@@ -588,7 +682,9 @@ async function boot() {
       .then((model) => {
         if (!deer) return;
         deer.group.add(model.object);
+        deer.scene = model.scene;
         deer.mixer = model.mixer;
+        deer.action = model.action;
         deer.ready = true;
       })
       .catch((error) => console.warn('Modèle de cerf indisponible.', error));
@@ -596,7 +692,9 @@ async function boot() {
 
   function updateDeer(dt: number): void {
     if (!deer || !deer.ready || mode === 'menu' || paused || replay) return;
-    if (deer.elapsed < 0) {
+    const gap = deerDistance();
+
+    if (deer.phase === 'off') {
       deerTimer -= dt;
       if (deerTimer > 0 || vehicle.telemetryState.speedKmh < 15) return;
       const road = MOUNTAIN_ROADS[0];
@@ -612,25 +710,105 @@ async function boot() {
       const travel = (p1.x - p0.x) * carForward.x + (p1.z - p0.z) * carForward.z >= 0 ? 1 : -1;
       const index = Math.max(1, Math.min(road.points.length - 2, nearest + travel * 15));
       const p = road.points[index], a = road.points[index - 1], b = road.points[index + 1];
-      deer.direction.set(-(b.z - a.z), 0, b.x - a.x).normalize();
+      deer.crossing.set(-(b.z - a.z), 0, b.x - a.x).normalize();
+      deer.direction.copy(deer.crossing);
       deer.origin.copy(p).addScaledVector(deer.direction, -12);
-      deer.group.rotation.y = Math.atan2(-deer.direction.x, -deer.direction.z);
+      deer.origin.y = groundAt(deer.origin.x, deer.origin.z);
+      deer.position.copy(deer.origin);
+      deer.walked = 0;
+      deer.limit = 26;
+      deer.phase = 'walk';
+      deer.phaseTime = 0;
+      deer.stared = false;
+      deer.yaw = Math.atan2(-deer.direction.x, -deer.direction.z);
+      deer.group.rotation.y = deer.yaw;
+      deer.group.position.copy(deer.position);
       deer.group.visible = true;
-      deer.elapsed = 0;
+      if (!deer.body) deer.body = createDeerBody();
+      deer.body.setTranslation(deer.position, true);
+      deer.action?.reset().play();
       deer.mixer?.setTime(0);
+      return;
     }
-    deer.elapsed += dt;
-    const pos = deer.origin.clone().addScaledVector(deer.direction, Math.min(24, deer.elapsed * 5));
-    // Le terrain seul passe sous le ruban : le cerf marche sur la chaussée.
-    pos.y = Math.max(groundAt(pos.x, pos.z), deer.origin.y);
-    deer.group.position.copy(pos);
-    deer.body.setNextKinematicTranslation(pos);
-    deer.mixer?.update(dt);
-    if (deer.elapsed > 5) {
-      deer.group.visible = false;
-      deer.body.setNextKinematicTranslation({ x: 0, y: -100, z: 0 });
-      deer.elapsed = -1;
-      deerTimer = 35 + Math.random() * 35;
+
+    deer.phaseTime += dt;
+
+    if (deer.phase === 'dead') {
+      deer.ragdoll?.update();
+      if (deer.phaseTime > DEER_CORPSE_TIME) despawnDeer();
+      return;
+    }
+
+    if (deer.phase === 'walk') {
+      // Elle rampe vers la route sans glisser : 6,25 s de clip par cycle.
+      deer.walked += DEER_WALK_SPEED * dt;
+      deer.position.copy(deer.origin).addScaledVector(deer.direction, deer.walked);
+      deer.position.y = Math.max(groundAt(deer.position.x, deer.position.z), deer.origin.y);
+      deer.mixer?.update(dt);
+      if (!deer.stared && deer.walked > 3 && gap < 45) {
+        deer.phase = 'stare';
+        deer.phaseTime = 0;
+      }
+      if (deer.walked > deer.limit) {
+        despawnDeer();
+        return;
+      }
+    } else if (deer.phase === 'stare') {
+      // Elle s'arrête au bord de la route et fixe la voiture. C'est ce regard
+      // qui doit faire peur, pas une bête qui glisse en ligne droite.
+      deer.yaw = turnTowards(
+        deer.yaw,
+        Math.atan2(-(carPosition.x - deer.position.x), -(carPosition.z - deer.position.z)),
+        2.2 * dt,
+      );
+      deer.mixer?.update(dt * 0.3);
+      if (deer.phaseTime > 1.2 && gap < 22) {
+        deer.phase = 'charge';
+        deer.phaseTime = 0;
+      } else if (deer.phaseTime > 4) {
+        deer.phase = 'walk';
+        deer.phaseTime = 0;
+        deer.stared = true;
+      }
+    } else if (deer.phase === 'charge') {
+      if (gap > 0.3) {
+        deer.direction.set(
+          (carPosition.x - deer.position.x) / gap,
+          0,
+          (carPosition.z - deer.position.z) / gap,
+        );
+        deer.yaw = turnTowards(deer.yaw, Math.atan2(-deer.direction.x, -deer.direction.z), 7 * dt);
+      }
+      deer.position.addScaledVector(deer.direction, DEER_CHARGE_SPEED * dt);
+      deer.position.y = groundAt(deer.position.x, deer.position.z);
+      deer.mixer?.update(dt * 3);
+      if (deer.phaseTime > 3.5) {
+        deer.phase = 'walk';
+        deer.phaseTime = 0;
+        deer.stared = true;
+        deer.origin.copy(deer.position);
+        deer.direction.copy(deer.crossing);
+        deer.walked = 0;
+        deer.limit = 14;
+      }
+    }
+
+    deer.group.position.copy(deer.position);
+    deer.group.rotation.y = deer.yaw;
+    if (deer.body) {
+      deer.body.setNextKinematicTranslation(deer.position);
+      deerQuat.setFromAxisAngle(DEER_UP, deer.yaw);
+      deer.body.setNextKinematicRotation(deerQuat);
+    }
+
+    const within = deerWithinCarFootprint({
+      dx: deer.position.x - carPosition.x,
+      dz: deer.position.z - carPosition.z,
+      forwardX: carForward.x,
+      forwardZ: carForward.z,
+    });
+    if (within || ((deer.phase === 'charge' || vehicle.telemetryState.speed > 3) && deerTouchesCar())) {
+      hitDeer();
     }
   }
 

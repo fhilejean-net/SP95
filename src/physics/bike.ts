@@ -22,6 +22,7 @@ import {
 } from './math.ts';
 import { slipAngleFromVelocity, slipRatioFromWheelSpeed, tireForces, KAPPA_PEAK } from './tire.ts';
 import {
+  GROUP_RAGDOLL,
   GROUP_WORLD,
   type SurfaceGrip,
   type VehicleInput,
@@ -38,7 +39,7 @@ import {
 } from './wheelie.ts';
 
 /** Two wheels in line: the chassis only ever collides with the street furniture. */
-const CHASSIS_GROUPS = (GROUP_WORLD << 16) | GROUP_WORLD;
+const CHASSIS_GROUPS = (GROUP_WORLD << 16) | (GROUP_WORLD | GROUP_RAGDOLL);
 const ASPHALT: SurfaceGrip = { kind: 'asphalte', grip: 1, peak: 1, rolling: 1, roughness: 0 };
 const MIN_LENGTH = 0.05;
 const BUMP_K = 90000;

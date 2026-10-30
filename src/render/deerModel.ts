@@ -12,7 +12,10 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
  */
 export interface DeerModel {
   object: THREE.Group;
+  /** La scène GLB mise à l'échelle, celle que pilotent les os. */
+  scene: THREE.Object3D;
   mixer: THREE.AnimationMixer | null;
+  action: THREE.AnimationAction | null;
 }
 
 /** Longueur museau-queue visée, en mètres. */
@@ -43,9 +46,11 @@ export async function loadDeerModel(): Promise<DeerModel> {
   const object = new THREE.Group();
   object.add(scene);
   let mixer: THREE.AnimationMixer | null = null;
+  let action: THREE.AnimationAction | null = null;
   if (gltf.animations.length > 0) {
     mixer = new THREE.AnimationMixer(scene);
-    mixer.clipAction(gltf.animations[0]).setLoop(THREE.LoopRepeat, Infinity).play();
+    action = mixer.clipAction(gltf.animations[0]).setLoop(THREE.LoopRepeat, Infinity);
+    action.play();
   }
-  return { object, mixer };
+  return { object, scene, mixer, action };
 }
