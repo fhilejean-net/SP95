@@ -60,7 +60,7 @@ import { createSky, NIGHT_PRESET, pickSkyPreset } from './render/sky.ts';
 import { createCar, updateCarVisual, type CarVisual } from './render/car.ts';
 import { createBike, type BikeVisual } from './render/bike.ts';
 import { loadBikeVisual } from './render/bikeModel.ts';
-import { loadDeerModel, resetDeerPose, type DeerRestBone } from './render/deerModel.ts';
+import { loadDeerModel, resetDeerPose, animateDeerGait, type DeerGait, type DeerRestBone } from './render/deerModel.ts';
 import { spawnDeerRagdoll, type DeerRagdoll } from './render/deerRagdoll.ts';
 import { addGuardrailModel } from './render/guardrailModel.ts';
 import { deerImpactOutcome, deerWithinCarFootprint, speedAfterDeerImpact } from './game/deerImpact.ts';
@@ -599,6 +599,8 @@ async function boot() {
     mixer: THREE.AnimationMixer | null;
     action: THREE.AnimationAction | null;
     rest: DeerRestBone[];
+    gait: DeerGait | null;
+    gaitPhase: number;
     origin: THREE.Vector3;
     direction: THREE.Vector3;
     crossing: THREE.Vector3;
@@ -614,9 +616,12 @@ async function boot() {
     ready: boolean;
   } | null = null;
   let deerTimer = 32;
-  /** Calé sur le clip : à 1,15 m/s la bête rampe sans glisser sur la route. */
-  const DEER_WALK_SPEED = 1.15;
-  const DEER_CHARGE_SPEED = 7.5;
+  /** Un grand cerf qui traverse marche vite : ~8,6 km/h, et il charge à 45. */
+  const DEER_WALK_SPEED = 2.4;
+  const DEER_CHARGE_SPEED = 12.5;
+  /** Distance au sol parcourue par un cycle complet de jambes. */
+  const DEER_WALK_STRIDE = 1.5;
+  const DEER_CHARGE_STRIDE = 2.6;
   const DEER_CORPSE_TIME = 7;
   const DEER_UP = new THREE.Vector3(0, 1, 0);
   const deerQuat = new THREE.Quaternion();
@@ -720,6 +725,8 @@ async function boot() {
       mixer: null,
       action: null,
       rest: [],
+      gait: null,
+      gaitPhase: 0,
       origin: new THREE.Vector3(),
       direction: new THREE.Vector3(),
       crossing: new THREE.Vector3(),
@@ -743,6 +750,7 @@ async function boot() {
         deer.mixer = model.mixer;
         deer.action = model.action;
         deer.rest = model.rest;
+        deer.gait = model.gait;
         deer.ready = true;
       })
       .catch((error) => console.warn('Modèle de cerf indisponible.', error));
@@ -789,6 +797,7 @@ async function boot() {
       deer.origin.y = groundAt(deer.origin.x, deer.origin.z);
       deer.position.copy(deer.origin);
       deer.walked = 0;
+      deer.gaitPhase = 0;
       deer.limit = shoulder * 2 + 6;
       deer.phase = 'walk';
       deer.phaseTime = 0;
@@ -827,6 +836,10 @@ async function boot() {
       deer.position.copy(deer.origin).addScaledVector(deer.direction, deer.walked);
       deer.position.y = Math.max(groundAt(deer.position.x, deer.position.z), deer.origin.y);
       deer.mixer?.update(dt);
+      // La démarche est calée sur la distance, pas sur le temps : les sabots
+      // se posent au sol au lieu de patiner sous la bête.
+      deer.gaitPhase += ((DEER_WALK_SPEED * dt) / DEER_WALK_STRIDE) * Math.PI * 2;
+      if (deer.gait) animateDeerGait(deer.gait, deer.gaitPhase, 0.38, 0.32, 0.03);
       if (!deer.stared && deer.walked > 0.9) {
         deer.phase = 'stare';
         deer.phaseTime = 0;
@@ -849,6 +862,7 @@ async function boot() {
         2.2 * dt,
       );
       deer.mixer?.update(dt * 0.3);
+      if (deer.gait) animateDeerGait(deer.gait, deer.gaitPhase, 0, 0, 0);
       if (deer.phaseTime > 0.9 && gap < 26) {
         deer.phase = 'charge';
         deer.phaseTime = 0;
@@ -870,6 +884,8 @@ async function boot() {
       deer.position.addScaledVector(deer.direction, DEER_CHARGE_SPEED * dt);
       deer.position.y = groundAt(deer.position.x, deer.position.z);
       deer.mixer?.update(dt * 3);
+      deer.gaitPhase += ((DEER_CHARGE_SPEED * dt) / DEER_CHARGE_STRIDE) * Math.PI * 2;
+      if (deer.gait) animateDeerGait(deer.gait, deer.gaitPhase, 0.55, 0.6, 0.14);
       if (deer.phaseTime > 3.5) {
         deer.phase = 'walk';
         deer.phaseTime = 0;

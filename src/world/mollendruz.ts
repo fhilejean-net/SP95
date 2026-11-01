@@ -122,14 +122,16 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   texture.anisotropy = 4;
   const terrainMaterial = new THREE.MeshStandardMaterial({ map: texture, roughness: 1 });
   // Le grain d'herbe existant se répète en coordonnées monde et s'efface au
-  // loin ; les zones abruptes prennent une teinte de roche plus neutre.
+  // loin. Près de la route, il redevient le motif dominant : la photo satellite
+  // seule reste trop lisse sous les roues. Les zones abruptes gardent une
+  // teinte de roche plus neutre.
   const detailTexture = mats.terrain.map;
   terrainMaterial.onBeforeCompile = (shader) => {
     shader.uniforms.colDetail = { value: detailTexture };
     shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 colWorld;')
       .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\ncolWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 colWorld;\nuniform sampler2D colDetail;')
-      .replace('#include <map_fragment>', '#include <map_fragment>\nfloat nearFade = 1.0 - smoothstep(30.0, 140.0, length(cameraPosition - colWorld));\nvec3 grassDetail = texture2D(colDetail, colWorld.xz / 6.0).rgb;\nfloat rock = smoothstep(0.25, 0.65, 1.0 - abs(normalize(cross(dFdx(colWorld), dFdy(colWorld))).y));\nvec3 detail = mix(grassDetail * 1.5, vec3(dot(grassDetail, vec3(0.333))) * 1.7, rock);\ndiffuseColor.rgb *= mix(vec3(1.0), detail, nearFade * 0.25);');
+      .replace('#include <map_fragment>', '#include <map_fragment>\nfloat nearFade = 1.0 - smoothstep(18.0, 150.0, length(cameraPosition - colWorld));\nvec3 grassDetail = texture2D(colDetail, colWorld.xz / 5.0).rgb;\nfloat rock = smoothstep(0.25, 0.65, 1.0 - abs(normalize(cross(dFdx(colWorld), dFdy(colWorld))).y));\nvec3 grassPattern = clamp(grassDetail / 0.1, vec3(0.45), vec3(1.9));\ndiffuseColor.rgb *= mix(vec3(1.0), grassPattern, nearFade * mix(0.85, 0.3, rock));');
   };
   const chunkGrid = new Map<string, Chunk>();
   const chunks = header.chunks;
