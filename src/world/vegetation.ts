@@ -306,6 +306,44 @@ async function grassMaterials(gltf: Awaited<ReturnType<GLTFLoader['loadAsync']>>
   return out;
 }
 
+/** Arbres du corridor OSM placés sur le terrain relevé, avec le modèle existant. */
+export async function buildMollendruzTrees(
+  scene: THREE.Scene,
+  locations: number[][],
+  ground: (x: number, z: number) => number,
+): Promise<number> {
+  const gltf = await loader.loadAsync(`${MODEL_ROOT}models/vegetation/trees_low_poly.glb`);
+  gltf.scene.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      material.side = THREE.DoubleSide;
+      material.transparent = false;
+      material.alphaTest = 0.1;
+      material.depthWrite = true;
+      material.needsUpdate = true;
+    }
+  });
+  const node = gltf.scene.getObjectByName('tree4');
+  const variant = node ? extractVariant(node) : null;
+  if (!variant) throw new Error('Modèle d’arbre tree4 absent');
+  const placements = locations.map(([x, z, scale], i) => ({
+    x, z, y: ground(x, z), scale: scale * 12, yaw: (i * 2.399963) % (2 * Math.PI),
+  }));
+  // Un groupe par cellule donne au frustum une vraie chance d'écarter les
+  // arbres éloignés au lieu de dessiner toutes les instances d'un coup.
+  const cells = new Map<string, Placement[]>();
+  for (const placement of placements) {
+    const key = `${Math.floor(placement.x / 128)},${Math.floor(placement.z / 128)}`;
+    const group = cells.get(key) ?? [];
+    group.push(placement);
+    cells.set(key, group);
+  }
+  for (const group of cells.values()) instance(scene, variant, group, 'mollendruz-trees', false);
+  return placements.length;
+}
+
 export async function buildVegetation(
   scene: THREE.Scene,
   world: RAPIER.World,

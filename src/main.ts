@@ -5,7 +5,7 @@ import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import RAPIER from '@dimforge/rapier3d-compat';
 import './styles.css';
-import { GROUP_WORLD, Vehicle, type VehicleInput, type VehicleSpec } from './physics/vehicle.ts';
+import { GROUP_GROUND, GROUP_WORLD, Vehicle, type VehicleInput, type VehicleSpec } from './physics/vehicle.ts';
 import { Bike } from './physics/bike.ts';
 import { SUPERMOTARD } from './game/bikes.ts';
 import {
@@ -42,6 +42,8 @@ import {
   type GuardrailRun,
 } from './world/terrain.ts';
 import { buildColSettlements } from './world/colSettlements.ts';
+import { buildMollendruz } from './world/mollendruz.ts';
+import { createColDebug } from './world/colDebug.ts';
 import { NEIGHBOURHOODS, buildCity, syncProps } from './world/city.ts';
 import { buildCircuit, circuitFloor, type CircuitHandles } from './world/circuit.ts';
 import { buildFlatCircuit } from './world/flatCircuit.ts';
@@ -107,6 +109,7 @@ import {
 import { Garage } from './game/garage.ts';
 import { Showroom } from './game/showroom.ts';
 import { Chrono, formatLap } from './game/chrono.ts';
+import { ColStage } from './game/colStage.ts';
 import { SectorTimer } from './game/sectors.ts';
 import { PRESETS, loadSetup, resolveSpec, saveSetup, type Setup } from './game/tuning.ts';
 
@@ -358,20 +361,24 @@ async function boot() {
   await setLoading(TRACK_MAP ? 0.42 : 0.3, 'Génération du terrain…');
   // Le terrain déborde du monde jouable et s'y redresse en barrière (voir
   // layout.borderHeight) : on ne peut plus sortir de la carte.
-  const terrain = buildTerrain(scene, world, materials);
+  const mollendruz = MOUNTAIN_MAP ? await buildMollendruz(scene, world, materials) : null;
+  const terrain = mollendruz ?? buildTerrain(scene, world, materials);
+  const colDebug = mollendruz && new URLSearchParams(window.location.search).has('coldebug')
+    ? createColDebug(mollendruz.route.samples, mollendruz.bounds, mollendruz.route.origin.H0) : null;
+  let colDebugClock = 0;
   // Le circuit SP95 fournit lui-même son revêtement : la physique doit lire
   // l'asphalte de la piste et l'herbe du reste, pas la grille de la ville.
   // La voie des stands et ses raccordements sont du bitume : sans cette
   // exception, la physique les lisait comme de l'herbe et la voiture y glissait.
   setTrackSurface(
-    FLAT_MAP
+    mollendruz ? mollendruz.surface : FLAT_MAP
       ? (x, z) =>
           insidePit(x, z) || insideDriftPad(x, z) ? 'asphalte' : trackSurfaceAt(x, z)
       : null,
   );
   /** Sol de jeu sous une roue : la dalle du circuit passe avant le terrain. */
   const groundAt = (x: number, z: number) =>
-    Math.max(terrain.sample(x, z), circuitFloor(x, z) ?? -Infinity);
+    mollendruz ? mollendruz.floor(x, z) : Math.max(terrain.sample(x, z), circuitFloor(x, z) ?? -Infinity);
 
   // Contrôle de l'invariant : le terrain de secours doit rester *sous* la dalle
   // du circuit. Un nœud au-dessus ferait percer l'herbe à travers l'asphalte —
@@ -431,11 +438,11 @@ async function boot() {
   let vegetation: VegetationSummary = { trees: 0, grass: 0 };
   let checkpoints: THREE.Vector3[] = [];
   /** Le ruban de glissière du col, pour traiter ses contacts latéraux. */
-  let guardrailRun: GuardrailRun | null = null;
+  let guardrailRun: GuardrailRun | null = mollendruz?.guardrail ?? null;
   /** Dry colour of each street-kit road tile, so the wet tint can be undone. */
   const streetKitDryColors = new Map<THREE.MeshStandardMaterial, THREE.Color>();
 
-  if (!TRACK_MAP) {
+  if (!TRACK_MAP && !mollendruz) {
     await setLoading(0.52, 'Tracé des routes…');
     buildGradedRoads(scene, materials, world);
     buildArenaPads(world);
@@ -505,7 +512,7 @@ async function boot() {
   const startPose = circuit
     ? { x: circuit.spawn.x, z: circuit.spawn.z, heading: circuit.spawn.heading }
     : MOUNTAIN_MAP
-      ? { x: COL_START.x, z: COL_START.z, heading: COL_START.heading }
+      ? (mollendruz?.spawn ?? { x: COL_START.x, z: COL_START.z, heading: COL_START.heading })
       : { x: SPAWN.x, z: SPAWN.z, heading: SPAWN.heading };
   const spawnY = dropHeightAt(startPose.x, startPose.z) + rideHeightFor(spec);
   /**
@@ -748,7 +755,9 @@ async function boot() {
     if (deer.phase === 'off') {
       deerTimer -= dt;
       if (deerTimer > 0 || vehicle.telemetryState.speedKmh < 15) return;
-      const road = MOUNTAIN_ROADS[0];
+      const road = mollendruz
+        ? { points: mollendruz.route.samples.map((p) => new THREE.Vector3(p.x, p.y, p.z)), def: { width: 6.5 } }
+        : MOUNTAIN_ROADS[0];
       let nearest = 0, distance = Infinity;
       for (let i = 0; i < road.points.length; i++) {
         const p = road.points[i];
@@ -902,9 +911,12 @@ async function boot() {
 
   const input = new InputManager(canvas);
   const hud = new Hud();
+  const colStage = mollendruz ? new ColStage(mollendruz.route.samples, mollendruz.route.end_s) : null;
+  const colTimer = document.getElementById('col-timer')!;
   // La mini-carte de la piste : son propre cadrage, sinon le tour tient dans
   // quelques pixels au centre de l'échelle de la ville.
   if (FLAT_MAP) hud.setCircuit(TRACK.samples);
+  if (mollendruz) hud.setCircuit(mollendruz.route.samples, false);
   hud.setRedline(spec.redlineRpm);
   hud.setVehicle('car');
   setTcs(tcsEnabled, false);
@@ -1065,11 +1077,13 @@ async function boot() {
     const fallback = groundAt(x, z);
     const from = fallback + 4;
     const ray = new RAPIER.Ray({ x, y: from, z }, { x: 0, y: -1, z: 0 });
-    const hit = world.castRay(ray, 8, true, undefined, undefined, undefined, vehicle.body);
+    const groundGroups = mollendruz ? ((GROUP_GROUND << 16) | GROUP_GROUND) : undefined;
+    const hit = world.castRay(ray, 8, true, undefined, groundGroups, undefined, vehicle.body);
     return hit ? from - hit.timeOfImpact : fallback;
   }
 
   function setCarPose(x: number, z: number, heading: number): void {
+    mollendruz?.updateTerrain(x, z);
     // Sur la piste, la surface du circuit est au-dessus du terrain de jeu : on la
     // mesure au rayon, sinon la voiture tomberait sur l'asphalte au lieu d'y
     // être posée (l'estimateur par cases se trompe d'un mètre).
@@ -1119,10 +1133,13 @@ async function boot() {
     // Sur la carte du circuit il n'y a qu'une piste : les départs de la ville y
     // retombent sur la ligne droite des stands, et la course sur la ceinture n'y
     // existe pas.
-    const target: FreeSpawn = TRACK_MAP ? 'circuit' : spawn;
+    const target: FreeSpawn = TRACK_MAP ? 'circuit' : MOUNTAIN_MAP ? 'col' : spawn;
     const wanted: GameMode = next === 'race' && TRACK_MAP ? 'free' : next;
     mode = wanted;
     freeSpawn = target;
+    colStage?.reset();
+    colTimer.classList.toggle('hidden', !colStage);
+    if (colStage) colTimer.textContent = 'Départ en attente';
     paused = false;
     menu.classList.add('hidden');
     pause.classList.add('hidden');
@@ -1148,7 +1165,8 @@ async function boot() {
       lastSpeed = 0;
       hud.flash('Prêt ?', { accent: true, duration: 900 });
     } else if (target === 'col') {
-      setCarPose(COL_START.x, COL_START.z, COL_START.heading);
+      const pose = mollendruz?.spawn ?? COL_START;
+      setCarPose(pose.x, pose.z, pose.heading);
       drift.reset();
       lastSpeed = 0;
       hud.flash('Route du Col', { duration: 1300 });
@@ -1199,12 +1217,13 @@ async function boot() {
       const pose = race.respawnPose();
       setCarPose(pose.x, pose.z, pose.heading);
     } else {
-      if (freeSpawn === 'col') setCarPose(COL_START.x, COL_START.z, COL_START.heading);
+      if (freeSpawn === 'col') { const pose = mollendruz?.spawn ?? COL_START; setCarPose(pose.x, pose.z, pose.heading); }
       else if (freeSpawn === 'rally') setCarPose(RALLY_START.x, RALLY_START.z, RALLY_START.heading);
       else if (freeSpawn === 'summit') setCarPose(SUMMIT_START.x, SUMMIT_START.z, SUMMIT_START.heading);
       else spawnFree();
     }
     // Repartir des stands, c'est repartir du chrono : le tour en cours est perdu.
+    colStage?.reset();
     if (timedLap) chrono?.reset();
     sectors?.reset();
     hud.flash('Réapparition', { duration: 700 });
@@ -1245,14 +1264,15 @@ async function boot() {
   /** Builds the supermotard the first time it is asked for. */
   function ensureBike(): Bike {
     if (bike) return bike;
-    const y = groundAt(SUMMIT_START.x, SUMMIT_START.z) + bikeSpec.cgHeight;
+    const spawn = mollendruz?.spawn ?? SUMMIT_START;
+    const y = groundAt(spawn.x, spawn.z) + bikeSpec.cgHeight;
     bike = new Bike(
       world,
       {
-        x: SUMMIT_START.x,
+        x: spawn.x,
         y,
-        z: SUMMIT_START.z,
-        heading: SUMMIT_START.heading,
+        z: spawn.z,
+        heading: spawn.heading,
         surfaceAt,
         floorAt: floorLookup,
       },
@@ -2038,7 +2058,8 @@ async function boot() {
       }
     }
 
-    if (vehicle.isFlipped || vehicle.position.y < -25) {
+    // Le profil réel descend à plus de 300 m sous le départ du col.
+    if (vehicle.isFlipped || (!mollendruz && vehicle.position.y < -25) || (mollendruz && vehicle.position.y < -1000)) {
       respawn();
     }
 
@@ -2637,6 +2658,14 @@ async function boot() {
       respawn();
     }
 
+    if (colStage && mode !== 'menu' && !paused && !replay && !rewind) {
+      const pos = vehicle.body.translation();
+      const event = colStage.update(dt, pos.x, pos.z);
+      if (event === 'start') hud.flash('Départ du col', { duration: 1200 });
+      if (event === 'finish') hud.flash(`Arrivée · ${formatLap(colStage.elapsed)}`, { accent: true, duration: 4000 });
+      colTimer.textContent = colStage.state === 'waiting' ? 'Départ en attente' :
+        `${colStage.state === 'finished' ? 'Arrivée' : 'Col'} · ${formatLap(colStage.elapsed)}`;
+    }
     if (replay) {
       if (!paused) {
         replay.elapsed += dt;
@@ -2645,11 +2674,23 @@ async function boot() {
     } else if (rewind) {
       if (!paused) stepRewind(dt);
     } else if (mode !== 'menu' && !paused) {
+      const position = vehicle.body.translation();
+      mollendruz?.updateTerrain(position.x, position.z);
       simulate(dt, controls);
     }
     updateVisuals(dt);
+    if (mode === 'menu' || replay || rewind) mollendruz?.updateTerrain(carPosition.x, carPosition.z);
     updateDeer(dt);
     render();
+    if (colDebug && mollendruz && (colDebugClock += dt) >= 0.25) {
+      colDebugClock = 0;
+      const hit = mollendruz.roadAt(carPosition.x, carPosition.z);
+      const near = hit ? mollendruz.route.samples.findIndex((p) => p.s >= hit.s) : -1;
+      const a = mollendruz.route.samples[Math.max(0, near - 1)];
+      const b = mollendruz.route.samples[Math.min(mollendruz.route.samples.length - 1, Math.max(1, near + 1))];
+      const gradient = near < 0 ? 0 : (b.y - a.y) / Math.max(0.01, b.s - a.s) * 100;
+      colDebug.update(carPosition.x, carPosition.z, hit?.s ?? 0, gradient, fps, renderer.info.render.calls);
+    }
   }
 
   requestAnimationFrame((now) => {

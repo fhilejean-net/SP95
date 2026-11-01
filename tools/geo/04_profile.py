@@ -102,7 +102,9 @@ def main():
               'width_sources': sorted(set(width_sources)), 'samples': samples}
     OUTPUT.mkdir(parents=True, exist_ok=True)
     (OUTPUT / 'centerline.json').write_text(json.dumps(output, ensure_ascii=False, separators=(',', ':')) + '\n')
-    (OUTPUT / 'README.md').write_text('''# Données préparatoires : Col du Mollendruz
+    readme = OUTPUT / 'README.md'
+    if not readme.exists():
+        readme.write_text('''# Données préparatoires : Col du Mollendruz
 
 Le tracé relie la sortie du parking OSM 76238299 au panneau d’entrée de Mont-la-Ville, avec 200 m supplémentaires. Ce fichier n’est pas encore intégré au jeu.
 

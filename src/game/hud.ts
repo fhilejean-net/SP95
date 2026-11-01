@@ -71,6 +71,7 @@ export class Hud {
   private chrono = false;
   /** Tracé de la piste dessinée par le jeu, s'il y en a une sur cette carte. */
   private circuit: { x: number; z: number }[] | null = null;
+  private circuitClosed = true;
   /** Centre du cadrage de la mini-carte (0,0 = repère du monde de la ville). */
   private mapOffsetX = 0;
   private mapOffsetZ = 0;
@@ -90,8 +91,9 @@ export class Hud {
    * Sans ça, la carte du circuit héritait de l'échelle de la ville et la piste
    * n'y occupait que quelques pixels, hors du cadre.
    */
-  setCircuit(samples: { x: number; z: number }[]): void {
+  setCircuit(samples: { x: number; z: number }[], closed = true): void {
     this.circuit = samples;
+    this.circuitClosed = closed;
     let minX = Infinity;
     let maxX = -Infinity;
     let minZ = Infinity;
@@ -127,7 +129,7 @@ export class Hud {
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
-      ctx.closePath();
+      if (this.circuitClosed) ctx.closePath();
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.strokeStyle = 'rgba(226,232,240,0.85)';
