@@ -717,7 +717,7 @@ export class CarAudio {
     delay?: number;
     sweepTo?: number;
     /** Overrides the effects bus, for a voice that belongs to another fader. */
-    output?: GainNode | null;
+    output?: AudioNode | null;
   }): void {
     const ctx = this.ctx;
     const output = opts.output ?? this.effects;
@@ -828,6 +828,134 @@ export class CarAudio {
     gain.connect(this.effects);
     source.start(now);
     source.stop(now + 0.3);
+  }
+
+  /** Sortie stéréo pour les voix du décor ; retombe sur les effets si absente. */
+  private panned(pan: number): AudioNode | null {
+    const ctx = this.ctx;
+    const output = this.effects;
+    if (!ctx || !output) return null;
+    if (typeof ctx.createStereoPanner !== 'function') return output;
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = Math.max(-1, Math.min(1, pan));
+    panner.connect(output);
+    return panner;
+  }
+
+  /**
+   * Brame du cerf : un souffle grave et nasal, avec un vibrato lent. Ce n'est
+   * pas un cri d'animal de dessin animé : le fondamental reste sous 130 Hz et
+   * le formant descend avec lui, comme une gorge qui se referme.
+   */
+  deerCall(pan = 0, strength = 1): void {
+    const ctx = this.ctx;
+    const output = this.panned(pan);
+    if (!ctx || !output) return;
+    this.events++;
+    const level = Math.max(0.05, Math.min(1, strength));
+    const now = ctx.currentTime;
+    const base = 104 + Math.random() * 18;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(base, now);
+    osc.frequency.exponentialRampToValueAtTime(base * 0.72, now + 0.62);
+
+    const vibrato = ctx.createOscillator();
+    vibrato.frequency.value = 17 + Math.random() * 5;
+    const vibratoGain = ctx.createGain();
+    vibratoGain.gain.value = 2.4;
+    vibrato.connect(vibratoGain);
+    vibratoGain.connect(osc.frequency);
+
+    const formant = ctx.createBiquadFilter();
+    formant.type = 'bandpass';
+    formant.Q.value = 4.2;
+    formant.frequency.setValueAtTime(560, now);
+    formant.frequency.exponentialRampToValueAtTime(320, now + 0.68);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.2 * level, now + 0.07);
+    gain.gain.setValueAtTime(0.2 * level, now + 0.38);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.78);
+
+    osc.connect(formant);
+    formant.connect(gain);
+    gain.connect(output);
+    osc.start(now);
+    vibrato.start(now);
+    osc.stop(now + 0.8);
+    vibrato.stop(now + 0.8);
+
+    // Souffle rauque sous la voix.
+    this.burst({
+      freq: 780,
+      q: 0.8,
+      type: 'bandpass',
+      gain: 0.035 * level,
+      attack: 0.05,
+      decay: 0.55,
+      sweepTo: 300,
+      output,
+    });
+  }
+
+  /**
+   * Choc avec le cerf : le poids du corps, un craquement d'os et une plainte
+   * courte. Séparé de `impact` pour que le choc organique ne se confonde pas
+   * avec celui d'une barrière.
+   */
+  deerHit(strength = 1, pan = 0): void {
+    const ctx = this.ctx;
+    const output = this.panned(pan);
+    if (!ctx || !output) return;
+    this.events++;
+    const level = Math.max(0.1, Math.min(1, strength));
+    const now = ctx.currentTime;
+
+    const thud = ctx.createOscillator();
+    thud.type = 'sine';
+    thud.frequency.setValueAtTime(92, now);
+    thud.frequency.exponentialRampToValueAtTime(38, now + 0.24);
+    const thudGain = ctx.createGain();
+    thudGain.gain.setValueAtTime(0.0001, now);
+    thudGain.gain.exponentialRampToValueAtTime(0.34 * level, now + 0.008);
+    thudGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+    thud.connect(thudGain);
+    thudGain.connect(output);
+    thud.start(now);
+    thud.stop(now + 0.32);
+
+    this.burst({
+      freq: 1500 + Math.random() * 700,
+      q: 0.9,
+      type: 'bandpass',
+      gain: 0.12 * level,
+      decay: 0.09,
+      output,
+    });
+    this.burst({
+      freq: 260,
+      q: 1.4,
+      type: 'lowpass',
+      gain: 0.16 * level,
+      decay: 0.18,
+      output,
+    });
+
+    const cry = ctx.createOscillator();
+    cry.type = 'sawtooth';
+    cry.frequency.setValueAtTime(430, now + 0.03);
+    cry.frequency.exponentialRampToValueAtTime(190, now + 0.32);
+    const cryGain = ctx.createGain();
+    cryGain.gain.setValueAtTime(0.0001, now);
+    cryGain.gain.exponentialRampToValueAtTime(0.07 * level, now + 0.05);
+    cryGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
+    cry.connect(cryGain);
+    cryGain.connect(output);
+    cry.start(now);
+    cry.stop(now + 0.36);
   }
 
   /** Stones and gravel ticking under the sills. */

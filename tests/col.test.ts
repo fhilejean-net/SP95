@@ -7,7 +7,8 @@ import { Vehicle, NEUTRAL_INPUT } from '../src/physics/vehicle.ts';
 
 // Le choix de carte est lu au chargement du module ; ce fichier tourne isolément.
 Object.assign(globalThis, { window: { location: { search: '?map=col' } } });
-const { MOUNTAIN_ROADS, SUMMIT, COL_START, heightAt, surfaceAt, colLaybyWidth } = await import('../src/world/layout.ts');
+const { MOUNTAIN_ROADS, SUMMIT, COL_START, COL_VILLAGE, heightAt, surfaceAt, colLaybyWidth } =
+  await import('../src/world/layout.ts');
 const { buildGradedRoads, buildGuardrails } = await import('../src/world/terrain.ts');
 // Rapier détecte la fenêtre : ne pas lui laisser une fenêtre Node factice.
 Reflect.deleteProperty(globalThis, 'window');
@@ -31,6 +32,24 @@ test('le tracé suit le parking et la grande épingle de la référence', () => 
   assert.ok(maxGrade < 0.13);
 });
 
+test('le village ferme la descente et son sol est asphalté', () => {
+  const last = road.points[road.points.length - 1];
+  assert.ok(Math.hypot(COL_VILLAGE.cx - last.x, COL_VILLAGE.cz - last.z) < 0.1);
+  assert.ok(SUMMIT.y - COL_VILLAGE.y > 80, 'le village est bien en bas du col');
+  assert.equal(surfaceAt(COL_VILLAGE.cx, COL_VILLAGE.cz).kind, 'asphalte');
+});
+
+test('le contact de glissière garde la vitesse tangentielle', async () => {
+  const { railSlideVelocity } = await import('../src/physics/guardrail.ts');
+  const approach = railSlideVelocity({ x: 14, y: 3.2, z: 6 }, 0, 1);
+  assert.equal(approach.x, 14, 'la vitesse le long du rail ne change pas');
+  assert.ok(approach.z < 0, 'la composante vers le ravin est renvoyée');
+  assert.ok(Math.abs(approach.z) < 1, 'le rebond reste une caresse');
+  assert.ok(approach.y <= 0.75, 'un choc latéral ne sert pas de tremplin');
+  const away = { x: 3, y: 0, z: -4 };
+  assert.deepEqual(railSlideVelocity(away, 0, 1), away);
+});
+
 test('la corniche est bordée de roche en amont et de vide en aval', () => {
   // Sur une portion éloignée de l'épingle, la gauche est toujours plus haute.
   for (let i = 90; i < 480; i += 30) {
@@ -48,7 +67,14 @@ test('les évitements et la route sont des surfaces asphaltées avec collision',
   const scene = new THREE.Scene();
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   const material = new THREE.MeshStandardMaterial();
-  const mats = { asphalt: material, asphaltPad: material, lines: material } as unknown as EnvironmentMaterials;
+  const mats = {
+    asphalt: material,
+    asphaltPad: material,
+    lines: material,
+    concrete: material,
+    house: material,
+    roofTile: material,
+  } as unknown as EnvironmentMaterials;
   buildGradedRoads(scene, mats, world);
   const guardrails = buildGuardrails(scene, world);
   const i = Math.round((road.points.length - 1) * 0.34);
@@ -62,7 +88,9 @@ test('les évitements et la route sont des surfaces asphaltées avec collision',
   assert.ok(hit, 'le sol de l’évitement doit arrêter le rayon');
   assert.ok(Math.abs(p.y + 5 - hit.timeOfImpact - (p.y + 0.09)) < 0.2);
   assert.ok(scene.getObjectByName('col-laybys'));
+  assert.ok(scene.getObjectByName('col-village-pad'));
   assert.ok(scene.getObjectByName('guardrails'));
+  assert.ok(guardrails.collider, 'le ruban de glissière a un collider');
   assert.ok(guardrails.placements.every((place) => Number.isFinite(place.pitch)));
   assert.ok(guardrails.placements.length > 300, 'la corniche est couverte de tronçons');
   assert.equal(guardrails.segment, 4.7);
@@ -89,7 +117,18 @@ test('les évitements et la route sont des surfaces asphaltées avec collision',
       `tronçon ${nearest} du mauvais côté de la route`,
     );
     assert.ok(place.stretch > 0.5 && place.stretch < 1.6, 'tronçon étiré pour rester jointif');
+    assert.ok(
+      Math.hypot(place.x - COL_VILLAGE.cx, place.z - COL_VILLAGE.cz) > COL_VILLAGE.radius + 2,
+      'aucun rail au milieu de la place du village',
+    );
   }
+  const { buildColSettlements } = await import('../src/world/colSettlements.ts');
+  const settlements = buildColSettlements(scene, world, mats);
+  assert.ok(settlements.parkingBays >= 8, 'le parking du sommet a ses places');
+  assert.ok(settlements.houses >= 10, 'le village a ses chalets');
+  assert.ok(settlements.colliders >= 12, 'les maisons et la fontaine collisionnent');
+  assert.ok(scene.getObjectByName('col-parking'));
+  assert.ok(scene.getObjectByName('col-village'));
   const car = new Vehicle(world, { x: p.x, y: p.y + 0.9, z: p.z, heading: Math.atan2(-dx, -dz), surfaceAt });
   world.timestep = 1 / 120;
   for (let step = 0; step < 240; step++) {

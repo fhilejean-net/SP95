@@ -930,6 +930,17 @@ export const SUMMIT = (() => {
   return { cx: MASSIF.cx, cz: MASSIF.cz, y: last.y, radius: 54, blend: 66 };
 })();
 
+/**
+ * Village du bas du col. Il occupe le dernier point du tracé : la route arrive
+ * sur sa place, et le village marque la fin de la descente. Le sol est aplani
+ * dans le même rayon que la dalle, sinon les maisons de bordure flottent.
+ */
+export const COL_VILLAGE = (() => {
+  const road = MOUNTAIN_ROADS[0];
+  const last = road.samples[road.samples.length - 1];
+  return { cx: last.x, cz: last.z, y: last.y, radius: 30, blend: 42 };
+})();
+
 export function padEdgeDistance(x: number, z: number): number {
   const dx = Math.abs(x - DRIFT_PAD.cx) - DRIFT_PAD.halfX;
   const dz = Math.abs(z - DRIFT_PAD.cz) - DRIFT_PAD.halfZ;
@@ -1018,6 +1029,7 @@ function drySurfaceAt(x: number, z: number): SurfaceInfo {
     const col = nearestGraded(x, z);
     if (col && col.dist <= col.width * 0.5 + (col.side > 0 ? colLaybyWidth(col.s, col.road.length) : 0) + 0.4) return SURFACES.asphalte;
     if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius) return SURFACES.asphalte;
+    if (Math.hypot(x - COL_VILLAGE.cx, z - COL_VILLAGE.cz) < COL_VILLAGE.radius) return SURFACES.asphalte;
     return SURFACES.herbe;
   }
   // Sa carte n'a pas d'autre route : hors dalle, c'est l'herbe, où que la ville
@@ -1075,6 +1087,11 @@ export function terrainBaseHeight(x: number, z: number): number {
     if (parking < SUMMIT.blend) {
       const t = smoothstep(SUMMIT.radius, SUMMIT.blend, parking);
       h = (SUMMIT.y - 0.03) * (1 - t) + h * t;
+    }
+    const village = Math.hypot(x - COL_VILLAGE.cx, z - COL_VILLAGE.cz);
+    if (village < COL_VILLAGE.blend) {
+      const t = smoothstep(COL_VILLAGE.radius, COL_VILLAGE.blend, village);
+      h = (COL_VILLAGE.y - 0.03) * (1 - t) + h * t;
     }
     return h;
   }

@@ -39,7 +39,9 @@ import {
   buildRoads,
   buildTerrain,
   roadEnds,
+  type GuardrailRun,
 } from './world/terrain.ts';
+import { buildColSettlements } from './world/colSettlements.ts';
 import { NEIGHBOURHOODS, buildCity, syncProps } from './world/city.ts';
 import { buildCircuit, circuitFloor, type CircuitHandles } from './world/circuit.ts';
 import { buildFlatCircuit } from './world/flatCircuit.ts';
@@ -60,6 +62,8 @@ import { loadDeerModel, resetDeerPose, type DeerRestBone } from './render/deerMo
 import { spawnDeerRagdoll, type DeerRagdoll } from './render/deerRagdoll.ts';
 import { addGuardrailModel } from './render/guardrailModel.ts';
 import { deerWithinCarFootprint, speedAfterDeerImpact } from './game/deerImpact.ts';
+import { slideAlongGuardrail } from './physics/guardrail.ts';
+import { createAmbientMotes } from './render/ambientMotes.ts';
 import { createSparks } from './render/sparks.ts';
 import { createTireSmoke } from './render/tireSmoke.ts';
 import { loadCarVisual } from './render/carModel.ts';
@@ -426,6 +430,8 @@ async function boot() {
   let streetKit: StreetKitSummary = { models: 0, instances: 0, colliders: 0, roadMaterials: [] };
   let vegetation: VegetationSummary = { trees: 0, grass: 0 };
   let checkpoints: THREE.Vector3[] = [];
+  /** Le ruban de glissière du col, pour traiter ses contacts latéraux. */
+  let guardrailRun: GuardrailRun | null = null;
   /** Dry colour of each street-kit road tile, so the wet tint can be undone. */
   const streetKitDryColors = new Map<THREE.MeshStandardMaterial, THREE.Color>();
 
@@ -438,7 +444,14 @@ async function boot() {
     // pas de mobilier urbain, pas de course sur la ceinture. Des glissières à
     // la place, et une forêt dense.
     if (MOUNTAIN_MAP) {
+      await setLoading(0.56, 'Parking et village du col…');
+      const settlements = buildColSettlements(scene, world, materials);
+      console.log(
+        `Col : ${settlements.parkingBays} places, ${settlements.houses} chalets, ` +
+          `${settlements.colliders} collisions, ${settlements.lamps} lampadaires`,
+      );
       const guardrails = buildGuardrails(scene, world);
+      guardrailRun = guardrails;
       await setLoading(0.58, 'Glissières du col…');
       // Le GLB est plus lourd que le ruban : s'il manque, le repli reste visible.
       await addGuardrailModel(scene, guardrails).catch((error) =>
@@ -615,6 +628,23 @@ async function boot() {
     return Math.hypot(carPosition.x - deer.position.x, carPosition.z - deer.position.z);
   }
 
+  /** Position stéréo de la bête par rapport au cap de la voiture, -1..1. */
+  function deerPan(): number {
+    if (!deer) return 0;
+    const dx = deer.position.x - carPosition.x;
+    const dz = deer.position.z - carPosition.z;
+    const distance = Math.hypot(dx, dz) || 1;
+    const rightX = -carForward.z;
+    const rightZ = carForward.x;
+    return Math.max(-0.85, Math.min(0.85, (dx * rightX + dz * rightZ) / distance));
+  }
+
+  /** Volume du cerf selon la distance : inutile de bramer à l'autre bout du col. */
+  function deerVoiceGain(): number {
+    if (!deer) return 0;
+    return Math.max(0, Math.min(1, 1 - deerDistance() / 75));
+  }
+
   /** Vrai quand la caisse touche vraiment la bête (les roues sont des rayons). */
   function deerTouchesCar(): boolean {
     if (!deer?.body) return false;
@@ -658,6 +688,9 @@ async function boot() {
     vehicle.body.setLinvel({ x: v.x * ratio, y: Math.min(v.y, 1.5), z: v.z * ratio }, true);
     lastCrashTime = performance.now() / 1000;
     audio.impact(0.85);
+    // Le choc organique par-dessus le bruit de tôle : un cerf ne sonne pas
+    // comme une barrière.
+    audio.deerHit(0.85, deerPan());
     hud.flash('Impact', { accent: true, duration: 900 });
   }
 
@@ -778,6 +811,7 @@ async function boot() {
       if (!deer.stared && deer.walked > 0.9) {
         deer.phase = 'stare';
         deer.phaseTime = 0;
+        audio.deerCall(deerPan(), deerVoiceGain() * 0.8);
       }
       if (deer.walked > deer.limit) {
         despawnDeer();
@@ -795,6 +829,7 @@ async function boot() {
       if (deer.phaseTime > 0.9 && gap < 26) {
         deer.phase = 'charge';
         deer.phaseTime = 0;
+        audio.deerCall(deerPan(), deerVoiceGain());
       } else if (deer.phaseTime > 4) {
         deer.phase = 'walk';
         deer.phaseTime = 0;
@@ -943,6 +978,10 @@ async function boot() {
   scene.add(smokeFx.object);
   const sparkFx = createSparks(lowFx ? 120 : 260);
   scene.add(sparkFx.object);
+  // Poussières fines de la nuit : elles suivent la caisse, ne tombent pas et
+  // restent assez discrètes pour ne pas se lire comme de la neige.
+  const motes = MOUNTAIN_MAP ? createAmbientMotes(lowFx ? 140 : 360) : null;
+  if (motes) scene.add(motes.object);
   let sparkDebt = 0;
   let scrapeTimer = 0;
   const platePoint = new THREE.Vector3();
@@ -1794,6 +1833,18 @@ async function boot() {
       physPrevious.qw = before.rotation.w;
       vehicle.step(FIXED, carInput, world);
       world.step();
+      // Le ruban de glissière est un mur mince : une fois le choc résolu, on
+      // garde la vitesse tangentielle et on retire l'entrée dans le rail. La
+      // voiture glisse au lieu de s'arrêter ou de monter dessus.
+      if (guardrailRun?.collider) {
+        slideAlongGuardrail(
+          world,
+          vehicle.body.collider(0),
+          guardrailRun.collider,
+          vehicle.body,
+          guardrailRun.placements,
+        );
+      }
       accumulator -= FIXED;
       steps++;
     }
@@ -2429,6 +2480,7 @@ async function boot() {
     // Point sizes are in pixels: convert from metres at the current fov.
     const fov = (camera.fov * Math.PI) / 180;
     const pixelsPerMeter = renderer.domElement.height / (2 * Math.tan(fov / 2));
+    motes?.update(dt, carPosition);
     smokeFx.update(dt, pixelsPerMeter);
     sparkFx.update(dt, pixelsPerMeter);
 

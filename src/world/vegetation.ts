@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   CITY,
+  COL_VILLAGE,
   DIRT_TRACKS,
   MASSIF,
   MOUNTAIN_MAP,
@@ -432,6 +433,7 @@ export async function buildVegetation(
     // creuser un rectangle sans arbres au milieu de la forêt.
     if (!MOUNTAIN_MAP && x > CITY.minX - 8 && x < CITY.maxX + 8 && z > CITY.minZ - 8 && z < CITY.maxZ + 8) continue;
     if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) < SUMMIT.radius + 9) continue;
+    if (MOUNTAIN_MAP && Math.hypot(x - COL_VILLAGE.cx, z - COL_VILLAGE.cz) < COL_VILLAGE.radius + 8) continue;
     if (!MOUNTAIN_MAP && padEdgeDistance(x, z) < 9) continue;
     // The housing lots sit a few metres off the pavement: near the city a
     // trunk needs a much wider berth, or the canopy comes out of a roof.

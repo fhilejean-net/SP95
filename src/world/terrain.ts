@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
+  COL_VILLAGE,
   DIRT_TRACKS,
   DRIFT_PAD,
   FLAT_MAP,
@@ -441,8 +442,18 @@ export function buildArenaPads(world: RAPIER.World): void {
     body,
   );
   // La carte du col n'a pas d'aire de drift : sa dalle n'existe pas, et son
-  // collider flotterait au-dessus de la forêt.
-  if (MOUNTAIN_MAP) return;
+  // collider flotterait au-dessus de la forêt. Le village du bas, lui, a son
+  // propre sol : la grille du terrain est trop grossière pour ses maisons.
+  if (MOUNTAIN_MAP) {
+    world.createCollider(
+      RAPIER.ColliderDesc.cylinder(HALF, COL_VILLAGE.radius)
+        .setTranslation(COL_VILLAGE.cx, COL_VILLAGE.y + 0.04 - HALF, COL_VILLAGE.cz)
+        .setFriction(0.98)
+        .setCollisionGroups(GROUND_GROUP),
+      body,
+    );
+    return;
+  }
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(DRIFT_PAD.halfX, HALF, DRIFT_PAD.halfZ)
       .setTranslation(DRIFT_PAD.cx, DRIFT_PAD.y + 0.022 - HALF, DRIFT_PAD.cz)
@@ -581,7 +592,29 @@ export function buildGradedRoads(scene: THREE.Scene, mats: EnvironmentMaterials,
   scene.add(pad);
 
   // Le parking du col ne porte pas les cercles de l'arène de drift.
-  if (MOUNTAIN_MAP) return;
+  if (MOUNTAIN_MAP) {
+    // La place du village : une dalle ronde, bordée d'une pierre claire. Les
+    // maisons sont posées dessus par buildColSettlements.
+    const village = new THREE.Mesh(
+      new THREE.CircleGeometry(COL_VILLAGE.radius, 96),
+      mats.asphaltPad,
+    );
+    village.rotation.x = -Math.PI / 2;
+    village.position.set(COL_VILLAGE.cx, COL_VILLAGE.y + 0.04, COL_VILLAGE.cz);
+    village.receiveShadow = true;
+    village.name = 'col-village-pad';
+    scene.add(village);
+    const kerb = new THREE.Mesh(
+      new THREE.RingGeometry(COL_VILLAGE.radius - 0.8, COL_VILLAGE.radius, 96),
+      mats.concrete,
+    );
+    kerb.rotation.x = -Math.PI / 2;
+    kerb.position.set(COL_VILLAGE.cx, COL_VILLAGE.y + 0.045, COL_VILLAGE.cz);
+    kerb.receiveShadow = true;
+    kerb.name = 'col-village-kerb';
+    scene.add(kerb);
+    return;
+  }
   for (const radius of [SUMMIT.radius - 2.5, 26]) {
     const ring = new THREE.Mesh(new THREE.RingGeometry(radius, radius + 0.55, 96), mats.lines);
     ring.rotation.x = -Math.PI / 2;
@@ -611,6 +644,8 @@ export interface GuardrailRun {
   /** Ruban et poteaux procéduraux, masqués quand le GLB est posé. */
   fallback: THREE.Object3D[];
   segment: number;
+  /** Collider du ruban : le contact latéral est traité comme un rail glissant. */
+  collider: RAPIER.Collider | null;
 }
 
 /**
@@ -621,13 +656,15 @@ export interface GuardrailRun {
  */
 export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): GuardrailRun {
   const road = MOUNTAIN_ROADS[0];
-  if (!road) return { placements: [], fallback: [], segment: GUARDRAIL_SEGMENT };
+  if (!road) return { placements: [], fallback: [], segment: GUARDRAIL_SEGMENT, collider: null };
   const points = road.points;
   const lift = 0.09;
-  // Le GLB mesure 71 cm une fois étiré : la collision couvre le faisceau,
-  // pas le vide au-dessus.
-  const low = 0.22;
-  const high = 0.72;
+  // Le GLB mesure 71 cm, mais la collision monte plus haut que la caisse :
+  // avec un bord à 72 cm, le coin du châssis accrochait le haut du ruban et
+  // la voiture sautait. Un mur plein jusqu'à 1 m laisse le contact sur la
+  // face verticale, où le glissement latéral est traité par la physique.
+  const low = 0.02;
+  const high = 1.0;
   const half = road.def.width * 0.5 + 0.3;
   const up = new THREE.Vector3(0, 1, 0);
   const tangent = new THREE.Vector3();
@@ -666,16 +703,19 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): Guardr
       positions.push(x, y + low, z, x, y + high, z);
       normals.push(normal.x, 0, normal.z, normal.x, 0, normal.z);
       uvs.push(run / 4, 0, run / 4, 1);
-      // Le parking reste ouvert sur la route, sans rail au milieu du bitume.
+      // Le parking et la place du village restent ouverts sur la route, sans
+      // rail au milieu du bitume.
       const outsideParking = Math.hypot(points[i].x - SUMMIT.cx, points[i].z - SUMMIT.cz) > SUMMIT.radius + 1;
       const prevOutside = Math.hypot(prev.x - SUMMIT.cx, prev.z - SUMMIT.cz) > SUMMIT.radius + 1;
-      if (i > 0 && outsideParking && prevOutside) {
+      const outsideVillage = Math.hypot(points[i].x - COL_VILLAGE.cx, points[i].z - COL_VILLAGE.cz) > COL_VILLAGE.radius + 3;
+      const prevOutsideVillage = Math.hypot(prev.x - COL_VILLAGE.cx, prev.z - COL_VILLAGE.cz) > COL_VILLAGE.radius + 3;
+      if (i > 0 && outsideParking && prevOutside && outsideVillage && prevOutsideVillage) {
         const a = base + (i - 1) * 2;
         indices.push(a, a + 1, a + 2, a + 2, a + 1, a + 3);
       }
       // Un poteau tous les ~6 m : la mémoire d'un poteau, c'est le ruban qui
       // porte la collision, pas lui.
-      if (outsideParking && i % 6 === 0) {
+      if (outsideParking && outsideVillage && i % 6 === 0) {
         postPos.set(x, y + 0.3, z);
         postQuat.setFromAxisAngle(up, Math.atan2(normal.x, normal.z));
         posts.push(new THREE.Matrix4().compose(postPos, postQuat, one));
@@ -715,8 +755,10 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): Guardr
       const length = Math.hypot(dx, dz);
       if (length < 0.2) continue;
       const x = (a.x + b.x) / 2, z = (a.z + b.z) / 2;
-      // Le parking reste ouvert : pas de rail au milieu du bitume.
+      // Le parking et la place du village restent ouverts : pas de rail au
+      // milieu du bitume.
       if (Math.hypot(x - SUMMIT.cx, z - SUMMIT.cz) <= SUMMIT.radius + 1) continue;
+      if (Math.hypot(x - COL_VILLAGE.cx, z - COL_VILLAGE.cz) <= COL_VILLAGE.radius + 3) continue;
       placements.push({
         x,
         y: (a.y + b.y) / 2,
@@ -787,14 +829,17 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): Guardr
   scene.add(rocks);
 
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  world.createCollider(
+  const collider = world.createCollider(
     RAPIER.ColliderDesc.trimesh(new Float32Array(positions), new Uint32Array(indices))
-      .setFriction(0.3)
-      .setRestitution(0.1)
+      // Acier sur acier : presque aucun frottement. Le contact latéral est en
+      // plus projeté le long du rail dans physics/guardrail.ts, pour que la
+      // voiture glisse au lieu de s'arrêter ou de monter sur le ruban.
+      .setFriction(0.02)
+      .setRestitution(0)
       .setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD),
     body,
   );
-  return { placements, fallback: [rail, postMesh], segment: GUARDRAIL_SEGMENT };
+  return { placements, fallback: [rail, postMesh], segment: GUARDRAIL_SEGMENT, collider };
 }
 
 export interface RaceGate {

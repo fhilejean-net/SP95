@@ -1,6 +1,8 @@
 import {
+  COL_VILLAGE,
   DIRT_TRACKS,
   DRIFT_PAD,
+  MOUNTAIN_MAP,
   MOUNTAIN_ROADS,
   RACE_START,
   SAMPLED_ROADS,
@@ -220,6 +222,15 @@ export class Hud {
     ctx.arc(cx + SUMMIT.cx * s, cy + SUMMIT.cz * s, summitRadius, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(242,163,60,0.22)';
     ctx.fill();
+    // Le village du bas est l'autre extrémité du col : un point chaud sur la
+    // mini-carte vaut mieux qu'un tracé qui s'arrête dans la forêt.
+    if (MOUNTAIN_MAP) {
+      const villageRadius = Math.max(3, COL_VILLAGE.radius * s);
+      ctx.beginPath();
+      ctx.arc(cx + COL_VILLAGE.cx * s, cy + COL_VILLAGE.cz * s, villageRadius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(242,163,60,0.16)';
+      ctx.fill();
+    }
 
     const ring = SAMPLED_ROADS.find((r) => r.def.id === 'ring');
     if (ring) {
