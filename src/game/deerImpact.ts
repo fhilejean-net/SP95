@@ -8,6 +8,12 @@
 
 /** Part de la vitesse conservée après avoir fauché la bête. */
 export const DEER_IMPACT_KEEP = 0.55;
+/** Il faut dépasser 60 km/h pour faucher la bête plutôt que se faire attraper. */
+export const DEER_ESCAPE_SPEED_KMH = 60;
+
+export function deerImpactOutcome(speedMetresPerSecond: number): 'hit' | 'caught' {
+  return speedMetresPerSecond > DEER_ESCAPE_SPEED_KMH / 3.6 ? 'hit' : 'caught';
+}
 
 /** Demi-largeur et demi-longueur de la caisse, élargies du corps de la bête. */
 const HIT_HALF_WIDTH = 1.6;

@@ -46,6 +46,12 @@ export interface EngineTune {
  * not a sample played at some other speed.
  */
 const FLUTTER_SAMPLES = ['audio/turbo-flutter-2.mp3', 'audio/turbo-flutter.mp3'];
+const DEER_SAMPLES = {
+  spawn: 'audio/when he spawn.mp3',
+  passing: "audio/when he's passing.mp3",
+  attack: 'audio/when he see you and attacking.mp3',
+  caught: 'audio/when you got caught.mp3',
+} as const;
 
 type NoiseKind = 'lowpass' | 'bandpass' | 'highpass';
 
@@ -93,6 +99,7 @@ export class CarAudio {
   private samples = new Map<string, AudioBuffer>();
   private turboBus: GainNode | null = null;
   private flutterFlip = false;
+  private deerVoices = new Set<AudioBufferSourceNode>();
   /** True between a lift and the next time the throttle is picked up again. */
   private lifted = false;
 
@@ -332,8 +339,7 @@ export class CarAudio {
     wind.start();
     this.windGain = windGain;
 
-    // The compressor surge is the only recording left, and it only ever plays
-    // as a one-shot when the driver lifts.
+    // Les sons enregistrés sont décodés après le premier geste du joueur.
     void this.loadSamples(ctx);
 
     // Bursts and impacts live on the effects bus.
@@ -346,7 +352,7 @@ export class CarAudio {
   /** Decodes the provided recordings. A failed file only costs its layer. */
   private async loadSamples(ctx: AudioContext): Promise<void> {
     const base = import.meta.env.BASE_URL ?? '/';
-    const urls = [...FLUTTER_SAMPLES];
+    const urls = [...FLUTTER_SAMPLES, ...Object.values(DEER_SAMPLES)];
     await Promise.all(
       urls.map(async (path) => {
         try {
@@ -840,6 +846,31 @@ export class CarAudio {
     panner.pan.value = Math.max(-1, Math.min(1, pan));
     panner.connect(output);
     return panner;
+  }
+
+  /** Sons de la bête sur le bus d'effets, spatialisés sauf le screamer. */
+  deerSound(event: keyof typeof DEER_SAMPLES, pan = 0, strength = 1): number {
+    const ctx = this.ctx;
+    const buffer = this.samples.get(DEER_SAMPLES[event]);
+    const output = this.panned(pan);
+    if (!ctx || !buffer || !output) return 0;
+    if (event === 'caught') this.stopDeerSounds();
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    source.buffer = buffer;
+    gain.gain.value = Math.max(0, Math.min(1, strength));
+    source.connect(gain);
+    gain.connect(output);
+    this.deerVoices.add(source);
+    source.onended = () => this.deerVoices.delete(source);
+    source.start();
+    this.events++;
+    return buffer.duration;
+  }
+
+  stopDeerSounds(): void {
+    for (const voice of this.deerVoices) voice.stop();
+    this.deerVoices.clear();
   }
 
   /**

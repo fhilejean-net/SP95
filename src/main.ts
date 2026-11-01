@@ -61,7 +61,7 @@ import { loadBikeVisual } from './render/bikeModel.ts';
 import { loadDeerModel, resetDeerPose, type DeerRestBone } from './render/deerModel.ts';
 import { spawnDeerRagdoll, type DeerRagdoll } from './render/deerRagdoll.ts';
 import { addGuardrailModel } from './render/guardrailModel.ts';
-import { deerWithinCarFootprint, speedAfterDeerImpact } from './game/deerImpact.ts';
+import { deerImpactOutcome, deerWithinCarFootprint, speedAfterDeerImpact } from './game/deerImpact.ts';
 import { slideAlongGuardrail } from './physics/guardrail.ts';
 import { createAmbientMotes } from './render/ambientMotes.ts';
 import { createSparks } from './render/sparks.ts';
@@ -579,6 +579,12 @@ async function boot() {
   // Un cerf peut traverser devant la voiture ; sa collision suit sa pose. Il
   // s'arrête, fixe la caisse, charge — puis part en ragdoll sous le choc.
   type DeerPhase = 'off' | 'walk' | 'stare' | 'charge' | 'dead';
+  const SCREAMER_DURATION_MS = 4500;
+  const screamer = document.getElementById('screamer')!;
+  const screamerImage = document.getElementById('screamer-image') as HTMLImageElement;
+  screamerImage.src = `${import.meta.env.BASE_URL}models/col/Gemini_Generated_Image_fq2ye7fq2ye7fq2y.jpeg`;
+  let caughtUntil = 0;
+  let deerPreContactVelocity: { x: number; y: number; z: number } | null = null;
   let deer: {
     group: THREE.Group;
     body: RAPIER.RigidBody | null;
@@ -596,6 +602,7 @@ async function boot() {
     phaseTime: number;
     yaw: number;
     stared: boolean;
+    passingSound: boolean;
     ragdoll: DeerRagdoll | null;
     ready: boolean;
   } | null = null;
@@ -669,9 +676,9 @@ async function boot() {
   }
 
   /** La bête est fauchée : le squelette animé lâche la place au ragdoll. */
-  function hitDeer(): void {
+  function hitDeer(impactVelocity: { x: number; y: number; z: number }): void {
     if (!deer || deer.phase === 'dead' || !deer.scene) return;
-    const v = vehicle.body.linvel();
+    const v = impactVelocity;
     deer.phase = 'dead';
     deer.phaseTime = 0;
     deer.mixer?.stopAllAction();
@@ -716,6 +723,7 @@ async function boot() {
       phaseTime: 0,
       yaw: 0,
       stared: false,
+      passingSound: false,
       ragdoll: null,
       ready: false,
     };
@@ -776,6 +784,8 @@ async function boot() {
       deer.phase = 'walk';
       deer.phaseTime = 0;
       deer.stared = false;
+      deer.passingSound = false;
+      audio.deerSound('spawn', deerPan(), deerVoiceGain());
       deer.yaw = Math.atan2(-deer.direction.x, -deer.direction.z);
       deer.group.rotation.y = deer.yaw;
       deer.group.position.copy(deer.position);
@@ -811,7 +821,11 @@ async function boot() {
       if (!deer.stared && deer.walked > 0.9) {
         deer.phase = 'stare';
         deer.phaseTime = 0;
-        audio.deerCall(deerPan(), deerVoiceGain() * 0.8);
+        // Le regard silencieux laisse entendre la forêt avant la charge.
+      }
+      if (!deer.passingSound && deer.walked > 3) {
+        deer.passingSound = true;
+        audio.deerSound('passing', deerPan(), deerVoiceGain());
       }
       if (deer.walked > deer.limit) {
         despawnDeer();
@@ -829,7 +843,7 @@ async function boot() {
       if (deer.phaseTime > 0.9 && gap < 26) {
         deer.phase = 'charge';
         deer.phaseTime = 0;
-        audio.deerCall(deerPan(), deerVoiceGain());
+        audio.deerSound('attack', deerPan(), deerVoiceGain());
       } else if (deer.phaseTime > 4) {
         deer.phase = 'walk';
         deer.phaseTime = 0;
@@ -872,8 +886,17 @@ async function boot() {
       forwardX: carForward.x,
       forwardZ: carForward.z,
     });
-    if (within || ((deer.phase === 'charge' || vehicle.telemetryState.speed > 3) && deerTouchesCar())) {
-      hitDeer();
+    if (within || deerPreContactVelocity || ((deer.phase === 'charge' || vehicle.telemetryState.speed > 3) && deerTouchesCar())) {
+      const v = deerPreContactVelocity ?? vehicle.body.linvel();
+      // La vitesse avant la résolution Rapier détermine la violence du choc.
+      if (deerImpactOutcome(Math.hypot(v.x, v.z)) === 'hit') {
+        hitDeer(v);
+      } else {
+        const caughtSoundDuration = audio.deerSound('caught');
+        caughtUntil = performance.now() + Math.max(SCREAMER_DURATION_MS, caughtSoundDuration * 1000);
+        screamer.classList.remove('hidden');
+        input.clear();
+      }
     }
   }
 
@@ -1821,6 +1844,7 @@ async function boot() {
       : controls;
 
     accumulator += dt;
+    deerPreContactVelocity = null;
     let steps = 0;
     while (accumulator >= FIXED && steps < 8) {
       const before = vehicle.state;
@@ -1832,7 +1856,11 @@ async function boot() {
       physPrevious.qz = before.rotation.z;
       physPrevious.qw = before.rotation.w;
       vehicle.step(FIXED, carInput, world);
+      const preContact = vehicle.body.linvel();
       world.step();
+      if (deer?.phase !== 'off' && deer?.phase !== 'dead' && deerPreContactVelocity === null && deerTouchesCar()) {
+        deerPreContactVelocity = { x: preContact.x, y: preContact.y, z: preContact.z };
+      }
       // Le ruban de glissière est un mur mince : une fois le choc résolu, on
       // garde la vitesse tangentielle et on retire l'entrée dans le rail. La
       // voiture glisse au lieu de s'arrêter ou de monter dessus.
@@ -2541,6 +2569,17 @@ async function boot() {
     // avance jusqu'à l'image suivante, la physique ne s'en aperçoit pas.
     if (FRAME_TARGET > 0 && now - lastRender < 1000 / FRAME_TARGET - 0.5) return;
     lastRender = now;
+    if (caughtUntil) {
+      lastFrame = now;
+      if (now >= caughtUntil) {
+        caughtUntil = 0;
+        screamer.classList.add('hidden');
+        audio.stopDeerSounds();
+        despawnDeer();
+        startMode('free', 'col');
+      }
+      return;
+    }
     const rawDt = Math.max(0.0001, (now - lastFrame) / 1000);
     const dt = Math.min(0.05, rawDt);
     lastFrame = now;

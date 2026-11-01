@@ -3,8 +3,16 @@ import { test } from 'node:test';
 import {
   DEER_IMPACT_KEEP,
   deerWithinCarFootprint,
+  deerImpactOutcome,
   speedAfterDeerImpact,
 } from '../src/game/deerImpact.ts';
+
+test('only an impact strictly above 60 km/h knocks down the deer', () => {
+  assert.equal(deerImpactOutcome(0), 'caught');
+  assert.equal(deerImpactOutcome(59.9 / 3.6), 'caught');
+  assert.equal(deerImpactOutcome(60 / 3.6), 'caught');
+  assert.equal(deerImpactOutcome(60.1 / 3.6), 'hit');
+});
 
 test('the deer impact takes a little less than half the speed', () => {
   assert.equal(speedAfterDeerImpact(30), 30 * DEER_IMPACT_KEEP);
