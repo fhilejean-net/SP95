@@ -43,9 +43,8 @@ test('le contact de glissière garde la vitesse tangentielle', async () => {
   const { railSlideVelocity } = await import('../src/physics/guardrail.ts');
   const approach = railSlideVelocity({ x: 14, y: 3.2, z: 6 }, 0, 1);
   assert.equal(approach.x, 14, 'la vitesse le long du rail ne change pas');
-  assert.ok(approach.z < 0, 'la composante vers le ravin est renvoyée');
-  assert.ok(Math.abs(approach.z) < 1, 'le rebond reste une caresse');
-  assert.ok(approach.y <= 0.75, 'un choc latéral ne sert pas de tremplin');
+  assert.ok(Math.abs(approach.z) < 0.01, 'le contact ne renvoie pas la voiture');
+  assert.ok(approach.y <= 0.35, 'un choc latéral ne sert pas de tremplin');
   const away = { x: 3, y: 0, z: -4 };
   assert.deepEqual(railSlideVelocity(away, 0, 1), away);
 });

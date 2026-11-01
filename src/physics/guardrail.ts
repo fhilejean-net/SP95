@@ -6,10 +6,12 @@ import type { GuardrailPlacement } from '../world/terrain.ts';
  * Rapier résout quand même le choc comme un mur : à 120 km/h, une attaque de
  * trois quarts arrêtait la caisse ou la faisait grimper sur le haut du rail.
  *
- * Ici on ne supprime que la composante de vitesse qui entre dans le rail ; la
- * composante tangentielle reste intacte, avec une infime impulsion de rappel
- * vers la route. Le vy positif est plafonné : un contact latéral ne doit pas
- * transformer la glissière en tremplin.
+ * Ici on supprime la composante de vitesse qui entre dans le rail, sans
+ * rebond, et on laisse la composante tangentielle glisser. Le lacet est
+ * légèrement amorti pendant le contact : sans cela, la caisse gardait son
+ * angle d'attaque et continuait à tourner le long du rail. Le vy positif est
+ * plafonné : un contact latéral ne doit pas transformer la glissière en
+ * tremplin.
  */
 
 export interface RailVelocity {
@@ -23,10 +25,10 @@ export function railSlideVelocity(v: RailVelocity, nx: number, nz: number): Rail
   const inward = v.x * nx + v.z * nz;
   // Déjà en train de s'éloigner : on ne touche à rien.
   if (inward <= 0) return v;
-  const restitution = 0.04;
+  const restitution = 0;
   return {
     x: v.x - nx * inward * (1 + restitution),
-    y: Math.min(v.y, 0.75),
+    y: Math.min(v.y, 0.35),
     z: v.z - nz * inward * (1 + restitution),
   };
 }
@@ -80,5 +82,13 @@ export function slideAlongGuardrail(
   const slid = railSlideVelocity({ x: velocity.x, y: velocity.y, z: velocity.z }, nx, nz);
   if (slid === velocity) return false;
   body.setLinvel(slid, true);
+  // Un rail réel ne fait pas pivoter la voiture comme une toupie : il la
+  // redresse dans l'axe du ruban. On amortit surtout le lacet, en gardant un
+  // peu de roulis pour ne pas figer la caisse contre la glissière.
+  const angular = body.angvel();
+  body.setAngvel(
+    { x: angular.x * 0.95, y: angular.y * 0.82, z: angular.z * 0.95 },
+    true,
+  );
   return true;
 }

@@ -978,8 +978,8 @@ async function boot() {
   scene.add(smokeFx.object);
   const sparkFx = createSparks(lowFx ? 120 : 260);
   scene.add(sparkFx.object);
-  // Poussières fines de la nuit : elles suivent la caisse, ne tombent pas et
-  // restent assez discrètes pour ne pas se lire comme de la neige.
+  // Poussières fines de la nuit : un champ du monde devant la caméra, qui
+  // défile vers elle à la vitesse de la voiture sans jamais lire comme de la neige.
   const motes = MOUNTAIN_MAP ? createAmbientMotes(lowFx ? 140 : 360) : null;
   if (motes) scene.add(motes.object);
   let sparkDebt = 0;
@@ -2480,7 +2480,7 @@ async function boot() {
     // Point sizes are in pixels: convert from metres at the current fov.
     const fov = (camera.fov * Math.PI) / 180;
     const pixelsPerMeter = renderer.domElement.height / (2 * Math.tan(fov / 2));
-    motes?.update(dt, carPosition);
+    motes?.update(dt, camera, carVelocity);
     smokeFx.update(dt, pixelsPerMeter);
     sparkFx.update(dt, pixelsPerMeter);
 

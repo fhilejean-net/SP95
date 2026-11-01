@@ -831,11 +831,11 @@ export function buildGuardrails(scene: THREE.Scene, world: RAPIER.World): Guardr
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   const collider = world.createCollider(
     RAPIER.ColliderDesc.trimesh(new Float32Array(positions), new Uint32Array(indices))
-      // Acier sur acier : presque aucun frottement. Le contact latéral est en
-      // plus projeté le long du rail dans physics/guardrail.ts, pour que la
-      // voiture glisse au lieu de s'arrêter ou de monter sur le ruban.
-      .setFriction(0.02)
-      .setRestitution(0)
+      // Le rail doit frotter un peu : à 0,02 la caisse conservait toute sa
+      // vitesse et partait en tête-à-queue au premier contact. 0,32 laisse le
+      // contact glissant mais retire l'énergie qui fait tourner la voiture.
+      .setFriction(0.32)
+      .setRestitution(0.02)
       .setCollisionGroups((GROUP_WORLD << 16) | GROUP_WORLD),
     body,
   );
