@@ -1,46 +1,54 @@
 import * as THREE from 'three';
 
 /**
- * Poussières fines de la nuit. Elles vivent dans le monde, devant la caméra,
- * et ne suivent pas la voiture : quand on roule, elles défilent donc vers
- * l'objectif au lieu de rester collées à la caisse. À vitesse élevée, chaque
- * grain s'étire en une courte traînée, ce qui donne le repère de vitesse que
- * des points immobiles ne peuvent pas donner.
+ * Neige de la nuit : de fins flocons lâchés devant la caméra, dans un disque
+ * étroit autour de l'axe de visée. Ils tombent, dérivent avec le vent et
+ * restent immobiles dans le monde : c'est la voiture qui les dépasse, donc ils
+ * naissent au centre du champ et filent vers les bords à mesure qu'on avance.
  *
- * Rien ne tombe : la dérive est latérale et lente, et la couleur reste chaude.
+ * Rien de lumineux : une neige réelle ne brille pas. Le sprite est blanc froid,
+ * sans mélange additif, et l'opacité reste basse pour ne pas masquer la route.
  */
 export interface AmbientMotes {
   readonly object: THREE.Group;
   update(dt: number, camera: THREE.Camera, motion: THREE.Vector3): void;
 }
 
-/** Volume de spawn devant la caméra, en mètres. */
-const AHEAD_MIN = 6;
-const AHEAD_MAX = 78;
-const SIDE = 24;
-const UP_MIN = -10;
-const UP_MAX = 22;
-/** Distance derrière laquelle un grain est recyclé devant la caméra. */
-const BEHIND = -11;
-/** Distance maximale devant : au-delà, il est hors du brouillard. */
-const FAR = 112;
-/** Marge latérale et verticale avant recyclage. */
-const SIDE_MARGIN = 9;
-const UP_MARGIN = 8;
+/** Fenêtre de naissance devant la caméra, en mètres. */
+const SPAWN_NEAR = 7;
+const SPAWN_FAR = 44;
+/** Rayon du disque de naissance : les flocons apparaissent au centre. */
+const SPAWN_RADIUS = 3.6;
+/** Volume au-delà duquel un flocon est recyclé. */
+const REAR = -5;
+const FAR = 62;
+const SIDE = 42;
+const BELOW = -12;
+const ABOVE = 20;
+/** Gravité et vitesse de chute limite : la traînée de l'air en découle. */
+const GRAVITY = 9.81;
+const FALL_MIN = 0.55;
+const FALL_MAX = 1.15;
+/** Vent faible, en mètres par seconde. */
+const WIND_X = 0.45;
+const WIND_Z = -0.3;
+/** Taille et opacité : une neige fine, pas un écran blanc. */
+const FLAKE_SIZE = 0.065;
+const FLAKE_OPACITY = 0.34;
 
-function moteSprite(): THREE.CanvasTexture | null {
+function flakeSprite(): THREE.CanvasTexture | null {
   if (typeof document === 'undefined') return null;
   const canvas = document.createElement('canvas');
-  canvas.width = 64;
-  canvas.height = 64;
+  canvas.width = 32;
+  canvas.height = 32;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
-  const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-  gradient.addColorStop(0, 'rgba(255,255,255,1)');
-  gradient.addColorStop(0.3, 'rgba(255,244,218,0.85)');
-  gradient.addColorStop(1, 'rgba(255,244,218,0)');
+  const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  gradient.addColorStop(0, 'rgba(255,255,255,0.95)');
+  gradient.addColorStop(0.55, 'rgba(244,249,255,0.55)');
+  gradient.addColorStop(1, 'rgba(235,244,255,0)');
   ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 64, 64);
+  ctx.fillRect(0, 0, 32, 32);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
@@ -48,58 +56,37 @@ function moteSprite(): THREE.CanvasTexture | null {
 
 export function createAmbientMotes(count: number): AmbientMotes {
   const positions = new Float32Array(count * 3);
-  const colors = new Float32Array(count * 3);
-  const drift = new Float32Array(count * 3);
+  const velocity = new Float32Array(count * 3);
+  /** Vitesse limite de chaque flocon : tous ne tombent pas à la même allure. */
+  const fall = new Float32Array(count);
+  const sway = new Float32Array(count);
   const phase = new Float32Array(count);
-  const streaks = new Float32Array(count * 6);
 
   for (let i = 0; i < count; i++) {
-    const p = i * 3;
-    drift[p] = (Math.random() - 0.5) * 0.22;
-    drift[p + 1] = 0.015 + Math.random() * 0.08;
-    drift[p + 2] = (Math.random() - 0.5) * 0.22;
-    const warm = 0.64 + Math.random() * 0.36;
-    colors[p] = warm;
-    colors[p + 1] = warm * (0.9 + Math.random() * 0.08);
-    colors[p + 2] = warm * (0.68 + Math.random() * 0.2);
+    fall[i] = FALL_MIN + Math.random() * (FALL_MAX - FALL_MIN);
+    sway[i] = 0.25 + Math.random() * 0.5;
     phase[i] = Math.random() * Math.PI * 2;
   }
 
-  const pointGeometry = new THREE.BufferGeometry();
-  pointGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  pointGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  const sprite = moteSprite();
-  const pointMaterial = new THREE.PointsMaterial({
-    size: 0.075,
-    map: sprite,
-    vertexColors: true,
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const material = new THREE.PointsMaterial({
+    size: FLAKE_SIZE,
+    map: flakeSprite(),
+    color: 0xeaf2ff,
     transparent: true,
-    opacity: 0.46,
+    opacity: FLAKE_OPACITY,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
     sizeAttenuation: true,
   });
-  const points = new THREE.Points(pointGeometry, pointMaterial);
+  const points = new THREE.Points(geometry, material);
   points.name = 'ambient-mote-points';
   points.frustumCulled = false;
-
-  const streakGeometry = new THREE.BufferGeometry();
-  streakGeometry.setAttribute('position', new THREE.BufferAttribute(streaks, 3));
-  const streakMaterial = new THREE.LineBasicMaterial({
-    color: 0xffddaa,
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const lines = new THREE.LineSegments(streakGeometry, streakMaterial);
-  lines.name = 'ambient-mote-streaks';
-  lines.frustumCulled = false;
 
   const object = new THREE.Group();
   object.name = 'ambient-motes';
   object.frustumCulled = false;
-  object.add(points, lines);
+  object.add(points);
 
   const forward = new THREE.Vector3();
   const right = new THREE.Vector3();
@@ -111,17 +98,25 @@ export function createAmbientMotes(count: number): AmbientMotes {
 
   const spawn = (i: number): void => {
     const p = i * 3;
-    const ahead = AHEAD_MIN + Math.random() * (AHEAD_MAX - AHEAD_MIN);
-    const side = (Math.random() * 2 - 1) * SIDE;
-    const lift = UP_MIN + Math.random() * (UP_MAX - UP_MIN);
+    const ahead = SPAWN_NEAR + Math.random() * (SPAWN_FAR - SPAWN_NEAR);
+    // Disque uniforme autour de l'axe : sqrt évite de tasser les flocons au
+    // centre du cercle et donne la répartition d'une chute régulière.
+    const angle = Math.random() * Math.PI * 2;
+    const radius = SPAWN_RADIUS * Math.sqrt(Math.random());
+    const side = Math.cos(angle) * radius;
+    const lift = Math.sin(angle) * radius;
     positions[p] = cameraPosition.x + forward.x * ahead + right.x * side + up.x * lift;
     positions[p + 1] = cameraPosition.y + forward.y * ahead + right.y * side + up.y * lift;
     positions[p + 2] = cameraPosition.z + forward.z * ahead + right.z * side + up.z * lift;
+    // Un flocon lâché part au repos : la gravité et le vent font le reste.
+    velocity[p] = 0;
+    velocity[p + 1] = 0;
+    velocity[p + 2] = 0;
   };
 
   return {
     object,
-    update(dt: number, camera: THREE.Camera, motion: THREE.Vector3): void {
+    update(dt: number, camera: THREE.Camera, _motion: THREE.Vector3): void {
       time += dt;
       camera.updateMatrixWorld();
       camera.getWorldDirection(forward);
@@ -129,8 +124,8 @@ export function createAmbientMotes(count: number): AmbientMotes {
       up.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
       cameraPosition.copy(camera.position);
 
-      // Un saut de caméra (téléportation, changement de vue) doit respawn le
-      // champ : sinon les grains resteraient groupés à l'ancienne position.
+      // Un saut de caméra (téléportation, changement de vue) respawn le champ :
+      // sinon les flocons resteraient groupés à l'ancienne position.
       const jumped = initialized && cameraPosition.distanceToSquared(lastCamera) > 400;
       if (!initialized || jumped) {
         for (let i = 0; i < count; i++) spawn(i);
@@ -138,24 +133,25 @@ export function createAmbientMotes(count: number): AmbientMotes {
       }
       lastCamera.copy(cameraPosition);
 
-      const speed = Math.hypot(motion.x, motion.z);
-      // La traînée est l'image du déplacement relatif pendant ~50 ms. On la
-      // borne pour qu'un grain tout proche ne traverse pas tout l'écran.
-      const exposure = Math.min(0.075, 0.018 + speed * 0.0016);
-      const streakX = -motion.x * exposure;
-      const streakZ = -motion.z * exposure;
-      const streakLength = Math.hypot(streakX, streakZ);
-      const visibleStreak = streakLength > 0.08;
-
       for (let i = 0; i < count; i++) {
         const p = i * 3;
-        positions[p] += drift[p] * dt;
-        positions[p + 1] += drift[p + 1] * dt;
-        positions[p + 2] += drift[p + 2] * dt;
+        // Chute dans l'air : traînée linéaire calibrée sur la vitesse limite du
+        // flocon, donc chaque grain tombe à son propre rythme.
+        const drag = GRAVITY / fall[i];
+        velocity[p + 1] += (-GRAVITY - drag * velocity[p + 1]) * dt;
+        velocity[p] += drag * (WIND_X - velocity[p]) * dt;
+        velocity[p + 2] += drag * (WIND_Z - velocity[p + 2]) * dt;
+        positions[p] += velocity[p] * dt;
+        positions[p + 1] += velocity[p + 1] * dt;
+        positions[p + 2] += velocity[p + 2] * dt;
 
-        // Le grain reste dans le monde ; c'est la caméra qui le dépasse. On ne
-        // le recentre donc pas à chaque image, sinon il redevient un nuage
-        // solidaire de la voiture.
+        // Flottement latéral très faible : deux flocons ne tombent jamais
+        // exactement de la même façon.
+        const flutter = Math.sin(time * 1.1 + phase[i]) * sway[i] * dt;
+        positions[p] += flutter * right.x;
+        positions[p + 1] += flutter * right.y;
+        positions[p + 2] += flutter * right.z;
+
         const dx = positions[p] - cameraPosition.x;
         const dy = positions[p + 1] - cameraPosition.y;
         const dz = positions[p + 2] - cameraPosition.z;
@@ -163,35 +159,17 @@ export function createAmbientMotes(count: number): AmbientMotes {
         const sideways = dx * right.x + dy * right.y + dz * right.z;
         const vertical = dx * up.x + dy * up.y + dz * up.z;
         if (
-          ahead < BEHIND ||
+          ahead < REAR ||
           ahead > FAR ||
-          Math.abs(sideways) > SIDE + SIDE_MARGIN ||
-          vertical < UP_MIN - UP_MARGIN ||
-          vertical > UP_MAX + UP_MARGIN
+          Math.abs(sideways) > SIDE ||
+          vertical < BELOW ||
+          vertical > ABOVE
         ) {
           spawn(i);
         }
-
-        // Micro-dérive pour que le champ ne soit pas une grille figée.
-        const sway = Math.sin(time * 0.55 + phase[i]) * 0.012;
-        positions[p] += sway * dt;
-        positions[p + 2] += sway * 0.6 * dt;
-
-        const q = i * 6;
-        streaks[q] = positions[p];
-        streaks[q + 1] = positions[p + 1];
-        streaks[q + 2] = positions[p + 2];
-        streaks[q + 3] = positions[p] + (visibleStreak ? streakX : 0);
-        streaks[q + 4] = positions[p + 1];
-        streaks[q + 5] = positions[p + 2] + (visibleStreak ? streakZ : 0);
       }
 
-      pointGeometry.getAttribute('position').needsUpdate = true;
-      streakGeometry.getAttribute('position').needsUpdate = true;
-      // Les traînées n'apparaissent qu'à partir d'une vitesse notable : à
-      // l'arrêt, on doit voir de fines poussières, pas des rayures.
-      streakMaterial.opacity = Math.min(0.3, Math.max(0, (speed - 3) * 0.012));
-      pointMaterial.opacity = speed > 2 ? 0.36 : 0.46;
+      geometry.getAttribute('position').needsUpdate = true;
     },
   };
 }

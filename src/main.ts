@@ -1015,7 +1015,7 @@ async function boot() {
   scene.add(sparkFx.object);
   // Poussières fines de la nuit : un champ du monde devant la caméra, qui
   // défile vers elle à la vitesse de la voiture sans jamais lire comme de la neige.
-  const motes = MOUNTAIN_MAP ? createAmbientMotes(lowFx ? 140 : 360) : null;
+  const motes = MOUNTAIN_MAP ? createAmbientMotes(lowFx ? 80 : 200) : null;
   if (motes) scene.add(motes.object);
   let sparkDebt = 0;
   let scrapeTimer = 0;

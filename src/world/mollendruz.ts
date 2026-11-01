@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { GROUP_GROUND, GROUP_WORLD } from '../physics/vehicle.ts';
 import type { EnvironmentMaterials } from '../render/materials.ts';
+import { addGuardrailModel } from '../render/guardrailModel.ts';
 import { buildMollendruzTrees } from './vegetation.ts';
 import type { GuardrailPlacement, GuardrailRun } from './terrain.ts';
 
@@ -31,6 +32,76 @@ interface ColHit { s: number; y: number; distance: number; signed: number; width
 export function triangleHeight(h00:number,h10:number,h01:number,h11:number,tx:number,tz:number): number {
   return tx+tz <= 1 ? h00 + tx*(h10-h00) + tz*(h01-h00)
     : h11 + (1-tx)*(h01-h11) + (1-tz)*(h10-h11);
+}
+
+/** PRNG déterministe : la forêt doit être identique à chaque chargement. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * OSM ne relève que les polygones boisés : tout le reste du versant est planté
+ * ici, de part et d'autre de la chaussée, pour retrouver la forêt qui entoure
+ * réellement le col. Tirage déterministe le long du tracé, ni sur la route, ni
+ * sur le parking, ni dans une maison, ni sur une paroi trop raide.
+ */
+function forestAlong(
+  samples: ColPoint[],
+  ground: (x: number, z: number) => number,
+  roadAt: (x: number, z: number) => ColHit | null,
+  inParking: (x: number, z: number) => boolean,
+  buildings: { points: number[][] }[],
+): number[][] {
+  const rand = mulberry32(0x5eed1e);
+  const taken = new Set<string>();
+  const trees: number[][] = [];
+  // Emprise de chaque bâtiment, ramenée à un disque : un arbre ne pousse pas
+  // dans un mur, et un test par sommet serait inutilement lourd.
+  const roofs = buildings.map((b) => {
+    const cx = b.points.reduce((sum, p) => sum + p[0], 0) / b.points.length;
+    const cz = b.points.reduce((sum, p) => sum + p[1], 0) / b.points.length;
+    let radius = 0;
+    for (const [x, z] of b.points) radius = Math.max(radius, Math.hypot(x - cx, z - cz));
+    return { cx, cz, radius };
+  });
+  const spacing = Math.max(0.5, (samples[1]?.s ?? 1) - (samples[0]?.s ?? 0));
+  const step = Math.max(1, Math.round(9 / spacing));
+  for (let i = 1; i + 1 < samples.length; i += step) {
+    const a = samples[i], b = samples[i + 1];
+    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
+    if (len < 0.5) continue;
+    const ex = dx / len, ez = dz / len, nx = -ez, nz = ex;
+    for (const side of [-1, 1]) {
+      const count = 1 + Math.floor(rand() * 2);
+      for (let k = 0; k < count; k++) {
+        // Serré en lisière, plus clairsemé au loin : une forêt, pas une haie.
+        const lateral = a.width / 2 + 6 + Math.pow(rand(), 1.7) * 190;
+        const along = (rand() - 0.5) * 10;
+        const x = a.x + ex * along + nx * side * lateral;
+        const z = a.z + ez * along + nz * side * lateral;
+        const cell = `${Math.floor(x / 7)},${Math.floor(z / 7)}`;
+        if (taken.has(cell)) continue;
+        const y = ground(x, z);
+        if (!(y > -900)) continue;
+        const hit = roadAt(x, z);
+        if (hit && hit.distance < hit.width / 2 + 5) continue;
+        if (inParking(x, z) || inParking(x + 4, z) || inParking(x - 4, z)) continue;
+        if (roofs.some((r) => Math.hypot(x - r.cx, z - r.cz) < r.radius + 4)) continue;
+        // Un arbre sur une paroi verticale flotte : on exclut les pentes raides.
+        const gx = ground(x + 3, z) - y, gz = ground(x, z + 3) - y;
+        if (Math.hypot(gx, gz) / 3 > 1.05) continue;
+        taken.add(cell);
+        trees.push([x, z, 0.78 + rand() * 0.5]);
+      }
+    }
+  }
+  return trees;
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
@@ -273,13 +344,18 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
       if (!eligible.has(`${i},${side}`)) continue;
       const distance=a.width/2+0.65, x0=a.x+nx*side*distance, z0=a.z+nz*side*distance;
       const x1=b.x+nx*side*distance, z1=b.z+nz*side*distance;
+      // La glissière est boulonnée à l'accotement : on la pose au plus bas du
+      // bord de chaussée et du terrain, sinon elle flotte au-dessus du ravin.
+      const sy0=sample(x0,z0), sy1=sample(x1,z1);
+      const ya=sy0>-900?Math.min(a.y+ROAD_LIFT,sy0):a.y+ROAD_LIFT;
+      const yb=sy1>-900?Math.min(b.y+ROAD_LIFT,sy1):b.y+ROAD_LIFT;
       const base=railPositions.length/3;
       railPositions.push(x0,a.y+ROAD_LIFT,z0,x0,a.y+1+ROAD_LIFT,z0,x1,b.y+ROAD_LIFT,z1,x1,b.y+1+ROAD_LIFT,z1);
       railIndices.push(base,base+1,base+2,base+2,base+1,base+3);
       const pieces=Math.max(1,Math.round(len/RAIL_SEGMENT_M));
       for(let part=0;part<pieces;part++) {
         const t=(part+0.5)/pieces;
-        placements.push({x:x0+(x1-x0)*t,y:a.y+(b.y-a.y)*t+ROAD_LIFT,z:z0+(z1-z0)*t,
+        placements.push({x:x0+(x1-x0)*t,y:ya+(yb-ya)*t,z:z0+(z1-z0)*t,
           yaw:Math.atan2(-dz,dx)+(side<0?Math.PI:0),pitch:Math.atan2(b.y-a.y,len),stretch:len/pieces/RAIL_SEGMENT_M});
       }
     }
@@ -293,19 +369,25 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
     const collider=world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(railPositions),new Uint32Array(railIndices))
       .setFriction(0.32).setRestitution(0.02).setCollisionGroups(WORLD_GROUP),roadBody);
     guardrail={placements,fallback:[mesh],segment:RAIL_SEGMENT_M,collider};
-    // Le ruban lui-même reste visible : instancier le modèle complet sur les
-    // kilomètres de barrière démultipliait inutilement la géométrie à l'écran.
   }
+  if (guardrail) {
+    // Le modèle fourni remplace le ruban ; celui-ci ne reste que pour la
+    // collision et comme repli si le GLB manque.
+    await addGuardrailModel(scene, guardrail).catch((error) =>
+      console.warn('Modèle de glissière indisponible, ruban de secours.', error),
+    );
+  }
+  const treeLocations = [...features.trees, ...forestAlong(route.samples, sample, roadAt, inParking, features.buildings)];
   let treeCount = 0;
   try {
-    treeCount = await buildMollendruzTrees(scene, features.trees, sample);
+    treeCount = await buildMollendruzTrees(scene, treeLocations, sample);
   } catch (error) {
     console.warn('Modèle d’arbres indisponible, cônes de secours.', error);
     const treeGeo=new THREE.ConeGeometry(2.2,9,7), treeMat=new THREE.MeshStandardMaterial({color:0x283c2c,roughness:1});
-    const trees=new THREE.InstancedMesh(treeGeo,treeMat,features.trees.length), matrix=new THREE.Matrix4(), p=new THREE.Vector3(), q=new THREE.Quaternion(), scale=new THREE.Vector3();
-    features.trees.forEach(([x,z,s],i)=>{p.set(x,sample(x,z)+4.5*s,z);scale.set(s,s,s);trees.setMatrixAt(i,matrix.compose(p,q,scale));});
+    const trees=new THREE.InstancedMesh(treeGeo,treeMat,treeLocations.length), matrix=new THREE.Matrix4(), p=new THREE.Vector3(), q=new THREE.Quaternion(), scale=new THREE.Vector3();
+    treeLocations.forEach(([x,z,s],i)=>{p.set(x,sample(x,z)+4.5*s,z);scale.set(s,s,s);trees.setMatrixAt(i,matrix.compose(p,q,scale));});
     trees.instanceMatrix.needsUpdate=true; trees.name='mollendruz-trees'; scene.add(trees);
-    treeCount = features.trees.length;
+    treeCount = treeLocations.length;
   }
   const last=route.samples[route.samples.length-1], penultimate=route.samples[route.samples.length-2];
   const endAngle=Math.atan2(-(last.x-penultimate.x),-(last.z-penultimate.z));

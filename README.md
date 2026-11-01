@@ -199,7 +199,7 @@ Le build utilise la variable `GITHUB_PAGES=true` pour définir le `base` Vite su
 - **Sons fournis** : les deux prises de décharge turbo de `public/audio/` viennent du propriétaire du dépôt ; leur licence n'est pas documentée. Ce sont les seules prises utilisées, en one-shot : le moteur, lui, est entièrement synthétisé, donc plus aucune boucle ni transposition de clip à entendre.
 - Les textures de sol sont peintes par code : herbe, terre et asphalte se répètent, il n'y a pas de mélange de matériaux aux transitions.
 - La spéciale rallye est une boucle : pas de chrono ni de copilote pour l'instant.
-- Ni le col ni la spéciale n'ont de glissières : sortir de la route en épingle envoie la voiture dans la pente ou dans l'herbe (la touche `R` la remet sur la route).
+- Le col a des glissières au modèle fourni, posées là où le relief chute fortement (emplacements estimés, OSM ne les relève pas) ; la spéciale en terre n'en a pas : sortir de la route en épingle envoie la voiture dans la pente ou dans l'herbe (la touche `R` la remet sur la route).
 - Le plateau sommital est volontairement nu : c'est une aire de drift, pas un village.
 - Les performances dépendent du GPU : avec les maisons des quartiers en plus des immeubles, une carte intégrée peut descendre sous 60 fps (la régulation baisse alors la qualité toute seule).
 - **Frein à main et fumée** : le contrôle de traction garde un départ en ligne droite propre, donc la fumée ne sort plus au simple démarrage : il faut un burnout (frein à main, ou antipatinage coupé avec `T`) ou une glisse.

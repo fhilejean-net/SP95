@@ -41,6 +41,81 @@ export function resetDeerPose(scene: THREE.Object3D, rest: DeerRestBone[]): void
   scene.updateMatrixWorld(true);
 }
 
+/**
+ * Yeux de la bête : deux braises rouges dans la nuit. Le GLB n'a pas de
+ * maillage d'yeux séparé — le nœud `Eyes_low` est une ancre vide posée devant
+ * le crâne —, donc on accroche deux petites sphères et leurs halos à l'os de la
+ * tête : ils suivent l'animation, la charge et le ragdoll.
+ */
+const EYE_RED = 0xff2a1a;
+/** Écart entre les deux yeux et rayon de l'iris, en mètres. */
+const EYE_SPREAD = 0.095;
+const EYE_RADIUS = 0.032;
+
+function eyeGlowTexture(): THREE.Texture | null {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gradient.addColorStop(0, 'rgba(255,92,62,0.95)');
+  gradient.addColorStop(0.35, 'rgba(255,42,26,0.5)');
+  gradient.addColorStop(1, 'rgba(255,20,10,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 64, 64);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function addGlowingEyes(scene: THREE.Object3D): void {
+  const head = scene.getObjectByName('C_Head_J_023') as THREE.Bone | undefined;
+  if (!head) return;
+  const anchor = scene.getObjectByName('Eyes_low');
+  scene.updateMatrixWorld(true);
+
+  const headPosition = new THREE.Vector3().setFromMatrixPosition(head.matrixWorld);
+  const eyesPosition = anchor
+    ? new THREE.Vector3().setFromMatrixPosition(anchor.matrixWorld)
+    : headPosition.clone().add(new THREE.Vector3(0, 0.15, -0.3));
+  // L'ancre est légèrement décalée : on garde sa hauteur et son avance, mais on
+  // recentre l'écartement sur l'axe de la tête.
+  const glow = eyeGlowTexture();
+
+  for (const sign of [-1, 1]) {
+    const point = new THREE.Vector3(
+      headPosition.x + sign * EYE_SPREAD,
+      eyesPosition.y,
+      eyesPosition.z,
+    );
+    const iris = new THREE.Mesh(
+      new THREE.SphereGeometry(EYE_RADIUS, 12, 8),
+      new THREE.MeshBasicMaterial({ color: EYE_RED, toneMapped: false }),
+    );
+    iris.position.copy(point);
+    iris.updateMatrixWorld(true);
+    head.attach(iris);
+    if (glow) {
+      const halo = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: glow,
+          transparent: true,
+          opacity: 0.9,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          toneMapped: false,
+        }),
+      );
+      halo.scale.setScalar(EYE_RADIUS * 8);
+      halo.position.copy(point);
+      halo.updateMatrixWorld(true);
+      head.attach(halo);
+    }
+  }
+}
+
 /** Longueur museau-queue visée, en mètres. */
 const BODY_LENGTH = 3.4;
 const MODEL_URL = `${import.meta.env.BASE_URL}models/animals/the_human_deer.glb`;
@@ -78,6 +153,8 @@ export async function loadDeerModel(): Promise<DeerModel> {
       scale: child.scale.clone(),
     });
   });
+
+  addGlowingEyes(scene);
 
   const object = new THREE.Group();
   object.add(scene);
