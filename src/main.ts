@@ -1699,9 +1699,19 @@ async function boot() {
   }
 
   /** Bascule de carte : un rechargement, la ville ne suit pas la piste. */
-  function openMap(id: MapId): void {
+  function openMap(id: MapId, launch: Record<string, string> = {}): void {
     audio.init();
-    window.location.href = mapUrl(id, window.location.href);
+    window.location.href = mapUrl(id, window.location.href, launch);
+  }
+
+  /**
+   * Le col est sa propre carte : depuis les autres, on y bascule directement en
+   * conduite libre, sans repasser par la ville ni par le menu. Sur place, le
+   * bouton repart du pied de la route.
+   */
+  function goCol(): void {
+    if (MOUNTAIN_MAP) startMode('free', 'col');
+    else openMap('col', { start: 'free' });
   }
 
   /**
@@ -1716,6 +1726,7 @@ async function boot() {
     const labels: Record<string, string> = {
       'btn-free': 'Piste · ligne des stands',
       'btn-pause-free': 'Piste · ligne des stands',
+      'btn-pause-col': 'Col de nuit',
       'btn-circuit': 'Retour en ville',
     };
     if (FLAT_MAP) {
@@ -1738,6 +1749,7 @@ async function boot() {
     const labels: Record<string, string> = {
       'btn-free': 'Col · pied de la route',
       'btn-pause-free': 'Col · pied de la route',
+      'btn-pause-col': 'Col · pied de la route',
       'btn-circuit': 'Retour en ville',
     };
     for (const [id, label] of Object.entries(labels)) {
@@ -1757,7 +1769,7 @@ async function boot() {
   document.getElementById('btn-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-pause-sound')?.addEventListener('click', openSound);
   // La carte dédiée au col : un rechargement, comme les circuits.
-  document.getElementById('btn-colmap')?.addEventListener('click', () => openMap('col'));
+  document.getElementById('btn-colmap')?.addEventListener('click', () => openMap('col', { start: 'free' }));
   // Le circuit a sa propre carte : le bouton y bascule, et en revient.
   document
     .getElementById('btn-circuit')
@@ -1769,7 +1781,7 @@ async function boot() {
   document
     .getElementById('btn-pause-flat')
     ?.addEventListener('click', () => (FLAT_MAP ? startMode('free', 'circuit') : openMap('sp95')));
-  document.getElementById('btn-pause-col')?.addEventListener('click', () => startMode('free', 'col'));
+  document.getElementById('btn-pause-col')?.addEventListener('click', goCol);
   document.getElementById('btn-rally')?.addEventListener('click', () => startMode('free', 'rally'));
   document.getElementById('btn-pause-rally')?.addEventListener('click', () => startMode('free', 'rally'));
   document.getElementById('btn-sommet')?.addEventListener('click', () => startMode('free', 'summit'));
@@ -3187,6 +3199,7 @@ function wireMenuOnly(): void {
   on('btn-flat', { map: 'sp95', start: 'free' });
   on('btn-rally', { map: 'ville', start: 'free', spawn: 'rally' });
   on('btn-sommet', { map: 'ville', start: 'free', spawn: 'summit' });
+  on('btn-colmap', { map: 'col', start: 'free' });
   on('btn-moto', { map: 'ville', start: 'moto' });
   // Showroom, atelier et son vivent sur la piste plate : y aller les ouvre.
   on('btn-cars', { map: 'sp95', open: 'showroom' });

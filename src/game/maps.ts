@@ -47,11 +47,18 @@ export function mapFromSearch(search: string): MapId {
   return asked === 'suzuka' || asked === 'sp95' || asked === 'col' ? asked : DEFAULT_MAP;
 }
 
-/** URL de `href` (absolue) pointant sur la carte demandée. */
-export function mapUrl(id: MapId, href: string): string {
+/**
+ * URL de `href` (absolue) pointant sur la carte demandée, avec les paramètres
+ * de lancement fournis. Une bascule de carte invalide la session de la
+ * précédente : `start`, `spawn` et `open` sont effacés avant d'être reposés,
+ * sinon on demanderait une course à une carte qui n'en a pas.
+ */
+export function mapUrl(id: MapId, href: string, launch: Record<string, string> = {}): string {
   const url = new URL(href);
   if (id === DEFAULT_MAP) url.searchParams.delete('map');
   else url.searchParams.set('map', id);
+  for (const key of ['start', 'spawn', 'open']) url.searchParams.delete(key);
+  for (const [key, value] of Object.entries(launch)) url.searchParams.set(key, value);
   return url.toString();
 }
 

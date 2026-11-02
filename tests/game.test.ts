@@ -411,6 +411,17 @@ test('the map is chosen in the URL, and the switch keeps the rest', () => {
   // Le reste de l'URL suit : `?fx=low` ne se perd pas en changeant de carte.
   assert.equal(new URL(suzuka).searchParams.get('fx'), 'low');
   assert.equal(new URL(mapUrl('ville', suzuka)).searchParams.has('map'), false);
+
+  // Une bascule de carte ne traîne pas la session de la précédente : le col se
+  // lance en conduite libre, même si on arrive d'une course de la ville.
+  const fromRace = 'https://sp95.test/?map=ville&start=race&fx=low';
+  const col = new URL(mapUrl('col', fromRace, { start: 'free' }));
+  assert.equal(col.searchParams.get('map'), 'col');
+  assert.equal(col.searchParams.get('start'), 'free');
+  assert.equal(col.searchParams.get('fx'), 'low');
+  const back = new URL(mapUrl('ville', 'https://sp95.test/?map=col&start=free&spawn=rally'));
+  assert.equal(back.searchParams.has('start'), false);
+  assert.equal(back.searchParams.has('spawn'), false);
 });
 
 test('les slicks de course collent plus que la monte de route', () => {
