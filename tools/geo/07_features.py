@@ -18,9 +18,12 @@ TREE_ROAD_CLEARANCE_M = 8
 TREE_LIMIT = 5000
 TREE_SEED = 151
 ACCESS_WAYS = (244898032, 94834634, 480023950)
+# Hôtel gardé même loin de l'arrivée : trois étages de crépi sous un toit d'ardoise.
 HOTEL_WAY_ID = 258637487
-# Contour de la place en béton devant le vieil hôtel (way 258637487), côté hôtel.
-PLAZA_OUTLINE = [(106.1, 72.5), (103.9, 77.8), (119.1, 84.0), (120.6, 81.4), (136.6, 87.3), (136.2, 89.9), (142.5, 92.0), (151.0, 93.6), (151.8, 88.0), (134.0, 83.5)]
+HOTEL_HEIGHT_M = 9.4
+# La place en béton est le parking OSM devant l'hôtel, bordé par la route au nord
+# et par les pentes ailleurs : aucune place à inventer.
+PLAZA_WAY_ID = 258637492
 DEFAULT_BUILDING_HEIGHT_M = 7
 FLOOR_HEIGHT_M = 3
 WALL_TYPES = {'guard_rail', 'wall', 'fence', 'retaining_wall'}
@@ -65,8 +68,12 @@ def main():
                     height = float(tags.get('building:levels', '')) * FLOOR_HEIGHT_M
                 except ValueError:
                     height = DEFAULT_BUILDING_HEIGHT_M
-            buildings.append({'id': item['id'], 'height': min(30, max(2, height)),
-                              'points': [[round(x,2), round(z,2)] for x,z in points]})
+            entry = {'id': item['id'], 'height': min(30, max(2, height)),
+                     'points': [[round(x,2), round(z,2)] for x,z in points]}
+            if item['id'] == HOTEL_WAY_ID:
+                entry['height'] = HOTEL_HEIGHT_M
+                entry['kind'] = 'hotel'
+            buildings.append(entry)
         if tags.get('landuse') == 'forest' or tags.get('natural') == 'wood':
             forests.append(shape.intersection(corridor_shape))
     # Tirage par grille locale, seed fixe ; aucune implantation sur la chaussée.
@@ -102,8 +109,9 @@ def main():
         accesses.append({'id': access_id,
                          'points': [[round(x,2),round(z,2)] for x,z in map(convert, way['geometry'])]})
     # Place en béton devant l'hôtel (côté hôtel de la route, sans recouvrir la façade).
+    plaza = next(e for e in osm if e['id'] == PLAZA_WAY_ID)
     result = {'parking': [[round(x,2),round(z,2)] for x,z in map(convert, parking['geometry'])],
-              'plaza': [[round(x,2),round(z,2)] for x,z in PLAZA_OUTLINE],
+              'plaza': [[round(x,2),round(z,2)] for x,z in map(convert, plaza['geometry'][:-1])],
               'parking_upper': [[round(x,2),round(z,2)] for x,z in map(convert, parking_upper['geometry'])],
               'road_northwest': [[round(x,2),round(z,2)] for x,z in northwest],
               'accesses': accesses,
