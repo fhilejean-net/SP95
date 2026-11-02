@@ -58,8 +58,9 @@ test('les bandes naissent courtes et prennent une demi-voie au point de corde', 
     longest = Math.max(longest, length);
     assert.ok(length >= 0.2, 'une bande ne disparaît pas');
     assert.ok(length <= BAND_MAX_M + 0.01, `bande de ${length.toFixed(2)} m`);
-    // Le pied reste sur la rive peinte, la pointe ne franchit pas l'axe.
-    assert.ok(Math.abs(Math.abs(band.from) - station.width / 2) <= 0.3, 'pied sur la rive');
+    // Le pied touche le trait d'axe, la pointe reste dans la voie intérieure.
+    assert.ok(Math.abs(band.from) <= 0.2, 'pied sur le trait d\'axe');
+    assert.ok(Math.abs(band.to) <= station.width / 2, 'pointe dans la voie');
     assert.ok(Math.sign(band.from) === Math.sign(band.to), 'la bande reste de son côté');
     const [x, z] = offsetPoint(station, band.to);
     assert.ok(distanceToRoute(x, z) < station.width / 2, 'pointe sur la chaussée');

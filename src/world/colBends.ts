@@ -5,10 +5,11 @@
  * Sur le terrain, un virage serré porte deux choses que le tracé seul ne donne
  * pas :
  *
- * - des **bandes blanches** perpendiculaires à l'axe, du côté intérieur. Elles
- *   naissent courtes à l'entrée du virage et prennent près d'une demi-voie au
- *   point de corde. C'est le repère que les motards lisent pour ne pas mettre
- *   les roues dans la zone coupée ;
+ * - des **bandes blanches** perpendiculaires à l'axe, posées sur le trait
+ *   d'axe et allongées vers la rive intérieure. Elles naissent courtes à
+ *   l'entrée du virage et prennent près d'une demi-voie au point de corde.
+ *   C'est le repère que les motards lisent pour ne pas mettre les roues dans
+ *   la zone coupée ;
  * - une **place d'évitement**, un élargissement de quelques mètres côté
  *   intérieur, assez long pour garer un véhicule hors de la chaussée.
  *
@@ -52,12 +53,12 @@ export interface Station {
   tz: number;
 }
 
-/** Bande transversale : offsets le long de la normale, du bord vers le centre. */
+/** Bande transversale : offsets le long de la normale, de l'axe vers la rive. */
 export interface BendBand {
   s: number;
-  /** Offset du pied de la bande, posé sur la rive intérieure. */
+  /** Offset du pied de la bande, posé contre le trait d'axe. */
   from: number;
-  /** Offset de la pointe, vers l'axe. */
+  /** Offset de la pointe, vers la rive intérieure. */
   to: number;
 }
 
@@ -79,8 +80,10 @@ export const BAND_SPACING_M = 3.2;
 export const BAND_MIN_M = 0.28;
 /** Longueur d'une bande au point de corde : une demi-voie de 3,25 m. */
 export const BAND_MAX_M = 1.62;
-/** Retrait du pied de bande par rapport à la rive peinte. */
-const BAND_INSET_M = 0.28;
+/** Épaisseur d'une bande, mesurée dans l'axe de la route. */
+export const BAND_THICKNESS_M = 0.42;
+/** Retrait du pied par rapport au trait d'axe, pour ne pas le doubler. */
+const BAND_CENTER_GAP_M = 0.16;
 /** Seuls les virages plus serrés que ça reçoivent une place d'évitement. */
 export const LAYBY_RADIUS_M = 36;
 /** Largeur de l'évitement au point de corde, hors chaussée. */
@@ -193,8 +196,9 @@ function curvatureAt(points: BendPoint[], curvature: number[], s: number): numbe
 }
 
 /**
- * Bandes de guidage de chaque virage : elles partent de la rive intérieure et
- * s'allongent vers l'axe à mesure qu'on approche du point de corde.
+ * Bandes de guidage de chaque virage : elles partent du trait d'axe et
+ * s'allongent vers la rive intérieure à mesure qu'on approche du point de
+ * corde. Le pied ne bouge pas, seule la pointe avance.
  */
 export function planBendBands(points: BendPoint[], bends: Bend[]): BendBand[] {
   const curvature = curvatures(points);
@@ -207,11 +211,10 @@ export function planBendBands(points: BendPoint[], bends: Bend[]): BendBand[] {
     }
     if (peak <= 0) continue;
     for (let s = bend.startS; s <= bend.endS; s += BAND_SPACING_M) {
-      const station = stationAt(points, s);
       const weight = Math.min(1, Math.abs(curvatureAt(points, curvature, s)) / peak);
       const length = BAND_MIN_M + (BAND_MAX_M - BAND_MIN_M) * weight;
-      const inner = bend.turn * (station.width / 2 - BAND_INSET_M);
-      bands.push({ s, from: inner, to: inner - bend.turn * length });
+      const foot = bend.turn * BAND_CENTER_GAP_M;
+      bands.push({ s, from: foot, to: foot + bend.turn * length });
     }
   }
   return bands;

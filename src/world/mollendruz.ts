@@ -8,7 +8,7 @@ import type { GuardrailPlacement, GuardrailRun } from './terrain.ts';
 import type { ParkingPoint } from './colParking.ts';
 import { parkingAccessGeometry, parkingPadGeometry } from './parkingSurface.ts';
 import { buildColAnnex, buildColHotel, type AnnexKind } from './colHotel.ts';
-import { findBends, offsetPoint, planBendBands, planLaybys, stationAt } from './colBends.ts';
+import { BAND_THICKNESS_M, findBends, offsetPoint, planBendBands, planLaybys, stationAt } from './colBends.ts';
 
 const ROOT = `${import.meta.env.BASE_URL}data/mollendruz/`;
 const GROUND_GROUP = (GROUP_GROUND << 16) | 0xffff;
@@ -368,7 +368,7 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   if (bendBands.length) {
     const bandPositions: number[] = [];
     const bandIndices: number[] = [];
-    const halfPaint = 0.05;
+    const halfPaint = BAND_THICKNESS_M / 2;
     for (const band of bendBands) {
       const station = stationAt(bendPoints, band.s);
       const [ax, az] = offsetPoint(station, band.from);
