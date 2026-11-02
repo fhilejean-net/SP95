@@ -384,8 +384,14 @@ async function boot() {
   // La carte du col construit sa propre dalle : on y peint les places du
   // polygone OSM, sinon le parking reste une grande surface grise sans repères.
   if (mollendruz) {
-    const parkingBays = buildColParking(scene, materials, mollendruz.parking, mollendruz.parkingSurface);
-    console.log(`Col : ${parkingBays} places tracées au parking`);
+    let parkingBays = 0;
+    mollendruz.parkingLots.forEach((lot, index) => {
+      parkingBays += buildColParking(
+        scene, materials, lot.outline, lot.surface,
+        index === 0 ? 'col-parking' : 'col-parking-upper',
+      );
+    });
+    console.log(`Col : ${parkingBays} places tracées sur ${mollendruz.parkingLots.length} parkings`);
   }
 
   // Contrôle de l'invariant : le terrain de secours doit rester *sous* la dalle
@@ -623,13 +629,14 @@ async function boot() {
     ragdoll: DeerRagdoll | null;
     ready: boolean;
   } | null = null;
-  let deerTimer = 32;
+  /** Un peu plus présent qu'avant : 26 s avant la première visite. */
+  let deerTimer = 26;
   /** Un grand cerf qui traverse marche vite : ~8,6 km/h, et il charge à 45. */
   const DEER_WALK_SPEED = 2.4;
   const DEER_CHARGE_SPEED = 12.5;
   /** Distance au sol parcourue par un cycle complet de jambes. */
   const DEER_WALK_STRIDE = 1.5;
-  const DEER_CHARGE_STRIDE = 2.6;
+  const DEER_CHARGE_STRIDE = 3.2;
   const DEER_CORPSE_TIME = 7;
   const DEER_UP = new THREE.Vector3(0, 1, 0);
   const deerQuat = new THREE.Quaternion();
@@ -692,7 +699,7 @@ async function boot() {
     deer.phase = 'off';
     deer.phaseTime = 0;
     deer.body?.setNextKinematicTranslation({ x: 0, y: -100, z: 0 });
-    deerTimer = 35 + Math.random() * 35;
+    deerTimer = 28 + Math.random() * 28;
   }
 
   /** La bête est fauchée : le squelette animé lâche la place au ragdoll. */
@@ -935,7 +942,7 @@ async function boot() {
 
   const input = new InputManager(canvas);
   const hud = new Hud();
-  const colStage = mollendruz ? new ColStage(mollendruz.route.samples, mollendruz.route.end_s) : null;
+  const colStage = mollendruz ? new ColStage(mollendruz.route.samples.filter((p) => p.s >= 0), mollendruz.route.end_s) : null;
   const colTimer = document.getElementById('col-timer')!;
   // La mini-carte de la piste : son propre cadrage, sinon le tour tient dans
   // quelques pixels au centre de l'échelle de la ville.

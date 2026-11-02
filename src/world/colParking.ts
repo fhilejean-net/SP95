@@ -3,9 +3,9 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { EnvironmentMaterials } from '../render/materials.ts';
 
 /**
- * Le parking du col est le polygone OSM 76238299 : une longue dalle en coin,
- * bordée par la route au nord-est. On y trace les deux rangées de places de la
- * référence, en épis le long des grands côtés, et on laisse le vaste terre-plein
+ * Les deux parkings du col sont les polygones OSM 76238299 (ouest) et 76836658
+ * (haut), séparés par la Route de Fauchy. On y trace les rangées de places de
+ * la référence, en épis le long des grands côtés, et on laisse le terre-plein
  * central libre pour manœuvrer.
  */
 
@@ -205,12 +205,13 @@ function ribbon(
   return geometry;
 }
 
-/** Pose les traits du parking sur la dalle et retourne le nombre de places. */
+/** Pose les traits d'un parking sur sa dalle et retourne le nombre de places. */
 export function buildColParking(
   scene: THREE.Scene,
   mats: EnvironmentMaterials,
   outline: ParkingPoint[],
   surface: (x: number, z: number) => number,
+  name = 'col-parking',
 ): number {
   const plan = planColParking(outline);
 
@@ -221,7 +222,7 @@ export function buildColParking(
     const merged = mergeGeometries(bayGeometries);
     if (merged) {
       const bays = new THREE.Mesh(merged, mats.lines);
-      bays.name = 'col-parking-bays';
+      bays.name = `${name}-bays`;
       scene.add(bays);
     }
     for (const geometry of bayGeometries) geometry.dispose();
@@ -234,7 +235,7 @@ export function buildColParking(
     const merged = mergeGeometries(borderGeometries);
     if (merged) {
       const border = new THREE.Mesh(merged, mats.lines);
-      border.name = 'col-parking-border';
+      border.name = `${name}-border`;
       scene.add(border);
     }
     for (const geometry of borderGeometries) geometry.dispose();

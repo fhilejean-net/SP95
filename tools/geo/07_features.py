@@ -86,7 +86,13 @@ def main():
     trees = trees[:TREE_LIMIT]
     osm = json.loads((RAW / 'osm_search.json').read_text())['elements']
     parking = next(e for e in osm if e['id'] == 76238299)
+    parking_upper = next(e for e in osm if e['id'] == 76836658)
+    link = next(e for e in osm if e['id'] == 513319895)
+    northwest = [convert(p) for p in link['geometry']]
+    northwest.sort(key=lambda p: -math.hypot(*p))
     result = {'parking': [[round(x,2),round(z,2)] for x,z in map(convert, parking['geometry'])],
+              'parking_upper': [[round(x,2),round(z,2)] for x,z in map(convert, parking_upper['geometry'])],
+              'road_northwest': [[round(x,2),round(z,2)] for x,z in northwest],
               'buildings': buildings, 'walls': walls, 'trees': trees, 'seed': TREE_SEED}
     (OUT / 'features.json').write_text(json.dumps(result, separators=(',', ':'))+'\n')
     print('Bâtiments', len(buildings), 'murs/barrières', len(walls), 'arbres', len(trees),

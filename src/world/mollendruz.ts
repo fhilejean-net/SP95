@@ -27,7 +27,7 @@ export interface ColPoint { s: number; x: number; y: number; z: number; width: n
 interface ColRoute { end_s: number; samples: ColPoint[]; origin: { E0: number; N0: number; H0: number } }
 interface Chunk { x: number; z: number; width: number; depth: number; nx: number; nz: number; spacing: number; offset: number; bytes: number }
 interface TerrainHeader { chunkSize: number; file: string; heightOffset: number; heightScale: number; bounds: number[]; image: string; imageBounds: number[]; chunks: Chunk[] }
-interface Features { parking: ParkingPoint[]; buildings: { id: number; height: number; points: number[][] }[]; walls: { kind: string; points: number[][] }[]; trees: number[][] }
+interface Features { parking: ParkingPoint[]; parking_upper?: ParkingPoint[]; road_northwest?: ParkingPoint[]; buildings: { id: number; height: number; points: number[][] }[]; walls: { kind: string; points: number[][] }[]; trees: number[][] }
 interface ColHit { s: number; y: number; distance: number; signed: number; width: number; bank: number }
 
 export function triangleHeight(h00:number,h10:number,h01:number,h11:number,tx:number,tz:number): number {
@@ -153,6 +153,34 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
     // Même diagonale que le collider : pas de divergence entre roues et sol.
     return triangleHeight(h00,h10,h01,h11,tx,tz);
   };
+  // La Route de Fauchy ne commençait qu'à l'accès du parking, alors qu'elle
+  // passe entre les deux parkings OSM (ways 256457163 et 513319895). On
+  // prolonge le ruban vers le nord-ouest avec ses extrémités, posées sur le
+  // terrain, pour que la route sépare bien les deux dalles.
+  const northwest = features.road_northwest ?? [];
+  if (northwest.length >= 2) {
+    const chain: ParkingPoint[] = [...northwest, [0, 0]];
+    const outward = [...chain].reverse();
+    const width = route.samples[0]?.width ?? 6.5;
+    const extension: ColPoint[] = [];
+    let distance = 0;
+    for (let i = 0; i < outward.length - 1; i++) {
+      const [x0, z0] = outward[i];
+      const [x1, z1] = outward[i + 1];
+      const length = Math.hypot(x1 - x0, z1 - z0);
+      const steps = Math.max(1, Math.ceil(length / 4));
+      for (let k = 1; k <= steps; k++) {
+        const t = k / steps;
+        const x = x0 + (x1 - x0) * t;
+        const z = z0 + (z1 - z0) * t;
+        distance += length / steps;
+        const y = sample(x, z);
+        extension.push({ s: -distance, x, y: y > -900 ? y : 0, z, width, bank: 0 });
+      }
+    }
+    extension.reverse();
+    route.samples.unshift(...extension);
+  }
   const roadGrid = new Map<string, number[]>();
   for (let i=0; i<route.samples.length-1; i++) {
     const a=route.samples[i], b=route.samples[i+1];
@@ -179,14 +207,18 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
     }
     return best;
   };
-  const inParking = (x: number, z: number) => {
+  const parkingOutlines: ParkingPoint[][] = [features.parking];
+  if (features.parking_upper) parkingOutlines.push(features.parking_upper);
+  const insideParking = (outline: ParkingPoint[], x: number, z: number) => {
     let inside=false;
-    for(let i=0,j=features.parking.length-1;i<features.parking.length;j=i++) {
-      const [ax,az]=features.parking[i], [bx,bz]=features.parking[j];
+    for(let i=0,j=outline.length-1;i<outline.length;j=i++) {
+      const [ax,az]=outline[i], [bx,bz]=outline[j];
       if ((az>z)!==(bz>z) && x < (bx-ax)*(z-az)/(bz-az)+ax) inside=!inside;
     }
     return inside;
   };
+  const inParking = (x: number, z: number) =>
+    parkingOutlines.some((outline) => insideParking(outline, x, z));
   const surface = (x: number, z: number) => {
     const hit=roadAt(x,z); return (hit && hit.distance <= hit.width/2) || inParking(x,z) ? 'asphalte' as const : 'herbe' as const;
   };
@@ -269,29 +301,46 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   mats.lines.side = THREE.DoubleSide;
   const paint=new THREE.Mesh(paintGeo,mats.lines); paint.name='mollendruz-road-markings'; scene.add(paint);
 
-  // Parking relevé : surface plate légèrement inclinée vers le raccord routier.
-  const parkingShape=new THREE.Shape();
-  features.parking.forEach(([x,z],i)=>i===0?parkingShape.moveTo(x,-z):parkingShape.lineTo(x,-z));
-  const parkingGeo=new THREE.ShapeGeometry(parkingShape);
-  parkingGeo.applyMatrix4(new THREE.Matrix4().set(1,0,0,0, 0,0,1,0, 0,-1,0,0, 0,0,0,1));
-  const pp=parkingGeo.getAttribute('position');
-  for(let i=0;i<pp.count;i++) pp.setY(i,sample(pp.getX(i),pp.getZ(i))+0.04);
-  parkingGeo.computeVertexNormals(); const parkingMesh=new THREE.Mesh(parkingGeo,mats.asphaltPad); parkingMesh.name='mollendruz-parking'; scene.add(parkingMesh);
-  const parkingIdx=parkingGeo.getIndex(); if(parkingIdx) world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(pp.array),new Uint32Array(parkingIdx.array)).setFriction(0.98).setCollisionGroups(GROUND_GROUP),roadBody);
-  // La dalle n'est pas plane : ses huit sommets suivent le terrain et les
-  // triangles qu'elle forme passent au-dessus du sol entre eux. Les traits du
-  // parking doivent se poser sur cette surface, pas sur le terrain dessous.
-  parkingMesh.updateMatrixWorld(true);
-  const parkingRay = new THREE.Raycaster();
-  const parkingOrigin = new THREE.Vector3();
-  const parkingDown = new THREE.Vector3(0, -1, 0);
-  const parkingSurface = (x: number, z: number): number => {
-    parkingOrigin.set(x, 200, z);
-    parkingRay.set(parkingOrigin, parkingDown);
-    const hit = parkingRay.intersectObject(parkingMesh, false)[0];
-    return hit ? hit.point.y : sample(x, z) + 0.04;
-  };
-  const first=route.samples[0], next=route.samples[1];
+  // Les deux dalles OSM du col, de part et d'autre de la Route de Fauchy.
+  // Chaque dalle a son collider et sa propre sonde de hauteur : les traits
+  // peints doivent suivre la surface réellement visible.
+  const parkingLots: { outline: ParkingPoint[]; surface: (x: number, z: number) => number }[] = [];
+  for (let index = 0; index < parkingOutlines.length; index++) {
+    const outline = parkingOutlines[index];
+    if (outline.length < 3) continue;
+    const parkingShape = new THREE.Shape();
+    outline.forEach(([x, z], i) => i === 0 ? parkingShape.moveTo(x, -z) : parkingShape.lineTo(x, -z));
+    const parkingGeo = new THREE.ShapeGeometry(parkingShape);
+    parkingGeo.applyMatrix4(new THREE.Matrix4().set(1,0,0,0, 0,0,1,0, 0,-1,0,0, 0,0,0,1));
+    const pp = parkingGeo.getAttribute('position');
+    for (let i = 0; i < pp.count; i++) pp.setY(i, sample(pp.getX(i), pp.getZ(i)) + 0.04);
+    parkingGeo.computeVertexNormals();
+    const parkingMesh = new THREE.Mesh(parkingGeo, mats.asphaltPad);
+    parkingMesh.name = index === 0 ? 'mollendruz-parking' : 'mollendruz-parking-upper';
+    scene.add(parkingMesh);
+    const parkingIdx = parkingGeo.getIndex();
+    if (parkingIdx) {
+      world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(pp.array), new Uint32Array(parkingIdx.array))
+        .setFriction(0.98).setCollisionGroups(GROUND_GROUP), roadBody);
+    }
+    // La dalle n'est pas plane : ses sommets suivent le terrain et ses grands
+    // triangles passent au-dessus du sol entre eux. Les traits du parking
+    // doivent se poser sur cette surface, pas sur le terrain dessous.
+    parkingMesh.updateMatrixWorld(true);
+    const parkingRay = new THREE.Raycaster();
+    const parkingOrigin = new THREE.Vector3();
+    const parkingDown = new THREE.Vector3(0, -1, 0);
+    const surfaceAt = (x: number, z: number): number => {
+      parkingOrigin.set(x, 200, z);
+      parkingRay.set(parkingOrigin, parkingDown);
+      const hit = parkingRay.intersectObject(parkingMesh, false)[0];
+      return hit ? hit.point.y : sample(x, z) + 0.04;
+    };
+    parkingLots.push({ outline, surface: surfaceAt });
+  }
+  const first = route.samples.find((p) => p.s >= 0) ?? route.samples[0];
+  const next = route.samples[route.samples.indexOf(first) + 1] ?? first;
+
   const spawn={x:PARKING_SPAWN_X,z:PARKING_SPAWN_Z,
     heading:Math.atan2(-(first.x-PARKING_SPAWN_X),-(first.z-PARKING_SPAWN_Z))};
   if(!Number.isFinite(spawn.heading)) spawn.heading=Math.atan2(-(next.x-first.x),-(next.z-first.z));
@@ -409,5 +458,5 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   const endAngle=Math.atan2(-(last.x-penultimate.x),-(last.z-penultimate.z));
   world.createCollider(RAPIER.ColliderDesc.cuboid(last.width/2+2,2,0.3).setTranslation(last.x,last.y+2,last.z)
     .setRotation({x:0,y:Math.sin(endAngle/2),z:0,w:Math.cos(endAngle/2)}).setCollisionGroups(WORLD_GROUP),roadBody);
-  return {route, bounds: header.bounds, sample, roadAt, parking: features.parking, parkingSurface, floor, surface, updateTerrain, spawn, guardrail, treeCount, buildingCount:features.buildings.length, wallCount:features.walls.length};
+  return {route, bounds: header.bounds, sample, roadAt, parking: features.parking, parkingLots, floor, surface, updateTerrain, spawn, guardrail, treeCount, buildingCount:features.buildings.length, wallCount:features.walls.length};
 }
