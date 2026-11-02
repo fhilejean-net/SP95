@@ -255,7 +255,7 @@ async function boot() {
   // La lumière du jour est tirée une fois par chargement (ou forcée par
   // `?light=`), et son exposition vient avec : c'est elle qui cramait les
   // carrosseries claires et le sol sous le plein soleil.
-  const sky = createSky(scene, renderer, MOUNTAIN_MAP ? NIGHT_PRESET : pickSkyPreset());
+  const sky = createSky(scene, renderer, MOUNTAIN_MAP && !new URLSearchParams(window.location.search).has('light') ? NIGHT_PRESET : pickSkyPreset());
   renderer.toneMappingExposure = sky.preset.exposure;
   console.log(`Lumière : ${sky.preset.label} (exposition ${sky.preset.exposure})`);
 

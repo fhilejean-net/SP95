@@ -24,6 +24,15 @@ HOTEL_HEIGHT_M = 9.4
 # La place en béton est le parking OSM devant l'hôtel, bordé par la route au nord
 # et par les pentes ailleurs : aucune place à inventer.
 PLAZA_WAY_ID = 258637492
+# Les annexes de la place, relevées dans OSM mais écartées par le filtre de fin
+# de parcours : hangar rouillé, appentis à tôle rouge, deux petits bâtiments.
+# La hauteur n'est pas taguée, elle est estimée d'après les photos.
+ANNEXES = {
+    258637489: ('shed', 2.8),
+    258637490: ('annex', 6.2),
+    1274199359: ('shed', 3.6),
+    1274199360: ('hangar', 4.4),
+}
 DEFAULT_BUILDING_HEIGHT_M = 7
 FLOOR_HEIGHT_M = 3
 WALL_TYPES = {'guard_rail', 'wall', 'fence', 'retaining_wall'}
@@ -59,8 +68,9 @@ def main():
             shape = shape.buffer(0)
         if shape.is_empty or not corridor.intersects(shape):
             continue
-        # L'hôtel de la place est gardé même loin de l'arrivée.
-        if tags.get('building') and (item['id'] == HOTEL_WAY_ID or shape.distance(end) < BUILDING_END_RADIUS_M):
+        # L'hôtel de la place et ses annexes sont gardés même loin de l'arrivée.
+        if tags.get('building') and (item['id'] in ANNEXES or item['id'] == HOTEL_WAY_ID
+                                     or shape.distance(end) < BUILDING_END_RADIUS_M):
             try:
                 height = float(tags.get('height', '').replace(' m', ''))
             except ValueError:
@@ -73,6 +83,8 @@ def main():
             if item['id'] == HOTEL_WAY_ID:
                 entry['height'] = HOTEL_HEIGHT_M
                 entry['kind'] = 'hotel'
+            elif item['id'] in ANNEXES:
+                entry['kind'], entry['height'] = ANNEXES[item['id']]
             buildings.append(entry)
         if tags.get('landuse') == 'forest' or tags.get('natural') == 'wood':
             forests.append(shape.intersection(corridor_shape))

@@ -7,6 +7,8 @@ import { buildMollendruzTrees } from './vegetation.ts';
 import type { GuardrailPlacement, GuardrailRun } from './terrain.ts';
 import type { ParkingPoint } from './colParking.ts';
 import { parkingAccessGeometry, parkingPadGeometry } from './parkingSurface.ts';
+import { buildColAnnex, buildColHotel, type AnnexKind } from './colHotel.ts';
+import { findBends, offsetPoint, planBendBands, planLaybys, stationAt } from './colBends.ts';
 
 const ROOT = `${import.meta.env.BASE_URL}data/mollendruz/`;
 const GROUND_GROUP = (GROUP_GROUND << 16) | 0xffff;
@@ -185,6 +187,14 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
     extension.reverse();
     route.samples.unshift(...extension);
   }
+  // Virages serrés : bandes de guidage et places d'évitement. Aucune des deux
+  // n'est cartographiée par OSM dans le corridor ; elles se déduisent du rayon
+  // de courbure du tracé relevé.
+  const bendPoints: ColPoint[] = route.samples.filter((p) => p.s >= 0);
+  const bends = findBends(bendPoints);
+  const bendBands = planBendBands(bendPoints, bends);
+  const laybyPlans = planLaybys(bendPoints, bends);
+  const laybyOutlines = laybyPlans.map((plan) => plan.outline);
   const roadGrid = new Map<string, number[]>();
   for (let i=0; i<route.samples.length-1; i++) {
     const a=route.samples[i], b=route.samples[i+1];
@@ -213,9 +223,10 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   };
   const parkingOutlines: ParkingPoint[][] = [features.parking];
   if (features.parking_upper) parkingOutlines.push(features.parking_upper);
-  // La place en béton partage la dalle conforme et l'exclusion des arbres, mais
-  // ce n'est pas un parking : elle ne reçoit pas de places peintes.
-  const padOutlines = features.plaza ? [...parkingOutlines, features.plaza] : parkingOutlines;
+  // La place en béton et les places d'évitement partagent la dalle conforme et
+  // l'exclusion des arbres ; la place n'est pas un parking et ne reçoit pas de
+  // places peintes.
+  const padOutlines = [...parkingOutlines, ...laybyOutlines, ...(features.plaza ? [features.plaza] : [])];
   const insideParking = (outline: ParkingPoint[], x: number, z: number) => {
     let inside=false;
     for(let i=0,j=outline.length-1;i<outline.length;j=i++) {
@@ -226,6 +237,8 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   };
   const inParking = (x: number, z: number) =>
     padOutlines.some((outline) => insideParking(outline, x, z));
+  const inLayby = (x: number, z: number) =>
+    laybyOutlines.some((outline) => insideParking(outline, x, z));
   // Les accès asphaltés viennent des ways OSM (parking_aisle). Le premier point
   // est sur l'axe de la route : on le rentre d'un mètre dans la chaussée, puis
   // on prolonge la bande dans la dalle pour que les deux bitumes se recouvrent.
@@ -266,12 +279,12 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
     return false;
   });
   const surface = (x: number, z: number) => {
-    const hit=roadAt(x,z); return (hit && hit.distance <= hit.width/2) || inParking(x,z) || inAccess(x,z) ? 'asphalte' as const : 'herbe' as const;
+    const hit=roadAt(x,z); return (hit && hit.distance <= hit.width/2) || inParking(x,z) || inLayby(x,z) || inAccess(x,z) ? 'asphalte' as const : 'herbe' as const;
   };
-  const floor = (x: number, z: number) => {
-    const hit=roadAt(x,z);
+  const floor = (x: number, z: number) => {    const hit = roadAt(x, z);
     if (hit && hit.distance <= hit.width/2) return hit.y;
-    return sample(x,z)+(inParking(x,z)?PARKING_LIFT:inAccess(x,z)?ACCESS_LIFT:0);
+    const layby = inLayby(x, z) ? ACCESS_LIFT : 0;
+    return sample(x,z)+(inParking(x,z)?PARKING_LIFT:inAccess(x,z)?ACCESS_LIFT:layby);
   };
 
   const active = new Map<Chunk, { mesh: THREE.Mesh; body: RAPIER.RigidBody | null }>();
@@ -349,15 +362,45 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   mats.lines.side = THREE.DoubleSide;
   const paint=new THREE.Mesh(paintGeo,mats.lines); paint.name='mollendruz-road-markings'; scene.add(paint);
 
+  // Bandes de guidage des virages : perpendiculaires à l'axe, appuyées sur la
+  // rive intérieure et allongées vers le centre. Courtes à l'entrée, elles
+  // prennent une demi-voie au point de corde.
+  if (bendBands.length) {
+    const bandPositions: number[] = [];
+    const bandIndices: number[] = [];
+    const halfPaint = 0.05;
+    for (const band of bendBands) {
+      const station = stationAt(bendPoints, band.s);
+      const [ax, az] = offsetPoint(station, band.from);
+      const [bx, bz] = offsetPoint(station, band.to);
+      const height = (offset: number) => station.y + station.bank * offset + ROAD_LIFT + 0.016;
+      const base = bandPositions.length / 3;
+      bandPositions.push(
+        ax - station.tx * halfPaint, height(band.from), az - station.tz * halfPaint,
+        ax + station.tx * halfPaint, height(band.from), az + station.tz * halfPaint,
+        bx + station.tx * halfPaint, height(band.to), bz + station.tz * halfPaint,
+        bx - station.tx * halfPaint, height(band.to), bz - station.tz * halfPaint,
+      );
+      bandIndices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+    const bandGeometry = new THREE.BufferGeometry();
+    bandGeometry.setAttribute('position', new THREE.Float32BufferAttribute(bandPositions, 3));
+    bandGeometry.setIndex(bandIndices);
+    bandGeometry.computeVertexNormals();
+    const bands = new THREE.Mesh(bandGeometry, mats.lines);
+    bands.name = 'mollendruz-bend-bands';
+    scene.add(bands);
+  }
+
   // Les deux dalles OSM du col, de part et d'autre de la Route de Fauchy.
   // Chaque dalle a son collider et sa propre sonde de hauteur : les traits
   // peints doivent suivre la surface réellement visible.
-  // Une dalle par surface : les deux parkings en asphalte, la place en béton.
+  // Une dalle par surface : les parkings, les évitements et la place, en bitume.
   const pads: { outline: ParkingPoint[]; name: string; material: THREE.Material; bays: boolean }[] = [
     { outline: features.parking, name: 'mollendruz-parking', material: mats.asphaltPad, bays: true },
   ];
   if (features.parking_upper) pads.push({ outline: features.parking_upper, name: 'mollendruz-parking-upper', material: mats.asphaltPad, bays: true });
-  if (features.plaza) pads.push({ outline: features.plaza, name: 'mollendruz-plaza', material: mats.concrete, bays: false });
+  if (features.plaza) pads.push({ outline: features.plaza, name: 'mollendruz-plaza', material: mats.asphaltPad, bays: false });
   const parkingLots: { outline: ParkingPoint[]; surface: (x: number, z: number) => number }[] = [];
   for (const pad of pads) {
     const outline = pad.outline;
@@ -387,6 +430,21 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
     };
     if (pad.bays) parkingLots.push({ outline, surface: surfaceAt });
   }
+  // Places d'évitement : l'élargissement asphalté du côté intérieur du virage,
+  // posé sur le terrain comme les dalles de parking.
+  laybyPlans.forEach((plan, index) => {
+    const geometry = parkingPadGeometry(plan.outline, sample, { lift: ACCESS_LIFT });
+    const padIndex = geometry.getIndex();
+    if (!padIndex) return;
+    const mesh = new THREE.Mesh(geometry, mats.asphaltPad);
+    mesh.name = `mollendruz-layby-${index}`;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+    world.createCollider(RAPIER.ColliderDesc.trimesh(
+      new Float32Array(geometry.getAttribute('position').array),
+      new Uint32Array(padIndex.array),
+    ).setFriction(0.98).setCollisionGroups(GROUND_GROUP), roadBody);
+  });
   for (const access of accessLanes) {
     const accessGeo = parkingAccessGeometry(access.points, sample, ACCESS_WIDTH, ACCESS_LIFT);
     const accessIndex = accessGeo.getIndex();
@@ -414,13 +472,19 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
     const cx=b.points.reduce((s,p)=>s+p[0],0)/b.points.length, cz=b.points.reduce((s,p)=>s+p[1],0)/b.points.length;
     // L'hôtel est posé au point le plus bas de son emprise : sinon ses murs
     // flottent au-dessus du ravin, côté aval.
-    const base = b.kind === 'hotel'
+    const annex: AnnexKind | null =
+      b.kind === 'shed' || b.kind === 'hangar' || b.kind === 'annex' ? b.kind : null;
+    // L'hôtel et ses annexes descendent au point le plus bas de leur emprise :
+    // sinon leurs murs flottent au-dessus du ravin, côté aval.
+    const base = b.kind === 'hotel' || annex
       ? Math.min(...b.points.map(([x,z]) => sample(x,z)))
       : sample(cx,cz);
     // Le vieil hôtel garde sa silhouette : crépi, toit d'ardoise, fenêtres
     // étroites, au lieu de la façade à grille lumineuse des immeubles.
     const mesh: THREE.Object3D = b.kind === 'hotel'
-      ? hotelBuilding(b.points, base, b.height, roadAt)
+      ? buildColHotel(b.points, base, b.height, roadAt)
+      : annex
+      ? buildColAnnex(b.points, base, b.height, annex)
       : (() => {
           const shape=new THREE.Shape(); b.points.forEach(([x,z],i)=>i===0?shape.moveTo(x,-z):shape.lineTo(x,-z));
           const geo=new THREE.ExtrudeGeometry(shape,{depth:b.height,bevelEnabled:false});
@@ -517,7 +581,9 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
       console.warn('Modèle de glissière indisponible, ruban de secours.', error),
     );
   }
-  const treeLocations = [...features.trees, ...forestAlong(route.samples, sample, roadAt, (x, z) => inParking(x, z) || inAccess(x, z), features.buildings)];
+  const treeLocations = [...features.trees, ...forestAlong(
+    route.samples, sample, roadAt, (x, z) => inParking(x, z) || inAccess(x, z), features.buildings,
+  )].filter(([x, z]) => !inLayby(x, z));
   let treeCount = 0;
   try {
     treeCount = await buildMollendruzTrees(scene, treeLocations, sample);
@@ -533,102 +599,5 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   const endAngle=Math.atan2(-(last.x-penultimate.x),-(last.z-penultimate.z));
   world.createCollider(RAPIER.ColliderDesc.cuboid(last.width/2+2,2,0.3).setTranslation(last.x,last.y+2,last.z)
     .setRotation({x:0,y:Math.sin(endAngle/2),z:0,w:Math.cos(endAngle/2)}).setCollisionGroups(WORLD_GROUP),roadBody);
-  return {route, bounds: header.bounds, sample, roadAt, parking: features.parking, parkingLots, accessCount: accessLanes.length, floor, surface, updateTerrain, spawn, guardrail, treeCount, buildingCount:features.buildings.length, wallCount:features.walls.length};
-}
-
-/**
- * Le vieil hôtel du col : trois étages de crépi, un toit d'ardoise et des
- * fenêtres étroites. La façade générique de la ville, avec sa grille de
- * fenêtres éclairées, en faisait une tour qui n'a rien à faire ici.
- */
-function hotelBuilding(
-  points: number[][],
-  base: number,
-  height: number,
-  roadAt: (x: number, z: number) => ColHit | null,
-): THREE.Group {
-  const group = new THREE.Group();
-  const shape = new THREE.Shape();
-  points.forEach(([x, z], index) => (index === 0 ? shape.moveTo(x, -z) : shape.lineTo(x, -z)));
-  const walls = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false });
-  // Le plan de forme est (x,-z), la profondeur devient +y.
-  walls.applyMatrix4(new THREE.Matrix4().set(1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1));
-  walls.translate(0, base, 0);
-  const plaster = new THREE.MeshStandardMaterial({ color: 0xc3896f, roughness: 0.94 });
-  const slate = new THREE.MeshStandardMaterial({ color: 0x4b4d50, roughness: 0.92, side: THREE.DoubleSide });
-  const openings = new THREE.MeshStandardMaterial({ color: 0x20262a, roughness: 0.6, side: THREE.DoubleSide });
-  const body = new THREE.Mesh(walls, plaster);
-  body.castShadow = true;
-  body.receiveShadow = true;
-  group.add(body);
-  const roof = new THREE.Mesh(hipRoofGeometry(points, base + height, 3.2), slate);
-  roof.castShadow = true;
-  group.add(roof);
-  group.add(new THREE.Mesh(hotelWindows(points, base, height, roadAt), openings));
-  return group;
-}
-
-/** Toit à pans : gouttière sur l'emprise OSM, faîtage réduit vers le centre. */
-function hipRoofGeometry(points: number[][], eave: number, rise: number): THREE.BufferGeometry {
-  const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
-  const cz = points.reduce((sum, p) => sum + p[1], 0) / points.length;
-  const ridge = points.map(([x, z]) => [x + (cx - x) * 0.42, z + (cz - z) * 0.42]);
-  const positions: number[] = [];
-  for (let i = 0; i < points.length; i++) {
-    const j = (i + 1) % points.length;
-    const [ax, az] = points[i], [bx, bz] = points[j];
-    const [rx, rz] = ridge[i], [sx, sz] = ridge[j];
-    positions.push(
-      ax, eave, az, bx, eave, bz, sx, eave + rise, sz,
-      ax, eave, az, sx, eave + rise, sz, rx, eave + rise, rz,
-      cx, eave + rise, cz, sx, eave + rise, sz, rx, eave + rise, rz,
-    );
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
-/** Fenêtres sur la façade de la route, une rangée par étage. */
-function hotelWindows(
-  points: number[][],
-  base: number,
-  height: number,
-  roadAt: (x: number, z: number) => ColHit | null,
-): THREE.BufferGeometry {
-  let edge = 1, nearest = Infinity;
-  for (let i = 1; i < points.length; i++) {
-    const hit = roadAt((points[i - 1][0] + points[i][0]) / 2, (points[i - 1][1] + points[i][1]) / 2);
-    if (hit && hit.distance < nearest) { nearest = hit.distance; edge = i; }
-  }
-  const [ax, az] = points[edge - 1], [bx, bz] = points[edge];
-  const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
-  const cz = points.reduce((sum, p) => sum + p[1], 0) / points.length;
-  const dx = bx - ax, dz = bz - az, length = Math.hypot(dx, dz);
-  const ux = dx / length, uz = dz / length;
-  let nx = uz, nz = -ux;
-  if (nx * ((ax + bx) / 2 - cx) + nz * ((az + bz) / 2 - cz) < 0) { nx = -nx; nz = -nz; }
-  const positions: number[] = [], indices: number[] = [];
-  const rows = Math.max(2, Math.round(height / 3.1));
-  const halfWidth = 0.48, halfHeight = 0.68;
-  for (let row = 0; row < rows; row++) {
-    const y = base + (height / rows) * (row + 0.55);
-    for (let along = 1.5; along + 1.5 <= length; along += 2.5) {
-      const px = ax + ux * along + nx * 0.06, pz = az + uz * along + nz * 0.06;
-      const index = positions.length / 3;
-      positions.push(
-        px - ux * halfWidth, y - halfHeight, pz - uz * halfWidth,
-        px + ux * halfWidth, y - halfHeight, pz + uz * halfWidth,
-        px + ux * halfWidth, y + halfHeight, pz + uz * halfWidth,
-        px - ux * halfWidth, y + halfHeight, pz - uz * halfWidth,
-      );
-      indices.push(index, index + 1, index + 2, index, index + 2, index + 3);
-    }
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
+  return {route, bounds: header.bounds, sample, roadAt, parking: features.parking, parkingLots, accessCount: accessLanes.length, floor, surface, updateTerrain, spawn, guardrail, treeCount, bendCount: bends.length, laybyCount: laybyPlans.length, buildingCount:features.buildings.length, wallCount:features.walls.length};
 }
