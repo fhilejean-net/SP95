@@ -30,6 +30,12 @@ export class Hud {
   private sectorPanel = el('sector-panel');
   private sectorRef = el('sector-ref');
   private sectorRows = [1, 2, 3].map((index) => el(`sector-row-${index}`));
+  /** Les trois lignes et leurs deux cellules, résolues une fois pour toutes. */
+  private sectorCells = this.sectorRows.map((row) => ({
+    row,
+    time: row.querySelector('.sector-time') as HTMLSpanElement | null,
+    delta: row.querySelector('.sector-delta') as HTMLSpanElement | null,
+  }));
   private driftLapPanel = el('drift-lap-panel');
   private driftLapPoints = el('drift-lap-points');
   private driftLapRef = el('drift-lap-ref');
@@ -60,6 +66,8 @@ export class Hud {
   private message = el('message');
   private minimap = el<HTMLCanvasElement>('minimap');
   private minimapBase: HTMLCanvasElement;
+  /** Contexte 2D gardé : le redemander à chaque image coûtait un aller-retour. */
+  private minimapCtx: CanvasRenderingContext2D | null;
   private messageTimer = 0;
   private messageSeq = 0;
   private mapScale = 1;
@@ -67,6 +75,15 @@ export class Hud {
   private lastSpeed = -1;
   private lastGear = -99;
   private lastRpm = -1;
+  private lastDriftTotal = Number.NaN;
+  private lastDriftPoints = Number.NaN;
+  private lastDriftMult = Number.NaN;
+  private lastStuntTotal = Number.NaN;
+  private lastStuntPoints = Number.NaN;
+  private lastStuntMult = Number.NaN;
+  private lastStuntAngle = Number.NaN;
+  private lastStuntDeep = false;
+  private lastDriftLapKey = '';
   /** Le panneau des tours sert aussi de chrono en conduite libre chronométrée. */
   private chrono = false;
   /** Tracé de la piste dessinée par le jeu, s'il y en a une sur cette carte. */
@@ -80,6 +97,7 @@ export class Hud {
     this.minimapBase = document.createElement('canvas');
     this.minimapBase.width = this.minimap.width;
     this.minimapBase.height = this.minimap.height;
+    this.minimapCtx = this.minimap.getContext('2d');
     this.mapCenter = this.minimap.width / 2;
     // The col reaches the far corner, so the whole world has to fit.
     this.mapScale = (this.minimap.width - 10) / (WORLD_SIZE + 120);
@@ -298,10 +316,23 @@ export class Hud {
   }
 
   updateDrift(pending: number, total: number, multiplier: number, active: boolean): void {
-    this.driftTotal.textContent = String(Math.round(total));
+    const points = Math.round(pending);
+    const banked = Math.round(total);
+    // Le score se relit douze fois par seconde : n'écrire que ce qui change
+    // évite de remplacer des nœuds de texte identiques à chaque battement.
+    if (banked !== this.lastDriftTotal) {
+      this.driftTotal.textContent = String(banked);
+      this.lastDriftTotal = banked;
+    }
     this.driftPanel.classList.toggle('active', active || pending > 10);
-    this.driftPoints.textContent = String(Math.round(pending));
-    this.driftMult.textContent = `×${multiplier}`;
+    if (points !== this.lastDriftPoints) {
+      this.driftPoints.textContent = String(points);
+      this.lastDriftPoints = points;
+    }
+    if (multiplier !== this.lastDriftMult) {
+      this.driftMult.textContent = `×${multiplier}`;
+      this.lastDriftMult = multiplier;
+    }
   }
 
   /**
@@ -337,13 +368,31 @@ export class Hud {
     deep: boolean,
     angleDeg: number,
   ): void {
-    this.stuntTotal.textContent = String(Math.round(total));
+    const points = Math.round(pending);
+    const banked = Math.round(total);
+    const angle = Math.round(angleDeg);
+    if (banked !== this.lastStuntTotal) {
+      this.stuntTotal.textContent = String(banked);
+      this.lastStuntTotal = banked;
+    }
     this.stuntPanel.classList.toggle('active', active || pending > 10);
-    this.stuntPoints.textContent = String(Math.round(pending));
-    this.stuntMult.textContent = `×${multiplier}`;
-    this.stuntLabel.textContent = deep ? 'BAVETTE' : 'WHEELIE';
-    this.stuntLabel.classList.toggle('bavette', deep);
-    this.stuntAngle.textContent = `${Math.round(angleDeg)}°`;
+    if (points !== this.lastStuntPoints) {
+      this.stuntPoints.textContent = String(points);
+      this.lastStuntPoints = points;
+    }
+    if (multiplier !== this.lastStuntMult) {
+      this.stuntMult.textContent = `×${multiplier}`;
+      this.lastStuntMult = multiplier;
+    }
+    if (deep !== this.lastStuntDeep) {
+      this.stuntLabel.textContent = deep ? 'BAVETTE' : 'WHEELIE';
+      this.stuntLabel.classList.toggle('bavette', deep);
+      this.lastStuntDeep = deep;
+    }
+    if (angle !== this.lastStuntAngle) {
+      this.stuntAngle.textContent = `${angle}°`;
+      this.lastStuntAngle = angle;
+    }
   }
 
   /** Nom du réglage monté sur la moto : preset de l'atelier ou « réglage perso ». */
@@ -398,10 +447,7 @@ export class Hud {
   updateSectors(snapshot: SectorSnapshot): void {
     this.sectorRef.textContent =
       snapshot.reference === null ? 'réf. —' : `réf. ${Race.formatTime(snapshot.reference)}`;
-    for (let index = 0; index < this.sectorRows.length; index++) {
-      const row = this.sectorRows[index];
-      const time = row.querySelector('.sector-time') as HTMLSpanElement | null;
-      const delta = row.querySelector('.sector-delta') as HTMLSpanElement | null;
+    for (const [index, { row, time, delta }] of this.sectorCells.entries()) {
       if (!time || !delta) continue;
       const split = snapshot.splits[index] ?? null;
       const current = snapshot.running === index;
@@ -431,10 +477,13 @@ export class Hud {
 
   updateDriftLap(points: number, best: number | null): void {
     const shown = Math.max(0, Math.round(points));
+    const delta = best === null ? 0 : shown - best;
+    const key = `${shown}|${best}|${delta}`;
+    if (key === this.lastDriftLapKey) return;
+    this.lastDriftLapKey = key;
     this.driftLapPoints.textContent = shown.toLocaleString('fr-FR');
     this.driftLapRef.textContent =
       best === null ? 'réf. —' : `réf. ${best.toLocaleString('fr-FR')} pts`;
-    const delta = best === null ? 0 : shown - best;
     this.driftLapDelta.textContent =
       best === null ? 'premier tour' : `${delta >= 0 ? '+' : ''}${delta.toLocaleString('fr-FR')} pts`;
     this.driftLapDelta.classList.toggle('faster', delta > 0);
@@ -454,7 +503,7 @@ export class Hud {
     yaw: number,
     nextCheckpoint: { x: number; z: number } | null,
   ): void {
-    const ctx = this.minimap.getContext('2d');
+    const ctx = this.minimapCtx;
     if (!ctx) return;
     const cx = this.mapCenter;
     const cy = this.mapCenter;
