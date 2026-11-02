@@ -5,6 +5,7 @@ import type { EnvironmentMaterials } from '../render/materials.ts';
 import { addGuardrailModel } from '../render/guardrailModel.ts';
 import { buildMollendruzTrees } from './vegetation.ts';
 import type { GuardrailPlacement, GuardrailRun } from './terrain.ts';
+import type { ParkingPoint } from './colParking.ts';
 
 const ROOT = `${import.meta.env.BASE_URL}data/mollendruz/`;
 const GROUND_GROUP = (GROUP_GROUND << 16) | 0xffff;
@@ -26,7 +27,7 @@ export interface ColPoint { s: number; x: number; y: number; z: number; width: n
 interface ColRoute { end_s: number; samples: ColPoint[]; origin: { E0: number; N0: number; H0: number } }
 interface Chunk { x: number; z: number; width: number; depth: number; nx: number; nz: number; spacing: number; offset: number; bytes: number }
 interface TerrainHeader { chunkSize: number; file: string; heightOffset: number; heightScale: number; bounds: number[]; image: string; imageBounds: number[]; chunks: Chunk[] }
-interface Features { parking: number[][]; buildings: { id: number; height: number; points: number[][] }[]; walls: { kind: string; points: number[][] }[]; trees: number[][] }
+interface Features { parking: ParkingPoint[]; buildings: { id: number; height: number; points: number[][] }[]; walls: { kind: string; points: number[][] }[]; trees: number[][] }
 interface ColHit { s: number; y: number; distance: number; signed: number; width: number; bank: number }
 
 export function triangleHeight(h00:number,h10:number,h01:number,h11:number,tx:number,tz:number): number {
@@ -277,6 +278,19 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   for(let i=0;i<pp.count;i++) pp.setY(i,sample(pp.getX(i),pp.getZ(i))+0.04);
   parkingGeo.computeVertexNormals(); const parkingMesh=new THREE.Mesh(parkingGeo,mats.asphaltPad); parkingMesh.name='mollendruz-parking'; scene.add(parkingMesh);
   const parkingIdx=parkingGeo.getIndex(); if(parkingIdx) world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(pp.array),new Uint32Array(parkingIdx.array)).setFriction(0.98).setCollisionGroups(GROUND_GROUP),roadBody);
+  // La dalle n'est pas plane : ses huit sommets suivent le terrain et les
+  // triangles qu'elle forme passent au-dessus du sol entre eux. Les traits du
+  // parking doivent se poser sur cette surface, pas sur le terrain dessous.
+  parkingMesh.updateMatrixWorld(true);
+  const parkingRay = new THREE.Raycaster();
+  const parkingOrigin = new THREE.Vector3();
+  const parkingDown = new THREE.Vector3(0, -1, 0);
+  const parkingSurface = (x: number, z: number): number => {
+    parkingOrigin.set(x, 200, z);
+    parkingRay.set(parkingOrigin, parkingDown);
+    const hit = parkingRay.intersectObject(parkingMesh, false)[0];
+    return hit ? hit.point.y : sample(x, z) + 0.04;
+  };
   const first=route.samples[0], next=route.samples[1];
   const spawn={x:PARKING_SPAWN_X,z:PARKING_SPAWN_Z,
     heading:Math.atan2(-(first.x-PARKING_SPAWN_X),-(first.z-PARKING_SPAWN_Z))};
@@ -395,5 +409,5 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   const endAngle=Math.atan2(-(last.x-penultimate.x),-(last.z-penultimate.z));
   world.createCollider(RAPIER.ColliderDesc.cuboid(last.width/2+2,2,0.3).setTranslation(last.x,last.y+2,last.z)
     .setRotation({x:0,y:Math.sin(endAngle/2),z:0,w:Math.cos(endAngle/2)}).setCollisionGroups(WORLD_GROUP),roadBody);
-  return {route, bounds: header.bounds, sample, roadAt, floor, surface, updateTerrain, spawn, guardrail, treeCount, buildingCount:features.buildings.length, wallCount:features.walls.length};
+  return {route, bounds: header.bounds, sample, roadAt, parking: features.parking, parkingSurface, floor, surface, updateTerrain, spawn, guardrail, treeCount, buildingCount:features.buildings.length, wallCount:features.walls.length};
 }

@@ -42,6 +42,7 @@ import {
   type GuardrailRun,
 } from './world/terrain.ts';
 import { buildColSettlements } from './world/colSettlements.ts';
+import { buildColParking } from './world/colParking.ts';
 import { buildMollendruz } from './world/mollendruz.ts';
 import { createColDebug } from './world/colDebug.ts';
 import { NEIGHBOURHOODS, buildCity, syncProps } from './world/city.ts';
@@ -379,6 +380,13 @@ async function boot() {
   /** Sol de jeu sous une roue : la dalle du circuit passe avant le terrain. */
   const groundAt = (x: number, z: number) =>
     mollendruz ? mollendruz.floor(x, z) : Math.max(terrain.sample(x, z), circuitFloor(x, z) ?? -Infinity);
+
+  // La carte du col construit sa propre dalle : on y peint les places du
+  // polygone OSM, sinon le parking reste une grande surface grise sans repères.
+  if (mollendruz) {
+    const parkingBays = buildColParking(scene, materials, mollendruz.parking, mollendruz.parkingSurface);
+    console.log(`Col : ${parkingBays} places tracées au parking`);
+  }
 
   // Contrôle de l'invariant : le terrain de secours doit rester *sous* la dalle
   // du circuit. Un nœud au-dessus ferait percer l'herbe à travers l'asphalte —
