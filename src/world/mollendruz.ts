@@ -6,6 +6,7 @@ import { addGuardrailModel } from '../render/guardrailModel.ts';
 import { buildMollendruzTrees } from './vegetation.ts';
 import type { GuardrailPlacement, GuardrailRun } from './terrain.ts';
 import type { ParkingPoint } from './colParking.ts';
+import { parkingAccessGeometry, parkingPadGeometry } from './parkingSurface.ts';
 
 const ROOT = `${import.meta.env.BASE_URL}data/mollendruz/`;
 const GROUND_GROUP = (GROUP_GROUND << 16) | 0xffff;
@@ -15,6 +16,9 @@ const TERRAIN_COLLISION_DISTANCE = 250;
 const TERRAIN_HYSTERESIS = 64;
 const ROAD_CELL = 32;
 const ROAD_LIFT = 0.04;
+const PARKING_LIFT = 0.04;
+const ACCESS_LIFT = 0.05;
+const ACCESS_WIDTH = 5.5;
 const PARKING_SPAWN_X = -17;
 const PARKING_SPAWN_Z = 6;
 const RAIL_LOOKAHEAD_M = 15;
@@ -27,7 +31,7 @@ export interface ColPoint { s: number; x: number; y: number; z: number; width: n
 interface ColRoute { end_s: number; samples: ColPoint[]; origin: { E0: number; N0: number; H0: number } }
 interface Chunk { x: number; z: number; width: number; depth: number; nx: number; nz: number; spacing: number; offset: number; bytes: number }
 interface TerrainHeader { chunkSize: number; file: string; heightOffset: number; heightScale: number; bounds: number[]; image: string; imageBounds: number[]; chunks: Chunk[] }
-interface Features { parking: ParkingPoint[]; parking_upper?: ParkingPoint[]; road_northwest?: ParkingPoint[]; buildings: { id: number; height: number; points: number[][] }[]; walls: { kind: string; points: number[][] }[]; trees: number[][] }
+interface Features { parking: ParkingPoint[]; parking_upper?: ParkingPoint[]; road_northwest?: ParkingPoint[]; accesses?: { id: number; points: ParkingPoint[] }[]; buildings: { id: number; height: number; points: number[][] }[]; walls: { kind: string; points: number[][] }[]; trees: number[][] }
 interface ColHit { s: number; y: number; distance: number; signed: number; width: number; bank: number }
 
 export function triangleHeight(h00:number,h10:number,h01:number,h11:number,tx:number,tz:number): number {
@@ -219,11 +223,52 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   };
   const inParking = (x: number, z: number) =>
     parkingOutlines.some((outline) => insideParking(outline, x, z));
+  // Les accès asphaltés viennent des ways OSM (parking_aisle). Le premier point
+  // est sur l'axe de la route : on le rentre d'un mètre dans la chaussée, puis
+  // on prolonge la bande dans la dalle pour que les deux bitumes se recouvrent.
+  const accessLanes: { id: number; points: ParkingPoint[] }[] = [];
+  for (const access of features.accesses ?? []) {
+    const points = access.points.map(([x, z]) => [x, z] as ParkingPoint);
+    if (points.length < 2) continue;
+    // Les ways OSM ne sont pas tous dessinés dans le même sens : deux partent
+    // du parking et finissent sur l'axe de la route. On met toujours la route
+    // en tête pour découper le bon bout.
+    const head = points[0], tail = points[points.length - 1];
+    const headHit = roadAt(head[0], head[1]);
+    const tailHit = roadAt(tail[0], tail[1]);
+    const onRoad = (hit: ColHit | null) => hit !== null && hit.distance <= hit.width / 2 + 0.4;
+    if (!onRoad(headHit) && onRoad(tailHit)) points.reverse();
+    const [fx, fz] = points[0], [sx, sz] = points[1];
+    const start = roadAt(fx, fz);
+    const cut = Math.max(0, (start?.width ?? 6.5) / 2 - 0.8);
+    const dx = sx - fx, dz = sz - fz, length = Math.hypot(dx, dz);
+    if (length < 0.01) continue;
+    points[0] = [fx + (dx / length) * cut, fz + (dz / length) * cut];
+    const [ex, ez] = points[points.length - 1];
+    const [px, pz] = points[points.length - 2];
+    const lx = ex - px, lz = ez - pz, lastLength = Math.hypot(lx, lz);
+    if (lastLength > 0.01) {
+      points[points.length - 1] = [ex + (lx / lastLength) * 1.5, ez + (lz / lastLength) * 1.5];
+    }
+    accessLanes.push({ id: access.id, points });
+  }
+  const inAccess = (x: number, z: number) => accessLanes.some(({ points }) => {
+    for (let i = 1; i < points.length; i++) {
+      const [ax, az] = points[i - 1], [bx, bz] = points[i];
+      const dx = bx - ax, dz = bz - az, length2 = dx * dx + dz * dz;
+      if (length2 < 1e-9) continue;
+      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / length2));
+      if (Math.hypot(x - (ax + dx * t), z - (az + dz * t)) <= ACCESS_WIDTH / 2 + 0.1) return true;
+    }
+    return false;
+  });
   const surface = (x: number, z: number) => {
-    const hit=roadAt(x,z); return (hit && hit.distance <= hit.width/2) || inParking(x,z) ? 'asphalte' as const : 'herbe' as const;
+    const hit=roadAt(x,z); return (hit && hit.distance <= hit.width/2) || inParking(x,z) || inAccess(x,z) ? 'asphalte' as const : 'herbe' as const;
   };
   const floor = (x: number, z: number) => {
-    const hit=roadAt(x,z); return hit && hit.distance <= hit.width/2 ? hit.y : sample(x,z)+(inParking(x,z)?0.04:0);
+    const hit=roadAt(x,z);
+    if (hit && hit.distance <= hit.width/2) return hit.y;
+    return sample(x,z)+(inParking(x,z)?PARKING_LIFT:inAccess(x,z)?ACCESS_LIFT:0);
   };
 
   const active = new Map<Chunk, { mesh: THREE.Mesh; body: RAPIER.RigidBody | null }>();
@@ -308,13 +353,8 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   for (let index = 0; index < parkingOutlines.length; index++) {
     const outline = parkingOutlines[index];
     if (outline.length < 3) continue;
-    const parkingShape = new THREE.Shape();
-    outline.forEach(([x, z], i) => i === 0 ? parkingShape.moveTo(x, -z) : parkingShape.lineTo(x, -z));
-    const parkingGeo = new THREE.ShapeGeometry(parkingShape);
-    parkingGeo.applyMatrix4(new THREE.Matrix4().set(1,0,0,0, 0,0,1,0, 0,-1,0,0, 0,0,0,1));
+    const parkingGeo = parkingPadGeometry(outline, sample, { lift: PARKING_LIFT });
     const pp = parkingGeo.getAttribute('position');
-    for (let i = 0; i < pp.count; i++) pp.setY(i, sample(pp.getX(i), pp.getZ(i)) + 0.04);
-    parkingGeo.computeVertexNormals();
     const parkingMesh = new THREE.Mesh(parkingGeo, mats.asphaltPad);
     parkingMesh.name = index === 0 ? 'mollendruz-parking' : 'mollendruz-parking-upper';
     scene.add(parkingMesh);
@@ -323,8 +363,8 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
       world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(pp.array), new Uint32Array(parkingIdx.array))
         .setFriction(0.98).setCollisionGroups(GROUND_GROUP), roadBody);
     }
-    // La dalle n'est pas plane : ses sommets suivent le terrain et ses grands
-    // triangles passent au-dessus du sol entre eux. Les traits du parking
+    // La dalle est découpée finement : ses sommets suivent le terrain et
+    // l'herbe ne perce plus entre les grands triangles. Les traits du parking
     // doivent se poser sur cette surface, pas sur le terrain dessous.
     parkingMesh.updateMatrixWorld(true);
     const parkingRay = new THREE.Raycaster();
@@ -337,6 +377,19 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
       return hit ? hit.point.y : sample(x, z) + 0.04;
     };
     parkingLots.push({ outline, surface: surfaceAt });
+  }
+  for (const access of accessLanes) {
+    const accessGeo = parkingAccessGeometry(access.points, sample, ACCESS_WIDTH, ACCESS_LIFT);
+    const accessIndex = accessGeo.getIndex();
+    if (!accessIndex) continue;
+    const accessMesh = new THREE.Mesh(accessGeo, mats.asphaltPad);
+    accessMesh.name = `mollendruz-access-${access.id}`;
+    accessMesh.receiveShadow = true;
+    scene.add(accessMesh);
+    world.createCollider(RAPIER.ColliderDesc.trimesh(
+      new Float32Array(accessGeo.getAttribute('position').array),
+      new Uint32Array(accessIndex.array),
+    ).setFriction(0.98).setCollisionGroups(GROUND_GROUP), roadBody);
   }
   const first = route.samples.find((p) => p.s >= 0) ?? route.samples[0];
   const next = route.samples[route.samples.indexOf(first) + 1] ?? first;
@@ -442,7 +495,7 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
       console.warn('Modèle de glissière indisponible, ruban de secours.', error),
     );
   }
-  const treeLocations = [...features.trees, ...forestAlong(route.samples, sample, roadAt, inParking, features.buildings)];
+  const treeLocations = [...features.trees, ...forestAlong(route.samples, sample, roadAt, (x, z) => inParking(x, z) || inAccess(x, z), features.buildings)];
   let treeCount = 0;
   try {
     treeCount = await buildMollendruzTrees(scene, treeLocations, sample);
@@ -458,5 +511,5 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   const endAngle=Math.atan2(-(last.x-penultimate.x),-(last.z-penultimate.z));
   world.createCollider(RAPIER.ColliderDesc.cuboid(last.width/2+2,2,0.3).setTranslation(last.x,last.y+2,last.z)
     .setRotation({x:0,y:Math.sin(endAngle/2),z:0,w:Math.cos(endAngle/2)}).setCollisionGroups(WORLD_GROUP),roadBody);
-  return {route, bounds: header.bounds, sample, roadAt, parking: features.parking, parkingLots, floor, surface, updateTerrain, spawn, guardrail, treeCount, buildingCount:features.buildings.length, wallCount:features.walls.length};
+  return {route, bounds: header.bounds, sample, roadAt, parking: features.parking, parkingLots, accessCount: accessLanes.length, floor, surface, updateTerrain, spawn, guardrail, treeCount, buildingCount:features.buildings.length, wallCount:features.walls.length};
 }

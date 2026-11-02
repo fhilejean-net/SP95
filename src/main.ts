@@ -391,7 +391,7 @@ async function boot() {
         index === 0 ? 'col-parking' : 'col-parking-upper',
       );
     });
-    console.log(`Col : ${parkingBays} places tracées sur ${mollendruz.parkingLots.length} parkings`);
+    console.log(`Col : ${parkingBays} places tracées sur ${mollendruz.parkingLots.length} parkings et ${mollendruz.accessCount} accès asphaltés`);
   }
 
   // Contrôle de l'invariant : le terrain de secours doit rester *sous* la dalle

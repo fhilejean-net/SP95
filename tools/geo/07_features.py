@@ -17,6 +17,7 @@ TREE_SPACING_M = 12
 TREE_ROAD_CLEARANCE_M = 8
 TREE_LIMIT = 5000
 TREE_SEED = 151
+ACCESS_WAYS = (244898032, 94834634, 480023950)
 DEFAULT_BUILDING_HEIGHT_M = 7
 FLOOR_HEIGHT_M = 3
 WALL_TYPES = {'guard_rail', 'wall', 'fence', 'retaining_wall'}
@@ -90,9 +91,16 @@ def main():
     link = next(e for e in osm if e['id'] == 513319895)
     northwest = [convert(p) for p in link['geometry']]
     northwest.sort(key=lambda p: -math.hypot(*p))
+    # Les accès asphaltés sont les ways OSM qui relient chaque parking à la route.
+    accesses = []
+    for access_id in ACCESS_WAYS:
+        way = next(e for e in osm if e['id'] == access_id)
+        accesses.append({'id': access_id,
+                         'points': [[round(x,2),round(z,2)] for x,z in map(convert, way['geometry'])]})
     result = {'parking': [[round(x,2),round(z,2)] for x,z in map(convert, parking['geometry'])],
               'parking_upper': [[round(x,2),round(z,2)] for x,z in map(convert, parking_upper['geometry'])],
               'road_northwest': [[round(x,2),round(z,2)] for x,z in northwest],
+              'accesses': accesses,
               'buildings': buildings, 'walls': walls, 'trees': trees, 'seed': TREE_SEED}
     (OUT / 'features.json').write_text(json.dumps(result, separators=(',', ':'))+'\n')
     print('Bâtiments', len(buildings), 'murs/barrières', len(walls), 'arbres', len(trees),
