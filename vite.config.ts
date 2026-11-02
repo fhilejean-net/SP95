@@ -17,5 +17,16 @@ export default defineConfig({
     target: 'es2022',
     chunkSizeWarningLimit: 6000,
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Three et Rapier changent rarement : les garder dans leurs propres
+        // fichiers les met en cache entre deux versions du jeu et les
+        // télécharge en parallèle du code de la piste.
+        manualChunks: {
+          three: ['three'],
+          rapier: ['@dimforge/rapier3d-compat'],
+        },
+      },
+    },
   },
 });
