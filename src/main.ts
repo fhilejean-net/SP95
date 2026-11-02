@@ -51,7 +51,7 @@ import { buildFlatCircuit } from './world/flatCircuit.ts';
 import { TRACK, trackDistanceAt, trackSurfaceAt } from './world/trackLayout.ts';
 import { insidePit } from './world/pitLayout.ts';
 import { insideDriftPad } from './world/driftPad.ts';
-import { MAPS, MAP_ID, mapUrl, type MapId } from './game/maps.ts';
+import { isMenuOnly, MAP_ID, MAPS, mapUrl, MENU_ROUTES, type MapId } from './game/maps.ts';
 import { BUILDINGS } from './world/buildings.ts';
 import { buildStreetKit, type StreetKitSummary } from './world/streetkit.ts';
 import { buildPuddles, type PuddleField } from './world/puddles.ts';
@@ -134,7 +134,7 @@ const MAP = MAP_ID;
  * vers la carte choisie. Charger le monde avant le premier clic coûtait
  * plusieurs secondes pour un écran qu'on quitte aussitôt.
  */
-const MENU_ONLY = !new URLSearchParams(window.location.search).has('map');
+const MENU_ONLY = isMenuOnly(window.location.search);
 const SUZUKA_MAP = MAP === 'suzuka';
 /** La piste dessinée par le jeu : plate de bout en bout, sans dalle importée. */
 const FLAT_MAP = MAP === 'sp95';
@@ -944,6 +944,13 @@ async function boot() {
   const hud = new Hud();
   const colStage = mollendruz ? new ColStage(mollendruz.route.samples.filter((p) => p.s >= 0), mollendruz.route.end_s) : null;
   const colTimer = document.getElementById('col-timer')!;
+  /** Le chrono se réécrit à chaque image : ne toucher au DOM que s'il change. */
+  let lastColTimer = '';
+  const setColTimer = (text: string): void => {
+    if (text === lastColTimer) return;
+    lastColTimer = text;
+    colTimer.textContent = text;
+  };
   // La mini-carte de la piste : son propre cadrage, sinon le tour tient dans
   // quelques pixels au centre de l'échelle de la ville.
   if (FLAT_MAP) hud.setCircuit(TRACK.samples);
@@ -1170,7 +1177,7 @@ async function boot() {
     freeSpawn = target;
     colStage?.reset();
     colTimer.classList.toggle('hidden', !colStage);
-    if (colStage) colTimer.textContent = 'Départ en attente';
+    if (colStage) setColTimer('Départ en attente');
     paused = false;
     menu.classList.add('hidden');
     pause.classList.add('hidden');
@@ -2706,8 +2713,11 @@ async function boot() {
       const event = colStage.update(dt, pos.x, pos.z);
       if (event === 'start') hud.flash('Départ du col', { duration: 1200 });
       if (event === 'finish') hud.flash(`Arrivée · ${formatLap(colStage.elapsed)}`, { accent: true, duration: 4000 });
-      colTimer.textContent = colStage.state === 'waiting' ? 'Départ en attente' :
-        `${colStage.state === 'finished' ? 'Arrivée' : 'Col'} · ${formatLap(colStage.elapsed)}`;
+      setColTimer(
+        colStage.state === 'waiting'
+          ? 'Départ en attente'
+          : `${colStage.state === 'finished' ? 'Arrivée' : 'Col'} · ${formatLap(colStage.elapsed)}`,
+      );
     }
     if (replay) {
       if (!paused) {
@@ -3181,30 +3191,16 @@ declare global {
  * de sa session : c'est le chargement de cette URL qui construit le monde.
  */
 function wireMenuOnly(): void {
-  const go = (params: Record<string, string>): void => {
-    const url = new URL(window.location.href);
-    // On conserve les réglages déjà dans l'URL (qualité, cadence, lumière) :
-    // les effacer faisait perdre `?fps=` et `?fx=` au premier clic.
-    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-    window.location.href = url.toString();
-  };
-  const on = (id: string, params: Record<string, string>): void => {
-    document.getElementById(id)?.addEventListener('click', () => go(params));
-  };
   // Chaque entrée porte sa carte : sans `map`, la navigation reviendrait sur
-  // cet écran vide (MENU_ONLY teste justement l'absence de carte).
-  on('btn-free', { map: 'sp95', start: 'free' });
-  on('btn-race', { map: 'ville', start: 'race' });
-  on('btn-circuit', { map: 'suzuka', start: 'free' });
-  on('btn-flat', { map: 'sp95', start: 'free' });
-  on('btn-rally', { map: 'ville', start: 'free', spawn: 'rally' });
-  on('btn-sommet', { map: 'ville', start: 'free', spawn: 'summit' });
-  on('btn-colmap', { map: 'col', start: 'free' });
-  on('btn-moto', { map: 'ville', start: 'moto' });
-  // Showroom, atelier et son vivent sur la piste plate : y aller les ouvre.
-  on('btn-cars', { map: 'sp95', open: 'showroom' });
-  on('btn-garage', { map: 'sp95', open: 'garage' });
-  on('btn-sound', { map: 'sp95', open: 'sound' });
+  // cet écran vide (MENU_ONLY teste justement l'absence de carte). `mapUrl`
+  // efface la session précédente, pour qu'un `?start=` resté dans l'URL ne
+  // suive pas d'une carte à l'autre.
+  for (const [id, route] of Object.entries(MENU_ROUTES)) {
+    const { map, ...launch } = route;
+    document.getElementById(id)?.addEventListener('click', () => {
+      window.location.href = mapUrl(map, window.location.href, launch);
+    });
+  }
 }
 
 boot().catch((error) => {

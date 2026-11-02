@@ -41,6 +41,25 @@ export const MAPS: Record<MapId, MapInfo> = {
 
 export const DEFAULT_MAP: MapId = 'ville';
 
+/**
+ * Destination de chaque bouton du menu d'accueil. Les boutons y puisent leur
+ * carte et leur session, au lieu de recopier l'information : deux entrées qui
+ * visent la même session sont un défaut à corriger, pas une variante.
+ */
+export const MENU_ROUTES = {
+  'btn-free': { map: 'ville', start: 'free' },
+  'btn-race': { map: 'ville', start: 'race' },
+  'btn-circuit': { map: 'suzuka', start: 'free' },
+  'btn-flat': { map: 'sp95', start: 'free' },
+  'btn-colmap': { map: 'col', start: 'free' },
+  'btn-rally': { map: 'ville', start: 'free', spawn: 'rally' },
+  'btn-sommet': { map: 'ville', start: 'free', spawn: 'summit' },
+  'btn-moto': { map: 'ville', start: 'moto' },
+  'btn-cars': { map: 'sp95', open: 'showroom' },
+  'btn-garage': { map: 'sp95', open: 'garage' },
+  'btn-sound': { map: 'sp95', open: 'sound' },
+} as const satisfies Record<string, { map: MapId } & Record<string, string>>;
+
 /** Carte demandée dans une query string ; la ville pour tout le reste. */
 export function mapFromSearch(search: string): MapId {
   const asked = new URLSearchParams(search).get('map');
@@ -60,6 +79,16 @@ export function mapUrl(id: MapId, href: string, launch: Record<string, string> =
   for (const key of ['start', 'spawn', 'open']) url.searchParams.delete(key);
   for (const [key, value] of Object.entries(launch)) url.searchParams.set(key, value);
   return url.toString();
+}
+
+/**
+ * L'écran d'accueil est l'URL nue. Une carte demandée, ou une session à
+ * lancer (`start`, `spawn`, `open`), construisent le monde : sinon
+ * `?start=free` sans `map` renvoyait sur le menu au lieu de démarrer la ville.
+ */
+export function isMenuOnly(search: string): boolean {
+  const query = new URLSearchParams(search);
+  return !query.has('map') && !query.has('start') && !query.has('spawn') && !query.has('open');
 }
 
 /** Carte de la session : l'URL, lue une fois au chargement. */

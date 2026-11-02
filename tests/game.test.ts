@@ -6,7 +6,7 @@ import { StuntScore } from '../src/game/stunt.ts';
 import { Race } from '../src/game/race.ts';
 import { BIKE_DEFAULT_SETUP, bikePresetLabel } from '../src/game/bikeTuning.ts';
 import { fadeGround, trackUv } from '../src/world/circuit.ts';
-import { MAP_ID, mapFromSearch, mapUrl } from '../src/game/maps.ts';
+import { MAP_ID, MENU_ROUTES, isMenuOnly, mapFromSearch, mapUrl } from '../src/game/maps.ts';
 import { CARS } from '../src/game/cars.ts';
 import { pickWheels } from '../src/render/wheels.ts';
 // Le circuit est posé par world/circuit.ts au chargement : ces tests vérifient
@@ -422,6 +422,36 @@ test('the map is chosen in the URL, and the switch keeps the rest', () => {
   const back = new URL(mapUrl('ville', 'https://sp95.test/?map=col&start=free&spawn=rally'));
   assert.equal(back.searchParams.has('start'), false);
   assert.equal(back.searchParams.has('spawn'), false);
+});
+
+test('chaque entrée du menu d’accueil vise sa propre session', () => {
+  const seen = new Map<string, string>();
+  for (const [id, route] of Object.entries(MENU_ROUTES)) {
+    const { map, ...launch } = route;
+    const url = new URL(mapUrl(map, 'https://sp95.test/?fx=low', launch));
+    // Les réglages de l'URL survivent au clic, sans quoi `?fx=` se perdrait.
+    assert.equal(url.searchParams.get('fx'), 'low');
+    assert.equal(
+      seen.has(url.search),
+      false,
+      `${id} vise la même session que ${seen.get(url.search)}`,
+    );
+    seen.set(url.search, id);
+  }
+  // « Conduite libre » est la ville ; la piste plate a son propre bouton.
+  assert.equal(MENU_ROUTES['btn-free'].map, 'ville');
+  assert.equal(MENU_ROUTES['btn-flat'].map, 'sp95');
+});
+
+test('l’écran d’accueil ne s’affiche que sur une URL nue', () => {
+  assert.equal(isMenuOnly(''), true);
+  assert.equal(isMenuOnly('?fx=low'), true);
+  // Une session à lancer construit le monde, même sans `map` : la ville est
+  // la carte par défaut, et `mapUrl` omet justement son paramètre.
+  assert.equal(isMenuOnly('?start=free'), false);
+  assert.equal(isMenuOnly('?spawn=rally'), false);
+  assert.equal(isMenuOnly('?open=showroom'), false);
+  assert.equal(isMenuOnly('?map=ville'), false);
 });
 
 test('les slicks de course collent plus que la monte de route', () => {
