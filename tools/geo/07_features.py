@@ -18,6 +18,9 @@ TREE_ROAD_CLEARANCE_M = 8
 TREE_LIMIT = 5000
 TREE_SEED = 151
 ACCESS_WAYS = (244898032, 94834634, 480023950)
+HOTEL_WAY_ID = 258637487
+# Contour de la place en béton devant le vieil hôtel (way 258637487), côté hôtel.
+PLAZA_OUTLINE = [(106.1, 72.5), (103.9, 77.8), (119.1, 84.0), (120.6, 81.4), (136.6, 87.3), (136.2, 89.9), (142.5, 92.0), (151.0, 93.6), (151.8, 88.0), (134.0, 83.5)]
 DEFAULT_BUILDING_HEIGHT_M = 7
 FLOOR_HEIGHT_M = 3
 WALL_TYPES = {'guard_rail', 'wall', 'fence', 'retaining_wall'}
@@ -53,7 +56,8 @@ def main():
             shape = shape.buffer(0)
         if shape.is_empty or not corridor.intersects(shape):
             continue
-        if tags.get('building') and shape.distance(end) < BUILDING_END_RADIUS_M:
+        # L'hôtel de la place est gardé même loin de l'arrivée.
+        if tags.get('building') and (item['id'] == HOTEL_WAY_ID or shape.distance(end) < BUILDING_END_RADIUS_M):
             try:
                 height = float(tags.get('height', '').replace(' m', ''))
             except ValueError:
@@ -97,7 +101,9 @@ def main():
         way = next(e for e in osm if e['id'] == access_id)
         accesses.append({'id': access_id,
                          'points': [[round(x,2),round(z,2)] for x,z in map(convert, way['geometry'])]})
+    # Place en béton devant l'hôtel (côté hôtel de la route, sans recouvrir la façade).
     result = {'parking': [[round(x,2),round(z,2)] for x,z in map(convert, parking['geometry'])],
+              'plaza': [[round(x,2),round(z,2)] for x,z in PLAZA_OUTLINE],
               'parking_upper': [[round(x,2),round(z,2)] for x,z in map(convert, parking_upper['geometry'])],
               'road_northwest': [[round(x,2),round(z,2)] for x,z in northwest],
               'accesses': accesses,

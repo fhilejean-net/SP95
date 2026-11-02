@@ -31,7 +31,7 @@ export interface ColPoint { s: number; x: number; y: number; z: number; width: n
 interface ColRoute { end_s: number; samples: ColPoint[]; origin: { E0: number; N0: number; H0: number } }
 interface Chunk { x: number; z: number; width: number; depth: number; nx: number; nz: number; spacing: number; offset: number; bytes: number }
 interface TerrainHeader { chunkSize: number; file: string; heightOffset: number; heightScale: number; bounds: number[]; image: string; imageBounds: number[]; chunks: Chunk[] }
-interface Features { parking: ParkingPoint[]; parking_upper?: ParkingPoint[]; road_northwest?: ParkingPoint[]; accesses?: { id: number; points: ParkingPoint[] }[]; buildings: { id: number; height: number; points: number[][] }[]; walls: { kind: string; points: number[][] }[]; trees: number[][] }
+interface Features { parking: ParkingPoint[]; parking_upper?: ParkingPoint[]; plaza?: ParkingPoint[]; road_northwest?: ParkingPoint[]; accesses?: { id: number; points: ParkingPoint[] }[]; buildings: { id: number; height: number; points: number[][] }[]; walls: { kind: string; points: number[][] }[]; trees: number[][] }
 interface ColHit { s: number; y: number; distance: number; signed: number; width: number; bank: number }
 
 export function triangleHeight(h00:number,h10:number,h01:number,h11:number,tx:number,tz:number): number {
@@ -213,6 +213,8 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
   };
   const parkingOutlines: ParkingPoint[][] = [features.parking];
   if (features.parking_upper) parkingOutlines.push(features.parking_upper);
+  // Place en béton devant le vieil hôtel : même dalle conforme que les parkings.
+  if (features.plaza) parkingOutlines.push(features.plaza);
   const insideParking = (outline: ParkingPoint[], x: number, z: number) => {
     let inside=false;
     for(let i=0,j=outline.length-1;i<outline.length;j=i++) {
@@ -356,7 +358,7 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
     const parkingGeo = parkingPadGeometry(outline, sample, { lift: PARKING_LIFT });
     const pp = parkingGeo.getAttribute('position');
     const parkingMesh = new THREE.Mesh(parkingGeo, mats.asphaltPad);
-    parkingMesh.name = index === 0 ? 'mollendruz-parking' : 'mollendruz-parking-upper';
+    parkingMesh.name = index === 0 ? 'mollendruz-parking' : index === 1 ? 'mollendruz-parking-upper' : 'mollendruz-plaza';
     scene.add(parkingMesh);
     const parkingIdx = parkingGeo.getIndex();
     if (parkingIdx) {
