@@ -861,6 +861,12 @@ body.touch #touch-cars-btn {
 body.touch #touch-menu-btn { left: 12px; min-width: 62px; }
 body.touch #touch-cars-btn { left: 82px; min-width: 76px; border-color: rgba(242, 163, 60, 0.55); color: #ffd08a; }
 
+/* Sans ça, la rangée de modes passait sous les boutons tactiles MENU/VOITURE
+   (77 × 27 px de recouvrement à 390 px) : elle descend d'une hauteur de bouton. */
+body.touch #drive-modes {
+  margin-top: 52px;
+}
+
 body.touch #hint {
   display: none;
 }
@@ -1655,10 +1661,12 @@ body.touch #stunt-panel {
     grid-template-columns: 1fr;
   }
 
+  /* Huit onglets ne tiennent pas sur une ligne de téléphone : ils passent à
+     la ligne au lieu de rester cachés derrière un défilement horizontal. */
   .garage-tabs {
     flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
+    flex-wrap: wrap;
+    overflow: visible;
   }
 
   .garage-tabs .tab em {
