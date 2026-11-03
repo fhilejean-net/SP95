@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{NAME}}</title>
+  <meta name="description" content="{{DESCRIPTION}}">
+  <link rel="stylesheet" href="/v/{{ID}}/styles.css">
+  <script src="/track.js" defer></script>
+  <script src="/landing.js" defer></script>
+</head>
+<body data-venture="{{ID}}">
+  <header class="nav">
+    <a class="logo" href="/v/{{ID}}/">{{NAME}}</a>
+    <span class="status">Nouveau</span>
+  </header>
+  <main>
+    <section class="hero">
+      <p class="kicker">Venture en test</p>
+      <h1>{{NAME}}</h1>
+      <p class="lede">{{DESCRIPTION}}</p>
+      <a class="button" href="#contact">Laisser mon email</a>
+      <p class="fine">Aucun paiement demandé. Aucune promesse de résultat.</p>
+    </section>
+    <section class="contact" id="contact">
+      <h2>Suivre le lancement</h2>
+      <p>Laisse ton adresse pour recevoir les nouvelles. Confirmation par email, désinscription en un clic.</p>
+      <form data-signup method="post" action="/api/ventures/{{ID}}/signup">
+        <label for="email">Ton adresse email</label>
+        <div class="field-row">
+          <input id="email" name="email" type="email" autocomplete="email" required placeholder="toi@exemple.com">
+          <button type="submit">Recevoir les nouvelles</button>
+        </div>
+        <label class="consent"><input type="checkbox" name="consent" required> J’accepte de recevoir ces emails et j’ai lu la <a href="/legal/privacy?venture={{ID}}">politique de confidentialité</a>.</label>
+        <p class="form-status" data-form-status role="status"></p>
+      </form>
+    </section>
+  </main>
+  <footer>
+    <a href="/legal/mentions?venture={{ID}}">Mentions légales</a>
+    <a href="/legal/privacy?venture={{ID}}">Confidentialité</a>
+    <a href="/legal/terms?venture={{ID}}">Conditions</a>
+  </footer>
+</body>
+</html>

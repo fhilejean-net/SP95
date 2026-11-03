@@ -13,3 +13,11 @@ artifacts/
 # Bibliothèques système de Chromium extraites sans root, et cache apt local.
 .sysroot/
 .apt/
+
+# Cash Factory : secrets, données clients et rapports financiers restent hors Git.
+.env
+.env.*
+!.env.example
+factory/data/
+reports/*.md
+!reports/.gitkeep

@@ -1,0 +1,36 @@
+:root {
+  --ink: #16150f;
+  --paper: #f4f0e5;
+  --acid: #d6f25a;
+  --line: rgba(22, 21, 15, 0.18);
+  --display: Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); line-height: 1.55; }
+a { color: inherit; }
+.nav { display: flex; justify-content: space-between; align-items: center; padding: 22px clamp(18px, 5vw, 72px); border-bottom: 1px solid var(--ink); }
+.logo { font-family: var(--display); font-size: 28px; text-decoration: none; }
+.status { font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em; border: 1px solid var(--ink); padding: 4px 8px; }
+main { width: min(1080px, calc(100% - 36px)); margin: 0 auto; }
+.hero { padding: clamp(70px, 13vw, 170px) 0; }
+.kicker { text-transform: uppercase; letter-spacing: 0.15em; font-size: 11px; color: #6f6a5c; }
+h1, h2 { font-family: var(--display); letter-spacing: -0.045em; line-height: 0.98; margin: 0; }
+h1 { font-size: clamp(58px, 11vw, 130px); }
+h2 { font-size: clamp(32px, 4vw, 50px); margin-bottom: 18px; }
+.lede { max-width: 55ch; font-size: clamp(17px, 2vw, 22px); color: #454136; }
+.button { display: inline-flex; margin: 22px 0 12px; background: var(--acid); border: 1px solid var(--ink); padding: 14px 20px; text-decoration: none; font-weight: 700; box-shadow: 4px 4px 0 var(--ink); }
+.fine { font-size: 12px; color: #6f6a5c; }
+.contact { border-top: 1px solid var(--ink); padding: 50px 0 90px; }
+.contact p { max-width: 55ch; }
+form { margin-top: 26px; }
+label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 7px; }
+.field-row { display: flex; gap: 10px; max-width: 650px; }
+input[type="email"] { flex: 1; min-width: 0; padding: 13px 14px; border: 1px solid var(--ink); background: #fffdf6; font: inherit; }
+button { border: 1px solid var(--ink); background: var(--ink); color: var(--paper); padding: 13px 17px; font: inherit; font-weight: 700; cursor: pointer; }
+button:hover { background: #ee6a3a; }
+.consent { display: flex; gap: 8px; align-items: start; max-width: 650px; margin-top: 12px; font-weight: 400; }
+.consent input { margin-top: 4px; }
+.form-status { min-height: 1.4em; font-weight: 700; font-size: 13px; }
+footer { display: flex; gap: 18px; flex-wrap: wrap; padding: 24px clamp(18px, 5vw, 72px); border-top: 1px solid var(--line); font-size: 13px; color: #6f6a5c; }
+@media (max-width: 600px) { .field-row { flex-direction: column; } }

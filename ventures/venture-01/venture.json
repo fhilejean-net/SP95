@@ -1,0 +1,27 @@
+{
+  "id": "venture-01",
+  "slug": "memo",
+  "name": "Mémo",
+  "description": "Application de révision par cartes, avec comptes, données D1/R2 et huit modes d’entraînement. Le produit existe déjà dans le dépôt privé fhilejean-net/M-mo ; cette landing le présente sans le dupliquer.",
+  "status": "legacy",
+  "kind": "external",
+  "createdAt": "2026-10-22T16:08:02.000Z",
+  "url": "https://site-a7d55785b31044ec8268038209f4d400.freebuff.page",
+  "sourceRepo": "fhilejean-net/M-mo",
+  "landing": "landing",
+  "product": {
+    "name": "Mémo",
+    "model": "free",
+    "priceCents": 0,
+    "currency": "EUR",
+    "stripePriceId": ""
+  },
+  "budget": {
+    "hours": 0,
+    "moneyCents": 0
+  },
+  "milestones": [],
+  "tracking": {
+    "enabled": true
+  }
+}

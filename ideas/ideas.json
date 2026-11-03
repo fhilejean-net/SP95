@@ -1,0 +1,96 @@
+{
+  "ideas": [
+    {
+      "title": "Générateur de fiches de révision pour formateurs indépendants",
+      "pitch": "Transformer un PDF de cours en paquets de cartes révisables, exportables, avec contrôle du formateur.",
+      "target": "Formateurs, coaches et petits organismes de formation",
+      "evidence": "Pas de preuve collectée : aucun entretien ni test de prix réalisé.",
+      "regulated": false,
+      "scores": {
+        "pain": 8,
+        "proof": 3,
+        "buildSpeed": 6,
+        "supportSimplicity": 6,
+        "seo": 6,
+        "automation": 8
+      },
+      "score": 6.2,
+      "source": "seed",
+      "createdAt": "2026-11-03T15:31:08.001Z"
+    },
+    {
+      "title": "Audit de landing page en 48 heures",
+      "pitch": "Un rapport priorisé et une version corrigée de la page, livrés par un opérateur outillé.",
+      "target": "Indépendants et petites SaaS qui lancent une offre",
+      "evidence": "Pas de preuve collectée : aucun devis ni précommande signé.",
+      "regulated": false,
+      "scores": {
+        "pain": 7,
+        "proof": 3,
+        "buildSpeed": 9,
+        "supportSimplicity": 4,
+        "seo": 5,
+        "automation": 7
+      },
+      "score": 5.9,
+      "source": "seed",
+      "createdAt": "2026-11-03T15:31:08.001Z"
+    },
+    {
+      "title": "Veille de conformité RGPD pour petites structures",
+      "pitch": "Un tableau de bord des obligations et des échéances, sans conseil juridique personnalisé.",
+      "target": "PME de 5 à 50 personnes sans DPO interne",
+      "evidence": "Pas de preuve collectée ; domaine réglementé, à valider avec un juriste.",
+      "regulated": true,
+      "scores": {
+        "pain": 8,
+        "proof": 5,
+        "buildSpeed": 5,
+        "supportSimplicity": 3,
+        "seo": 7,
+        "automation": 6
+      },
+      "score": 6,
+      "source": "seed",
+      "createdAt": "2026-11-03T15:31:08.001Z"
+    },
+    {
+      "title": "Pack de prompts et contrôles pour équipes support",
+      "pitch": "Des modèles testés pour répondre aux tickets, avec garde-fous et mesures de qualité.",
+      "target": "Équipes support de 2 à 20 personnes",
+      "evidence": "Pas de preuve collectée : aucun client interrogé.",
+      "regulated": false,
+      "scores": {
+        "pain": 6,
+        "proof": 4,
+        "buildSpeed": 9,
+        "supportSimplicity": 7,
+        "seo": 5,
+        "automation": 8
+      },
+      "score": 6.3,
+      "source": "seed",
+      "createdAt": "2026-11-03T15:31:08.001Z"
+    },
+    {
+      "title": "Page de tarification claire pour micro-SaaS",
+      "pitch": "Un service qui transforme une grille de prix confuse en page lisible et testable.",
+      "target": "Fondateurs de micro-SaaS",
+      "evidence": "Pas de preuve collectée : aucune analyse de conversion disponible.",
+      "regulated": false,
+      "scores": {
+        "pain": 6,
+        "proof": 3,
+        "buildSpeed": 8,
+        "supportSimplicity": 6,
+        "seo": 6,
+        "automation": 7
+      },
+      "score": 5.9,
+      "source": "seed",
+      "createdAt": "2026-11-03T15:31:08.001Z"
+    }
+  ],
+  "lastGeneratedAt": "2026-11-03T15:31:08.001Z",
+  "lastGeneratedWeek": "2026-W45"
+}

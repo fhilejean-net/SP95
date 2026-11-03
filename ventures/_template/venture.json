@@ -1,0 +1,30 @@
+{
+  "id": "template-venture",
+  "slug": "template-venture",
+  "name": "{{NAME}}",
+  "description": "{{DESCRIPTION}}",
+  "status": "draft",
+  "kind": "internal",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "url": "",
+  "landing": "landing",
+  "product": {
+    "name": "{{NAME}}",
+    "model": "free",
+    "priceCents": 0,
+    "currency": "EUR",
+    "stripePriceId": ""
+  },
+  "budget": {
+    "hours": 8,
+    "moneyCents": 0
+  },
+  "milestones": [
+    { "metric": "visitors", "target": 100, "days": 14 },
+    { "metric": "signups", "target": 10, "days": 21 },
+    { "metric": "payments", "target": 1, "days": 45 }
+  ],
+  "tracking": {
+    "enabled": true
+  }
+}

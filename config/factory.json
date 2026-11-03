@@ -1,0 +1,13 @@
+{
+  "autonomyLevel": 1,
+  "paused": false,
+  "currency": "EUR",
+  "timezone": "Europe/Zurich",
+  "dailyReportHour": 8,
+  "weeklyIdeasDay": 1,
+  "weeklyIdeasHour": 9,
+  "spendCapDailyCents": 0,
+  "spendCapTotalCents": 0,
+  "baseUrl": "http://localhost:4100",
+  "reportRecipient": ""
+}

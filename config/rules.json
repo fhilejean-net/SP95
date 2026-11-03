@@ -1,0 +1,11 @@
+{
+  "defaultBudgetHours": 8,
+  "defaultBudgetCents": 0,
+  "milestones": [
+    { "metric": "visitors", "target": 100, "days": 14 },
+    { "metric": "signups", "target": 10, "days": 21 },
+    { "metric": "payments", "target": 1, "days": 45 }
+  ],
+  "scaleMrrCents": 10000,
+  "killMinVisitors": 50
+}
