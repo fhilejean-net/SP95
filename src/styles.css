@@ -1560,14 +1560,24 @@ body.touch .touch-hint { display: inline; }
   color: rgba(154, 163, 173, 0.75);
 }
 
+.car-card {
+  border-left: 3px solid transparent;
+}
+
 .car-card.shown {
   border-color: rgba(242, 163, 60, 0.42);
+  border-left-color: var(--accent);
   background: rgba(242, 163, 60, 0.07);
 }
 
-.car-card.selected strong::after {
+/* Le clic choisit : la coche marque la voiture que « Conduire » lancera. */
+.car-card.shown strong::after {
   content: " ✓";
   color: var(--accent);
+}
+
+.car-card.selected em {
+  color: rgba(242, 163, 60, 0.9);
 }
 
 .car-card.loading {

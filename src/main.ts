@@ -1134,6 +1134,10 @@ async function boot() {
       vehicle.step(FIXED, { throttle: 0, brake: 0, steer: 0, handbrake: true }, world);
       world.step();
     }
+    // Ces soixante pas au frein à main ont laissé l'antipatinage à ~5 % : on le
+    // réarme avant de rendre le volant, sinon le premier coup de gaz patine.
+    carVehicle.resetAssists();
+    vehicle.body.wakeUp();
     const p = vehicle.position;
     const r = vehicle.state.rotation;
     physPrevious.x = p.x;

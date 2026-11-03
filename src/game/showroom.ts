@@ -49,12 +49,6 @@ export class Showroom {
       this.highlight(button.getAttribute('data-car') as CarId);
       this.pick();
     });
-    this.list.addEventListener('pointerenter', (event) => {
-      const card = (event.target as HTMLElement).closest('button[data-car]');
-      if (!card) return;
-      const id = card.getAttribute('data-car') as CarId;
-      if (id !== this.selection) this.highlight(id);
-    }, true);
     this.pickButton.addEventListener('click', () => this.pick());
     this.drive.addEventListener('click', () => {
       const id = this.selection;
@@ -83,7 +77,8 @@ export class Showroom {
   /** La voiture demandée est chargée : la carte passe au vert. */
   setCar(car: CarDef): void {
     this.car = car;
-    this.selection = car.id;
+    // La sélection reste celle du joueur : un chargement lancé plus tôt ne doit
+    // pas ramener la fiche sur la voiture qui vient d'arriver.
     this.loadingCars.delete(car.id);
     if (this.pending === car.id) this.pending = null;
     if (this.isOpen) this.refresh();
@@ -111,7 +106,7 @@ export class Showroom {
       const index = CARS.findIndex((entry) => entry.id === this.selection);
       const next = CARS[(index + step + CARS.length) % CARS.length];
       // Parcourir ne charge rien : la vitre suit le choix au clic suivant.
-      this.highlight(next.id);
+      this.highlight(next.id, true);
       event.preventDefault();
       return;
     }
@@ -124,12 +119,12 @@ export class Showroom {
     }
   }
 
-  /** Met une voiture en avant, sans la charger (survol, flèches). */
-  private highlight(id: CarId): void {
+  /** Met une voiture en avant, sans la charger (flèches ou clic). */
+  private highlight(id: CarId, reveal = false): void {
     if (!CARS.some((entry) => entry.id === id) || id === this.selection) return;
     this.selection = id;
     this.refresh();
-    this.reveal();
+    if (reveal) this.reveal();
   }
 
   /** Charge la voiture mise en avant ; l'écran reste ouvert. */
@@ -172,6 +167,11 @@ export class Showroom {
       card.className = classes.join(' ');
       const subtitle = card.querySelector('span');
       if (subtitle) subtitle.textContent = loading ? 'Chargement…' : car.detail;
+      // La voiture au volant n'est pas forcément celle que l'on regarde.
+      const tag = card.querySelector('em');
+      if (tag) tag.textContent = `${car.origin ?? 'SP95'}${id === this.car.id ? ' · au volant' : ''}`;
+      if (id === this.selection) card.setAttribute('aria-current', 'true');
+      else card.removeAttribute('aria-current');
     }
   }
 

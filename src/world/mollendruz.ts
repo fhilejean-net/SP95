@@ -279,7 +279,10 @@ export async function buildMollendruz(scene: THREE.Scene, world: RAPIER.World, m
     return false;
   });
   const surface = (x: number, z: number) => {
-    const hit=roadAt(x,z); return (hit && hit.distance <= hit.width/2) || inParking(x,z) || inLayby(x,z) || inAccess(x,z) ? 'asphalte' as const : 'herbe' as const;
+    const hit=roadAt(x,z);
+    // Même tolérance que `surfaceAt` hors col : un pneu posé sur la rive de
+    // l'asphalte ne doit pas passer d'un coup sur l'herbe (grip 0,47).
+    return (hit && hit.distance <= hit.width/2 + 0.45) || inParking(x,z) || inLayby(x,z) || inAccess(x,z) ? 'asphalte' as const : 'herbe' as const;
   };
   const floor = (x: number, z: number) => {    const hit = roadAt(x, z);
     if (hit && hit.distance <= hit.width/2) return hit.y;

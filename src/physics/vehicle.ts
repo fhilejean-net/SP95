@@ -500,6 +500,16 @@ export class Vehicle {
     return this.flippedTimer > 1.4;
   }
 
+  /**
+   * Réarme l'antipatinage après la pose au frein à main de `setCarPose` :
+   * soixante pas avec `handbrake: true` laissaient son autorité autour de 5 %,
+   * et le premier coup de gaz partait presque sans assist — les roues arrière
+   * patinaient.
+   */
+  resetAssists(): void {
+    this.tcAuthority = 1;
+  }
+
   respawn(x: number, y: number, z: number, heading: number): void {
     this.body.setTranslation({ x, y, z }, true);
     this.body.setRotation(
