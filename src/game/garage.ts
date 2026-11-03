@@ -44,6 +44,7 @@ export class Garage {
     private car: CarDef,
     private readonly onChange: (setup: Setup) => void,
     private readonly onBikeChange: (setup: BikeSetup) => void,
+    private readonly onClose: () => void = () => {},
   ) {
     this.setup = { ...setup };
     this.bikeSetup = { ...bikeSetup };
@@ -116,6 +117,7 @@ export class Garage {
 
   close(): void {
     this.overlay.classList.add('hidden');
+    this.onClose();
   }
 
   private get categories() {

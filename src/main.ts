@@ -962,8 +962,6 @@ async function boot() {
   const audio = new CarAudio();
   /** Car and bike keep their own balance; the master is shared. */
   let vehicleMixes = loadVehicleMixes();
-  /** Overlay hidden while the sound panel is up, restored when it closes. */
-  let soundReturn: HTMLElement | null = null;
   const audioPanel = new AudioPanel(
     audio.soundMix,
     (channel, value) => {
@@ -1614,7 +1612,28 @@ async function boot() {
     for (const channel of SOUND_CHANNELS) audio.setChannel(channel, mix[channel]);
   }
 
-  const garage = new Garage(setup, bikeSetup, carDef, applySetup, applyBikeSetup);
+  /** Écran masqué derrière un panneau (menu ou pause), rendu à sa fermeture. */
+  let panelReturn: HTMLElement | null = null;
+
+  /**
+   * Un seul panneau à la fois : le menu d'accueil ou la pause s'efface pendant
+   * qu'atelier, showroom ou mixage est ouvert, puis revient tel quel.
+   */
+  function openPanel(): void {
+    panelReturn = null;
+    if (mode === 'menu' && !menu.classList.contains('hidden')) panelReturn = menu;
+    else if (paused && !pause.classList.contains('hidden')) panelReturn = pause;
+    panelReturn?.classList.add('hidden');
+  }
+
+  function closePanel(): void {
+    panelReturn?.classList.remove('hidden');
+    panelReturn = null;
+  }
+
+  const garage = new Garage(setup, bikeSetup, carDef, applySetup, applyBikeSetup, () =>
+    closePanel(),
+  );
   // Le showroom choisit la voiture ; l'atelier ne s'occupe plus que des pièces.
   const showroom = new Showroom(
     setup,
@@ -1625,9 +1644,7 @@ async function boot() {
     (id) => {
       void driveCar(id);
     },
-    () => {
-      if (paused && mode !== 'menu') pause.classList.remove('hidden');
-    },
+    () => closePanel(),
   );
 
   /** Swaps the model, then the physics footprint that goes with it. */
@@ -1664,6 +1681,7 @@ async function boot() {
 
   function openGarage(): void {
     if (mode !== 'menu' && !paused) togglePause();
+    openPanel();
     // The panel tunes whatever is in the garage: two wheels or four.
     if (ridingBike) garage.openBike(bikeSetup);
     else garage.open(setup);
@@ -1672,10 +1690,10 @@ async function boot() {
   /** L'écran de sélection : il montre la voiture, l'atelier la règle. */
   function openShowroom(): void {
     if (mode !== 'menu' && !paused) togglePause();
-    // Le showroom est au premier plan, pas dessiné à travers le menu pause.
-    // Garder la voiture en pause pendant le choix évite aussi qu'elle reparte
-    // sous le doigt lorsque le modèle sélectionné finit de charger.
-    if (paused) pause.classList.add('hidden');
+    // Le showroom est au premier plan : menu ou pause s'effacent derrière lui,
+    // sinon la carte vitrée laisse voir leurs boutons. Garder la voiture en
+    // pause pendant le choix évite aussi qu'elle reparte sous le doigt.
+    openPanel();
     showroom.open(setup);
   }
 
@@ -1690,19 +1708,13 @@ async function boot() {
 
   function openSound(): void {
     if (mode !== 'menu' && !paused) togglePause();
-    // One panel at a time: the menu behind the mix would otherwise show
-    // through the card and blur its own buttons.
-    soundReturn = null;
-    if (mode === 'menu' && !menu.classList.contains('hidden')) soundReturn = menu;
-    else if (paused && !pause.classList.contains('hidden')) soundReturn = pause;
-    soundReturn?.classList.add('hidden');
+    openPanel();
     audioPanel.open(audio.soundMix);
   }
 
   function closeSound(): void {
     audioPanel.close();
-    soundReturn?.classList.remove('hidden');
-    soundReturn = null;
+    closePanel();
   }
 
   /** Bascule de carte : un rechargement, la ville ne suit pas la piste. */
@@ -1733,7 +1745,6 @@ async function boot() {
     const labels: Record<string, string> = {
       'btn-free': 'Piste · ligne des stands',
       'btn-pause-free': 'Piste · ligne des stands',
-      'btn-pause-col': 'Col de nuit',
       'btn-circuit': 'Retour en ville',
     };
     if (FLAT_MAP) {
@@ -1756,7 +1767,6 @@ async function boot() {
     const labels: Record<string, string> = {
       'btn-free': 'Col · pied de la route',
       'btn-pause-free': 'Col · pied de la route',
-      'btn-pause-col': 'Col · pied de la route',
       'btn-circuit': 'Retour en ville',
     };
     for (const [id, label] of Object.entries(labels)) {
@@ -1789,6 +1799,8 @@ async function boot() {
     .getElementById('btn-pause-flat')
     ?.addEventListener('click', () => (FLAT_MAP ? startMode('free', 'circuit') : openMap('sp95')));
   document.getElementById('btn-pause-col')?.addEventListener('click', goCol);
+  document.getElementById('btn-pause-suzuka')?.addEventListener('click', () => openMap('suzuka'));
+  document.getElementById('btn-pause-city')?.addEventListener('click', () => openMap('ville'));
   document.getElementById('btn-rally')?.addEventListener('click', () => startMode('free', 'rally'));
   document.getElementById('btn-pause-rally')?.addEventListener('click', () => startMode('free', 'rally'));
   document.getElementById('btn-sommet')?.addEventListener('click', () => startMode('free', 'summit'));

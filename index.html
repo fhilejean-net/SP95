@@ -30,20 +30,28 @@
         <h1 class="logo">SP95</h1>
         <p class="tagline">16 voitures &amp; un supermotard — showroom, atelier, chrono</p>
         <div class="menu-actions">
-          <button id="btn-free" class="primary">Conduite libre</button>
-          <button id="btn-race" class="village-only">Course · 2 tours</button>
-          <button id="btn-circuit">Circuit · Suzuka</button>
-          <button id="btn-flat">Circuit · SP95 (plat)</button>
-          <button id="btn-colmap" class="village-only">Col de nuit</button>
-          <button id="btn-rally" class="village-only">Rallye · piste en terre</button>
-          <button id="btn-sommet" class="village-only">Sommet · aire de drift</button>
-          <button id="btn-moto">Moto · supermotard stunt</button>
-          <button id="btn-cars">Voitures · showroom</button>
-          <button id="btn-garage">Atelier · préparation</button>
-          <button id="btn-sound">Son · mixage</button>
+          <section class="menu-group">
+            <h3>Rouler</h3>
+            <button id="btn-free" class="primary">Conduite libre</button>
+            <button id="btn-race" class="village-only">Course · 2 tours</button>
+            <button id="btn-circuit">Circuit · Suzuka</button>
+            <button id="btn-flat">Circuit · SP95 (plat)</button>
+            <button id="btn-colmap" class="village-only">Col de nuit</button>
+            <button id="btn-rally" class="village-only">Rallye · piste en terre</button>
+            <button id="btn-sommet" class="village-only">Sommet · aire de drift</button>
+          </section>
+          <section class="menu-group">
+            <h3>Garage &amp; réglages</h3>
+            <button id="btn-moto">Moto · supermotard</button>
+            <button id="btn-cars">Voitures · showroom</button>
+            <button id="btn-garage">Atelier · préparation</button>
+            <button id="btn-sound">Son · mixage</button>
+          </section>
         </div>
         <p class="menu-best" id="menu-best"></p>
-        <div class="controls-grid">
+        <details class="menu-help">
+          <summary>Commandes clavier</summary>
+          <div class="controls-grid">
           <span>ZQSD / Flèches</span><span>Conduire</span>
           <span>Espace</span><span>Frein à main · embrayage (moto)</span>
           <span>Souris (glisser)</span><span>Caméra autour du véhicule</span>
@@ -55,7 +63,8 @@
           <span>X</span><span>Rembobiner (maintenir)</span>
           <span>M</span><span>Couper le son</span>
           <span>Échap</span><span>Pause</span>
-        </div>
+          </div>
+        </details>
         <p class="menu-footnote">Manette et commandes tactiles prises en charge.</p>
         <p class="menu-footnote">Elevation and aerial imagery © swisstopo. Road and map data © OpenStreetMap contributors (ODbL).</p>
       </div>
@@ -186,9 +195,11 @@
             <button id="btn-pause-free" class="pause-item">Conduite libre</button>
             <button id="btn-pause-race" class="pause-item village-only">Course · 2 tours</button>
             <button id="btn-pause-flat" class="pause-item">Circuit · SP95 (plat)</button>
-            <button id="btn-pause-col" class="pause-item">Col de nuit</button>
+            <button id="btn-pause-suzuka" class="pause-item village-only">Circuit · Suzuka</button>
+            <button id="btn-pause-col" class="pause-item village-only">Col de nuit</button>
             <button id="btn-pause-rally" class="pause-item village-only">Rallye · terre</button>
             <button id="btn-pause-sommet" class="pause-item village-only">Sommet · drift</button>
+            <button id="btn-pause-city" class="pause-item">Retour en ville</button>
           </section>
         </div>
         <div class="pause-foot">
@@ -230,13 +241,15 @@
             <h2 class="logo small">Voitures</h2>
           </div>
           <p class="showroom-sub">
-            Une carte = une voiture · <b>flèches</b> pour parcourir · <b>Entrée</b> pour conduire
+            Une carte = une voiture ·
+            <span class="keys-hint"><b>flèches</b> pour parcourir · <b>Entrée</b> pour conduire</span>
+            <span class="touch-hint">touchez une carte pour l'essayer</span>
           </p>
         </div>
         <div class="showroom-body">
           <div class="showroom-detail showroom-sheet" id="showroom-detail"></div>
           <div class="showroom-list-col">
-            <div class="showroom-list-head"><span>Le parc</span><span>16 modèles</span></div>
+            <div class="showroom-list-head"><span>Le parc</span><span id="showroom-count">16 modèles</span></div>
             <div class="showroom-list" id="showroom-list"></div>
           </div>
         </div>
