@@ -357,7 +357,10 @@ export class Hud {
     // On a bike the handbrake button has nothing to pull: it becomes the
     // one-touch wheelie, right where the thumb already is.
     const touch = document.getElementById('touch-handbrake');
-    if (touch) touch.textContent = bike ? 'WHEELIE' : 'DRIFT';
+    if (touch) {
+      touch.textContent = bike ? 'WHEELIE' : 'DRIFT';
+      touch.setAttribute('aria-label', bike ? 'Faire un wheelie' : 'Frein à main');
+    }
   }
 
   updateStunt(

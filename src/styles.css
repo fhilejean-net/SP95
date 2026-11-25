@@ -916,10 +916,34 @@ body.touch #touch-cars-btn {
 body.touch #touch-menu-btn { left: 12px; min-width: 62px; }
 body.touch #touch-cars-btn { left: 82px; min-width: 76px; border-color: rgba(242, 163, 60, 0.55); color: #ffd08a; }
 
-/* Sans ça, la rangée de modes passait sous les boutons tactiles MENU/VOITURE
-   (77 × 27 px de recouvrement à 390 px) : elle descend d'une hauteur de bouton. */
+/* Le haut du HUD commence sous MENU/VOITURE. Le panneau de course prend sa
+   propre ligne en portrait : il ne recouvre plus Route/Drift/Piste. */
+body.touch #hud-top {
+  top: max(62px, calc(env(safe-area-inset-top) + 50px));
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  max-width: none;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 body.touch #drive-modes {
-  margin-top: 52px;
+  margin-top: 0;
+}
+
+body.touch #race-panel {
+  position: static;
+  top: auto;
+  left: auto;
+  flex: 0 0 auto;
+  width: min(168px, 100%);
+  max-width: 168px;
+}
+
+body.touch #sector-panel,
+body.touch #drift-lap-panel {
+  top: calc(max(62px, env(safe-area-inset-top) + 50px) + 102px);
 }
 
 body.touch #hint {
@@ -931,67 +955,122 @@ body.touch #stunt-panel {
   bottom: 190px;
 }
 
-#touch-steer {
-  position: absolute;
-  left: 22px;
-  bottom: 22px;
-  width: 150px;
-  height: 150px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  pointer-events: auto;
-  touch-action: none;
+/* Le compteur quitte le centre : au téléphone il se place au-dessus du pouce
+   gauche, pour ne plus masquer la voiture ni les pédales. */
+body.touch #speedo {
+  left: max(12px, env(safe-area-inset-left));
+  right: auto;
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + clamp(56px, 16vw, 70px) + 12px);
+  width: clamp(122px, 36vw, 154px);
+  min-width: 0;
+  padding: 8px 10px 9px;
+  border-radius: 14px;
+  text-align: left;
+  transform: none;
 }
 
-#touch-steer-knob {
+body.touch .speed-row {
+  justify-content: flex-start;
+}
+
+body.touch #speed-value {
+  font-size: clamp(36px, 10vw, 48px);
+}
+
+body.touch #speed-unit {
+  font-size: 9px;
+}
+
+body.touch #rpm-readout {
+  justify-content: flex-start;
+}
+
+body.touch #rpm-max {
+  display: none;
+}
+
+body.touch #tcs-chip,
+body.touch #abs-chip {
+  margin-top: 6px;
+}
+
+/* Direction au pouce : deux appuis francs, pas un angle à viser. */
+#touch-steer {
   position: absolute;
-  top: 50%;
-  left: calc(50% - 33px);
-  width: 66px;
-  height: 66px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  transform: translate(0, -50%);
+  left: max(12px, env(safe-area-inset-left));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: clamp(8px, 2vw, 12px);
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 2;
+}
+
+.touch-steer-btn {
+  width: clamp(56px, 16vw, 70px);
+  height: clamp(56px, 16vw, 70px);
+  padding: 0;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(10, 13, 17, 0.78);
+  color: #fff;
+  font-size: clamp(22px, 6vw, 30px);
+  line-height: 1;
+  letter-spacing: 0;
+  touch-action: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transform: none;
+}
+
+.touch-steer-btn.pressed {
+  background: rgba(242, 163, 60, 0.42);
+  border-color: rgba(242, 163, 60, 0.8);
 }
 
 #touch-pedals {
   position: absolute;
-  right: 22px;
-  bottom: 100px;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 58px);
   display: flex;
-  gap: 12px;
+  gap: 8px;
   pointer-events: auto;
 }
 
 .touch-btn {
-  width: 84px;
-  height: 84px;
+  width: clamp(56px, 16vw, 68px);
+  height: clamp(56px, 16vw, 68px);
+  padding: 0;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(10, 13, 17, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.18);
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  font-size: 10px;
+  letter-spacing: 0.1em;
   font-weight: 700;
   color: #fff;
   touch-action: none;
   user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transform: none;
 }
 
 .touch-btn.pressed {
-  background: rgba(242, 163, 60, 0.35);
-  border-color: rgba(242, 163, 60, 0.7);
+  background: rgba(242, 163, 60, 0.42);
+  border-color: rgba(242, 163, 60, 0.8);
 }
 
 #touch-handbrake {
   position: absolute;
-  right: 22px;
-  bottom: 22px;
-  width: 110px;
-  height: 56px;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  width: clamp(100px, 28vw, 120px);
+  height: 48px;
+  padding: 0;
   border-radius: 14px;
   font-size: 10px;
   pointer-events: auto;
@@ -1084,15 +1163,21 @@ body.touch #stunt-panel {
     max-width: calc(100vw - 174px);
   }
 
+  /* Une ligne par élément : le panneau de course reste à gauche, sous les
+     modes, au lieu de glisser sous la mini-carte à droite. */
+  body.touch #hud-top {
+    display: grid;
+    grid-template-columns: auto;
+    justify-content: start;
+    max-width: none;
+  }
   #drive-modes { max-width: 100%; }
   #drive-modes button { padding: 7px 6px; font-size: 8px; letter-spacing: 0.035em; }
-  #race-panel {
-    position: absolute;
-    top: 52px;
-    left: 0;
+  body.touch #race-panel {
     flex: none;
-    width: min(168px, calc(100vw - 96px));
-    max-width: 168px;
+    width: 168px;
+    max-width: 100%;
+    margin-top: 0;
   }
   #sector-panel, #drift-lap-panel {
     top: calc(64px + clamp(72px, 20vw, 92px) + 8px + env(safe-area-inset-top));
@@ -1122,31 +1207,10 @@ body.touch #stunt-panel {
   #speed-unit { font-size: 8px; letter-spacing: 0.1em; }
   #tcs-chip, #abs-chip { padding: 3px 6px; font-size: 8px; }
   #rpm-max { display: none; }
-  #touch-steer {
-    left: max(12px, env(safe-area-inset-left));
-    bottom: max(12px, env(safe-area-inset-bottom));
-    width: min(126px, 31vw);
-    height: min(126px, 31vw);
-  }
-  #touch-steer-knob {
-    left: calc(50% - 25px);
-    width: 50px;
-    height: 50px;
-  }
-  #touch-pedals {
-    right: 10px;
-    bottom: calc(142px + env(safe-area-inset-bottom));
-    gap: 8px;
-  }
-  .touch-btn { width: 62px; height: 62px; font-size: 9px; }
-  #touch-handbrake {
-    right: 10px;
-    bottom: max(12px, env(safe-area-inset-bottom));
-    width: 84px;
-    height: 44px;
-  }
-  body.touch #drift-panel,
-  body.touch #stunt-panel { bottom: calc(160px + env(safe-area-inset-bottom)); }
+  body.touch #drive-modes button { padding: 6px 5px; font-size: 7.5px; }
+  body.touch #race-panel { padding: 7px 9px; }
+  body.touch .race-row { gap: 6px; font-size: 10px; }
+  body.touch .race-row .label { font-size: 8px; }
 }
 
 @media (max-height: 620px) {
@@ -1157,12 +1221,9 @@ body.touch #stunt-panel {
 @media (max-height: 500px) and (max-width: 860px) {
   #minimap { width: 74px; height: 74px; }
   #sector-panel, #drift-lap-panel { top: calc(58px + 82px + env(safe-area-inset-top)); }
-  #touch-steer { width: 96px; height: 96px; }
-  #touch-pedals { bottom: calc(106px + env(safe-area-inset-bottom)); }
-  .touch-btn { width: 54px; height: 54px; }
-  #touch-handbrake { height: 40px; }
-  #speedo { width: 102px; min-width: 102px; padding: 5px 7px; }
-  #speed-value { font-size: 34px; }
+  body.touch #speedo { padding: 6px 8px; }
+  body.touch #speed-value { font-size: 34px; }
+  body.touch #touch-handbrake { height: 44px; }
 }
 
 /* ---------- Sound panel ---------- */
@@ -1758,6 +1819,24 @@ body.touch .touch-hint { display: inline; }
 
 /* Short viewports: eight menu entries plus the control legend used to push the
    legend below the fold at 800 px. Tighten the card rather than hide anything. */
+/* En paysage court, la carte de pause dépassait de 73 px à 844×390 : le
+   dernier bouton demandait un défilement invisible. On compacte sans masquer
+   une seule option. */
+@media (max-height: 520px) and (min-width: 600px) {
+  #pause .pause-card {
+    padding: 12px 18px;
+    max-height: calc(100vh - 12px);
+  }
+
+  .pause-card > .eyebrow { display: none; }
+  .pause-card .logo.small { font-size: 28px; margin-bottom: 8px; }
+  .pause-resume { padding: 10px 12px; }
+  .pause-grid { gap: 7px 14px; margin: 8px 0; }
+  .pause-col { gap: 4px; }
+  .pause-item { padding: 7px 9px; font-size: 9px; }
+  .pause-foot { padding-top: 7px; }
+}
+
 @media (max-height: 880px) and (min-width: 640px) {
   .menu-card {
     padding: 22px 30px;

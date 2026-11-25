@@ -42,6 +42,8 @@ export class InputManager {
 
   readonly usingTouch: boolean;
   private touchSteer = 0;
+  private touchLeft = false;
+  private touchRight = false;
   private touchThrottle = false;
   private touchBrake = false;
   private touchHandbrake = false;
@@ -113,32 +115,11 @@ export class InputManager {
   }
 
   private setupTouch(): void {
-    const pad = document.getElementById('touch-steer');
-    const knob = document.getElementById('touch-steer-knob');
-    if (pad && knob) {
-      const update = (e: PointerEvent) => {
-        const rect = pad.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const dx = e.clientX - cx;
-        const limit = rect.width * 0.38;
-        const norm = Math.max(-1, Math.min(1, dx / limit));
-        this.touchSteer = norm;
-        knob.style.transform = `translate(${norm * limit}px, -50%)`;
-      };
-      pad.addEventListener('pointerdown', (e) => {
-        pad.setPointerCapture(e.pointerId);
-        update(e);
-      });
-      pad.addEventListener('pointermove', (e) => {
-        if (pad.hasPointerCapture(e.pointerId)) update(e);
-      });
-      const reset = () => {
-        this.touchSteer = 0;
-        knob.style.transform = 'translate(0px, -50%)';
-      };
-      pad.addEventListener('pointerup', reset);
-      pad.addEventListener('pointercancel', reset);
-    }
+    // Deux boutons plutôt qu'un stick : au pouce, on cherche une direction
+    // franche, pas un angle analogique qu'il faut viser.
+    const updateSteer = () => {
+      this.touchSteer = (this.touchRight ? 1 : 0) - (this.touchLeft ? 1 : 0);
+    };
 
     const bindHold = (id: string, on: () => void, off: () => void) => {
       const el = document.getElementById(id);
@@ -147,10 +128,12 @@ export class InputManager {
         e.preventDefault();
         el.setPointerCapture(e.pointerId);
         el.classList.add('pressed');
+        el.setAttribute('aria-pressed', 'true');
         on();
       });
       const release = () => {
         el.classList.remove('pressed');
+        el.setAttribute('aria-pressed', 'false');
         off();
       };
       el.addEventListener('pointerup', release);
@@ -158,6 +141,28 @@ export class InputManager {
       el.addEventListener('pointerleave', release);
     };
 
+    bindHold(
+      'touch-left',
+      () => {
+        this.touchLeft = true;
+        updateSteer();
+      },
+      () => {
+        this.touchLeft = false;
+        updateSteer();
+      },
+    );
+    bindHold(
+      'touch-right',
+      () => {
+        this.touchRight = true;
+        updateSteer();
+      },
+      () => {
+        this.touchRight = false;
+        updateSteer();
+      },
+    );
     bindHold(
       'touch-throttle',
       () => {
@@ -273,6 +278,16 @@ export class InputManager {
   clear(): void {
     this.keys.clear();
     this.pendingActions.clear();
+    this.touchLeft = false;
+    this.touchRight = false;
+    this.touchSteer = 0;
+    this.touchThrottle = false;
+    this.touchBrake = false;
+    this.touchHandbrake = false;
+    for (const element of document.querySelectorAll('.touch-steer-btn.pressed, .touch-btn.pressed')) {
+      element.classList.remove('pressed');
+      element.setAttribute('aria-pressed', 'false');
+    }
     this.throttleSmooth = 0;
     this.brakeSmooth = 0;
     this.steerSmooth = 0;

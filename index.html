@@ -163,12 +163,15 @@
       <div id="touch-controls">
         <button id="touch-menu-btn" type="button" aria-label="Ouvrir le menu pause">MENU</button>
         <button id="touch-cars-btn" type="button" aria-label="Choisir une voiture">VOITURE</button>
-        <div id="touch-steer"><div id="touch-steer-knob"></div></div>
-        <div id="touch-pedals">
-          <div id="touch-brake" class="touch-btn">FREIN</div>
-          <div id="touch-throttle" class="touch-btn">GAZ</div>
+        <div id="touch-steer" role="group" aria-label="Direction">
+          <button id="touch-left" class="touch-steer-btn" type="button" aria-label="Tourner à gauche">◀</button>
+          <button id="touch-right" class="touch-steer-btn" type="button" aria-label="Tourner à droite">▶</button>
         </div>
-        <div id="touch-handbrake" class="touch-btn">DRIFT</div>
+        <div id="touch-pedals">
+          <button id="touch-brake" class="touch-btn" type="button" aria-label="Freiner ou reculer">FREIN</button>
+          <button id="touch-throttle" class="touch-btn" type="button" aria-label="Accélérer">GAZ</button>
+        </div>
+        <button id="touch-handbrake" class="touch-btn" type="button" aria-label="Frein à main">DRIFT</button>
       </div>
     </div>
 
