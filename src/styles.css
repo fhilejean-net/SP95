@@ -302,9 +302,23 @@ button.primary {
   box-shadow: 0 10px 30px rgba(242, 163, 60, 0.25);
 }
 
+.menu-utility {
+  display: flex;
+  justify-content: center;
+  margin: 14px 0 0;
+}
+
+.menu-utility button {
+  padding: 9px 15px;
+  border-color: rgba(255, 255, 255, 0.2);
+  background: transparent;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
 .menu-best {
   min-height: 20px;
-  margin: 22px 0 4px;
+  margin: 16px 0 4px;
   font-family: var(--mono);
   font-size: 13px;
   color: var(--accent);
@@ -889,12 +903,14 @@ body.touch #touch-controls {
   display: block;
 }
 
-#touch-menu-btn {
+#touch-menu-btn,
+#touch-fullscreen-btn {
   display: none;
 }
 
 body.touch #touch-menu-btn,
-body.touch #touch-cars-btn {
+body.touch #touch-cars-btn,
+body.touch #touch-fullscreen-btn {
   position: absolute;
   display: grid;
   place-items: center;
@@ -915,6 +931,7 @@ body.touch #touch-cars-btn {
 
 body.touch #touch-menu-btn { left: 12px; min-width: 62px; }
 body.touch #touch-cars-btn { left: 82px; min-width: 76px; border-color: rgba(242, 163, 60, 0.55); color: #ffd08a; }
+body.touch #touch-fullscreen-btn { left: 166px; min-width: 46px; padding: 0 7px; font-size: 9px; letter-spacing: 0.04em; }
 
 /* Le haut du HUD commence sous MENU/VOITURE. Le panneau de course prend sa
    propre ligne en portrait : il ne recouvre plus Route/Drift/Piste. */
@@ -1216,6 +1233,15 @@ body.touch #abs-chip {
 @media (max-height: 620px) {
   #drift-panel { bottom: 104px; }
   #minimap { width: 120px; height: 120px; }
+}
+
+@media (max-height: 380px) {
+  /* Avec une barre d'URL qui réduit la hauteur, les secteurs à droite
+     passaient sous les pédales. Ils prennent la place libre à gauche. */
+  #sector-panel, #drift-lap-panel {
+    left: min(180px, 52vw);
+    right: auto;
+  }
 }
 
 @media (max-height: 500px) and (max-width: 860px) {
@@ -1940,6 +1966,15 @@ body.touch .touch-hint { display: inline; }
   border-top: 1px solid var(--line);
 }
 .pause-foot .pause-item { flex: 0 0 auto; }
+.pause-icon {
+  width: 48px;
+  min-width: 48px;
+  flex: 0 0 48px;
+  padding: 0;
+  justify-content: center;
+  font-size: 8px;
+  letter-spacing: 0.02em;
+}
 .pause-hint {
   font-family: var(--mono);
   font-size: 10px;
@@ -1978,4 +2013,55 @@ body.touch .touch-hint { display: inline; }
   .menu-actions { grid-template-columns: 1fr; gap: 14px; }
   .menu-group { gap: 6px; }
   .menu-help { margin-top: 12px; }
+}
+
+/* Paysage court (téléphone couché, barre d'URL comprise) : les options
+   principales doivent tenir sans défilement caché. */
+@media (max-height: 420px) {
+  #menu.overlay { padding: 8px; }
+  #menu .menu-card {
+    width: min(760px, 100%);
+    max-height: calc(100vh - 16px);
+    padding: 10px 20px;
+  }
+  #menu .menu-card > .eyebrow { display: none; }
+  #menu .logo { font-size: 40px; }
+  #menu .tagline,
+  #menu .menu-help,
+  #menu .menu-footnote { display: none; }
+  #menu .menu-actions { grid-template-columns: 1fr 1fr; gap: 4px 14px; }
+  #menu .menu-group { gap: 3px; }
+  #menu .menu-group h3 { margin: 0 0 1px; font-size: 9px; }
+  #menu .menu-actions button { padding: 7px 10px; font-size: 11px; }
+  #menu .menu-best { margin: 6px 0 0; min-height: 0; font-size: 11px; }
+  #menu .menu-utility { margin: 7px 0 0; }
+  #menu .menu-utility button { padding: 7px 12px; font-size: 10px; }
+}
+
+/* Le menu pause compact suit la même contrainte de hauteur. */
+@media (max-height: 420px) {
+  #pause .pause-card { padding: 10px 16px; }
+  .pause-card .logo.small { font-size: 24px; margin-bottom: 6px; }
+  .pause-grid { gap: 6px 12px; margin: 6px 0; }
+  .pause-item { padding: 6px 8px; font-size: 8.5px; }
+  .pause-foot { padding-top: 6px; }
+}
+
+/* Téléphone couché très court : trois colonnes plutôt que deux, pour que le
+   dernier bouton ne soit pas repoussé sous l'écran. */
+@media (max-height: 420px) and (max-width: 600px) {
+  #pause .pause-card { padding: 6px 10px; }
+  #pause .pause-card > .eyebrow { display: none; }
+  .pause-card .logo.small { font-size: 22px; margin-bottom: 4px; }
+  .pause-resume { padding: 8px 10px; }
+  .pause-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px 8px;
+    margin: 5px 0;
+  }
+  .pause-col:last-child { grid-column: auto; }
+  .pause-col h3 { font-size: 8px; }
+  .pause-item { padding: 5px 6px; font-size: 8px; letter-spacing: 0; }
+  .pause-foot { padding-top: 4px; }
+  .pause-hint { display: none; }
 }

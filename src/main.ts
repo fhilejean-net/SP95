@@ -1844,6 +1844,75 @@ async function boot() {
   document.getElementById('touch-cars-btn')?.addEventListener('click', () => {
     if (mode !== 'menu') openShowroom();
   });
+
+  // Le plein écran retire la barre du navigateur, qui peut manger une grande
+  // partie de la hauteur sur téléphone. On garde aussi les préfixes WebKit.
+  type FullscreenDocument = Document & {
+    webkitFullscreenElement?: Element | null;
+    webkitExitFullscreen?: () => Promise<void> | void;
+  };
+  type FullscreenRoot = HTMLElement & {
+    webkitRequestFullscreen?: () => Promise<void> | void;
+  };
+  const fullscreenElement = (): Element | null => {
+    const doc = document as FullscreenDocument;
+    return doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+  };
+  const setFullscreenButton = (id: string, active: boolean, iconOnly: boolean): void => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    const label = active ? 'Quitter le plein écran' : 'Passer en plein écran';
+    button.textContent = iconOnly ? (active ? 'SORTIR' : 'PLEIN') : active ? 'Quitter le plein écran' : 'Plein écran';
+    button.setAttribute('aria-label', label);
+    button.title = label;
+  };
+  const showFullscreenFailure = (): void => {
+    const text = 'Plein écran indisponible sur ce navigateur';
+    hud.flash(text, { duration: 2200 });
+    const best = document.getElementById('menu-best');
+    if (best && !menu.classList.contains('hidden')) {
+      best.textContent = text;
+      window.setTimeout(refreshMenuBest, 2600);
+    }
+  };
+  const syncFullscreenUi = (): void => {
+    const active = Boolean(fullscreenElement());
+    setFullscreenButton('btn-fullscreen', active, false);
+    setFullscreenButton('btn-pause-fullscreen', active, true);
+    setFullscreenButton('touch-fullscreen-btn', active, true);
+  };
+  async function toggleFullscreen(): Promise<void> {
+    const doc = document as FullscreenDocument;
+    try {
+      if (fullscreenElement()) {
+        if (doc.exitFullscreen) await doc.exitFullscreen();
+        else await doc.webkitExitFullscreen?.();
+        syncFullscreenUi();
+        return;
+      }
+      const root = document.documentElement as FullscreenRoot;
+      if (root.requestFullscreen) await root.requestFullscreen();
+      else if (root.webkitRequestFullscreen) await root.webkitRequestFullscreen();
+      else {
+        showFullscreenFailure();
+        return;
+      }
+      syncFullscreenUi();
+    } catch {
+      // iOS Safari, iframe sans autorisation, ou refus de l'utilisateur.
+      showFullscreenFailure();
+    }
+  }
+  for (const id of ['btn-fullscreen', 'btn-pause-fullscreen', 'touch-fullscreen-btn']) {
+    document.getElementById(id)?.addEventListener('click', (event) => {
+      (event.currentTarget as HTMLElement).blur();
+      void toggleFullscreen();
+    });
+  }
+  document.addEventListener('fullscreenchange', syncFullscreenUi);
+  document.addEventListener('webkitfullscreenchange', syncFullscreenUi);
+  syncFullscreenUi();
+
   document.getElementById('btn-pause-menu')?.addEventListener('click', () => {
     mode = 'menu';
     paused = false;
