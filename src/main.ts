@@ -2014,6 +2014,42 @@ async function boot() {
     updateMenuBest();
   });
 
+  /**
+   * Échap est le raccourci universel du menu. Il ferme d'abord le panneau
+   * ouvert, sinon il ouvre la pause ; sur l'accueil, le menu est déjà là.
+   * Le listener vit sur la page et non dans la boucle : il marche donc même
+   * quand aucun rendu n'est en cours.
+   */
+  function escapeToMenu(): void {
+    if (audioPanel.isOpen) {
+      closeSound();
+      return;
+    }
+    if (graphicsPanel?.isOpen) {
+      closeGraphics();
+      return;
+    }
+    if (showroom.isOpen) {
+      showroom.close();
+      return;
+    }
+    if (garage.isOpen) {
+      garage.close();
+      return;
+    }
+    if (mode === 'menu') {
+      menu.classList.remove('hidden');
+      return;
+    }
+    togglePause();
+  }
+
+  window.addEventListener('keydown', (event) => {
+    if (event.code !== 'Escape' || event.repeat) return;
+    event.preventDefault();
+    escapeToMenu();
+  });
+
   const unlockAudio = () => audio.init();
   window.addEventListener('pointerdown', unlockAudio, { once: true });
   window.addEventListener('keydown', unlockAudio, { once: true });
@@ -3385,18 +3421,26 @@ function wireMenuOnly(): void {
   // a pas de scène à retoucher, mais le profil s'appliquera dès la prochaine
   // carte. Sans ce panneau, le bouton Graphismes de cet écran serait mort.
   let graphicsPanel: GraphicsPanel;
+  const closeGraphics = (): void => {
+    graphicsPanel.close();
+    menu.classList.remove('hidden');
+  };
   graphicsPanel = new GraphicsPanel(
     loadShaderPreset(),
     false,
     (id) => saveShaderPreset(id),
-    () => {
-      graphicsPanel.close();
-      menu.classList.remove('hidden');
-    },
+    closeGraphics,
   );
   document.getElementById('btn-graphics')?.addEventListener('click', () => {
     menu.classList.add('hidden');
     graphicsPanel.open(loadShaderPreset());
+  });
+  // L'accueil sans carte n'a pas de boucle de jeu : Échap doit pourtant
+  // refermer le panneau et rendre le menu, comme partout ailleurs.
+  window.addEventListener('keydown', (event) => {
+    if (event.code !== 'Escape' || event.repeat || !graphicsPanel.isOpen) return;
+    event.preventDefault();
+    closeGraphics();
   });
 
   // Chaque entrée porte sa carte : sans `map`, la navigation reviendrait sur

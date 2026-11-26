@@ -57,7 +57,9 @@ export class InputManager {
       }
       if (!e.repeat) {
         if (e.code === 'KeyR') this.pendingActions.add('reset');
-        if (e.code === 'Escape' || e.code === 'KeyP') this.pendingActions.add('pause');
+        // Échap est traité par la page (main.ts) : il doit aussi fonctionner
+        // sur l'accueil sans carte, où cette boucle de jeu n'existe pas.
+        if (e.code === 'KeyP') this.pendingActions.add('pause');
         if (e.code === 'KeyM') this.pendingActions.add('mute');
         if (e.code === 'KeyH') this.pendingActions.add('help');
         if (e.code === 'KeyT') this.pendingActions.add('tcs');

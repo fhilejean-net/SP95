@@ -352,8 +352,8 @@ export class Hud {
     // le bandeau disparaît avec les autres commandes de caisse.
     document.getElementById('drive-modes')?.classList.toggle('hidden', bike);
     this.hint.textContent = bike
-      ? 'Espace wheelie · S frein et marche arrière · C caméra · ZQSD conduire · Échap pause'
-      : 'ZQSD conduire · Espace frein à main · T antipatinage · Souris caméra · Échap pause';
+      ? 'Espace wheelie · S frein et marche arrière · C caméra · ZQSD conduire · Échap menu'
+      : 'ZQSD conduire · Espace frein à main · T antipatinage · Souris caméra · Échap menu';
     // On a bike the handbrake button has nothing to pull: it becomes the
     // one-touch wheelie, right where the thumb already is.
     const touch = document.getElementById('touch-handbrake');
