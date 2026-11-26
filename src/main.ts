@@ -1943,6 +1943,11 @@ async function boot() {
     const doc = document as FullscreenDocument;
     return doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
   };
+  /** Évite de refermer le menu que le même appui sur Échap vient d'ouvrir. */
+  let lastMenuActionAt = 0;
+  /** Une sortie demandée par le bouton ne doit pas ouvrir la pause. */
+  let leaveFullscreenFromButton = false;
+  let leaveFullscreenTimer = 0;
   const setFullscreenButton = (id: string, active: boolean, iconOnly: boolean): void => {
     const button = document.getElementById(id);
     if (!button) return;
@@ -1970,6 +1975,11 @@ async function boot() {
     const doc = document as FullscreenDocument;
     try {
       if (fullscreenElement()) {
+        leaveFullscreenFromButton = true;
+        window.clearTimeout(leaveFullscreenTimer);
+        leaveFullscreenTimer = window.setTimeout(() => {
+          leaveFullscreenFromButton = false;
+        }, 1000);
         if (doc.exitFullscreen) await doc.exitFullscreen();
         else await doc.webkitExitFullscreen?.();
         syncFullscreenUi();
@@ -1994,8 +2004,27 @@ async function boot() {
       void toggleFullscreen();
     });
   }
-  document.addEventListener('fullscreenchange', syncFullscreenUi);
-  document.addEventListener('webkitfullscreenchange', syncFullscreenUi);
+  /**
+   * Le navigateur intercepte souvent le premier Échap pour quitter le plein
+   * écran : ce changement est alors le seul signal qui nous reste. On ouvre
+   * la pause ici, sauf si la sortie vient du bouton ou si Échap a déjà été
+   * traité. Une sortie pendant une pause ne la referme pas.
+   */
+  const handleFullscreenChange = (): void => {
+    const active = Boolean(fullscreenElement());
+    syncFullscreenUi();
+    if (active) return;
+    const fromButton = leaveFullscreenFromButton;
+    leaveFullscreenFromButton = false;
+    window.clearTimeout(leaveFullscreenTimer);
+    if (fromButton || mode === 'menu') return;
+    const now = performance.now();
+    if (now - lastMenuActionAt < 300) return;
+    lastMenuActionAt = now;
+    escapeToMenu(true);
+  };
+  document.addEventListener('fullscreenchange', handleFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
   syncFullscreenUi();
 
   document.getElementById('btn-pause-menu')?.addEventListener('click', () => {
@@ -2020,7 +2049,7 @@ async function boot() {
    * Le listener vit sur la page et non dans la boucle : il marche donc même
    * quand aucun rendu n'est en cours.
    */
-  function escapeToMenu(): void {
+  function escapeToMenu(openOnly = false): void {
     if (audioPanel.isOpen) {
       closeSound();
       return;
@@ -2041,13 +2070,26 @@ async function boot() {
       menu.classList.remove('hidden');
       return;
     }
+    // Après une sortie de plein écran, on ouvre le menu mais on ne referme
+    // jamais une pause déjà visible : le même appui ne doit pas la reprendre.
+    if (openOnly) {
+      if (!paused) togglePause();
+      return;
+    }
     togglePause();
   }
 
   window.addEventListener('keydown', (event) => {
     if (event.code !== 'Escape' || event.repeat) return;
     event.preventDefault();
-    escapeToMenu();
+    const now = performance.now();
+    if (now - lastMenuActionAt < 300) return;
+    lastMenuActionAt = now;
+    // En plein écran, le navigateur peut consommer Échap pour en sortir, ou
+    // nous le laisser. Dans les deux cas on ouvre seulement le menu : si la
+    // sortie de plein écran arrive ensuite, `fullscreenchange` ne le referme
+    // pas et une pause déjà visible reste en place.
+    escapeToMenu(fullscreenElement() !== null);
   });
 
   const unlockAudio = () => audio.init();
