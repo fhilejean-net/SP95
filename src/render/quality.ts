@@ -19,6 +19,8 @@ export class QualityGovernor {
     private readonly renderer: THREE.WebGLRenderer,
     initialRatio: number,
     private readonly sun?: THREE.DirectionalLight,
+    /** Prévient le post-traitement pour qu'il suive la même résolution. */
+    private readonly onRatioChange?: (ratio: number) => void,
   ) {
     this.ratio = initialRatio;
   }
@@ -65,5 +67,6 @@ export class QualityGovernor {
     this.ratio = ratio;
     this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
+    this.onRatioChange?.(ratio);
   }
 }

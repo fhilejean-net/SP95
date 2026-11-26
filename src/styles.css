@@ -1385,6 +1385,180 @@ body.touch #abs-chip {
   }
 }
 
+/* ---------- Graphics panel ---------- */
+.graphics-card {
+  width: min(700px, 100%);
+  text-align: left;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  padding: clamp(20px, 3vw, 30px) clamp(20px, 3.4vw, 34px);
+}
+
+.graphics-card .logo {
+  font-size: 44px;
+  text-align: left;
+}
+
+.graphics-card .eyebrow {
+  margin-bottom: 6px;
+}
+
+.graphics-intro {
+  margin: 8px 0 16px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.graphics-intro b {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.graphics-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.graphics-option {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.graphics-option:hover {
+  border-color: rgba(242, 163, 60, 0.4);
+  background: rgba(242, 163, 60, 0.06);
+}
+
+.graphics-option.selected {
+  border-color: rgba(242, 163, 60, 0.75);
+  background: rgba(242, 163, 60, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(242, 163, 60, 0.2);
+}
+
+.graphics-option:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.graphics-swatch {
+  display: block;
+  height: 64px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(135deg, #364450, #9fb8c9 55%, #efe1c5);
+}
+
+.graphics-swatch[data-preset="nature"] {
+  background: linear-gradient(135deg, #364450, #8fa9bd 55%, #efe1c5);
+}
+
+.graphics-swatch[data-preset="cinema"] {
+  background: linear-gradient(135deg, #4c382a, #d18b45 52%, #456476);
+}
+
+.graphics-swatch[data-preset="vif"] {
+  background: linear-gradient(135deg, #116d86, #f2a33c 52%, #c9352d);
+}
+
+.graphics-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.graphics-copy strong {
+  font-size: 14px;
+  line-height: 1.1;
+}
+
+.graphics-copy span {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.graphics-copy em {
+  margin-top: 3px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-style: normal;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.graphics-note {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 1.45;
+  letter-spacing: 0.03em;
+}
+
+.graphics-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.graphics-foot button {
+  padding: 10px 18px;
+}
+
+@media (max-width: 700px) {
+  .graphics-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 460px) {
+  .graphics-options {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-height: 420px) {
+  .graphics-card {
+    max-height: calc(100vh - 20px);
+    padding: 9px 14px;
+  }
+  .graphics-card .logo.small { font-size: 30px; margin-bottom: 2px; }
+  .graphics-card .eyebrow { margin-bottom: 2px; }
+  .graphics-intro { margin: 4px 0 8px; font-size: 10px; }
+  .graphics-options { gap: 6px; }
+  .graphics-option { gap: 6px; padding: 7px; }
+  .graphics-swatch { height: 30px; }
+  .graphics-copy span { font-size: 9px; }
+  .graphics-note { margin-top: 8px; font-size: 8.5px; }
+  .graphics-foot { margin-top: 8px; padding-top: 7px; }
+  .graphics-foot button { padding: 7px 14px; font-size: 11px; }
+}
+
+/* En paysage court, une seule rangée de trois profils tient sans défilement
+   même sur 568 px de large. La version portrait garde deux colonnes. */
+@media (max-height: 420px) and (min-width: 500px) {
+  .graphics-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 /* ---------- Garage ---------- */
 .garage-card {
   width: min(860px, 100%);

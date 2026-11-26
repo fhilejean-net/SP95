@@ -73,6 +73,14 @@ import { loadCarVisual } from './render/carModel.ts';
 import { buildPitProps } from './render/pitProps.ts';
 import { CARS, findCar, loadCarId, saveCarId, type CarDef, type CarId } from './game/cars.ts';
 import { QualityGovernor } from './render/quality.ts';
+import { GraphicsPanel } from './game/graphicsPanel.ts';
+import {
+  findShaderPreset,
+  loadShaderPreset,
+  saveShaderPreset,
+  type ShaderPresetId,
+} from './game/shaderSettings.ts';
+import { applyShaderGrade, createShaderGradePass, updateShaderGradePass } from './render/shaderGrade.ts';
 import { ChaseCamera, cameraModeLabel } from './core/camera.ts';
 
 /** Les vues du replay, dans l'ordre où `C` les fait défiler. */
@@ -588,14 +596,31 @@ async function boot() {
     return light;
   }) : [];
 
-  // Post-traitement léger, uniquement sur le col : aucune traînée à l'arrêt.
-  const composer = MOUNTAIN_MAP && !lowFx ? new EffectComposer(renderer) : null;
-  const motion = composer ? new AfterimagePass(0) : null;
-  if (composer && motion) {
-    composer.addPass(new RenderPass(scene, camera));
-    composer.addPass(motion);
-    composer.addPass(new OutputPass());
+  // Post-traitement : la rémanence reste réservée au col. Le shader d’étalonnage
+  // n’est ajouté que si le joueur le choisit, et le composer n’est alloué que
+  // dans ce cas : en « Nature » sur une carte normale, le rendu direct ne paie
+  // rien du tout.
+  const gradePass = createShaderGradePass();
+  let outputPass: OutputPass | null = null;
+  let composer: EffectComposer | null = null;
+  let motion: AfterimagePass | null = null;
+  function ensureComposer(): EffectComposer {
+    if (composer) return composer;
+    const next = new EffectComposer(renderer);
+    next.addPass(new RenderPass(scene, camera));
+    if (MOUNTAIN_MAP && !lowFx) {
+      motion = new AfterimagePass(0);
+      next.addPass(motion);
+    }
+    outputPass = new OutputPass();
+    next.addPass(outputPass);
+    // Le grade contient son propre tone mapping : quand il est actif, il
+    // remplace OutputPass et reste la seule passe plein écran ajoutée.
+    next.addPass(gradePass);
+    composer = next;
+    return next;
   }
+  if (MOUNTAIN_MAP && !lowFx) ensureComposer();
 
   // Un cerf peut traverser devant la voiture ; sa collision suit sa pose. Il
   // s'arrête, fixe la caisse, charge — puis part en ragdoll sous le choc.
@@ -972,6 +997,43 @@ async function boot() {
     () => closeSound(),
   );
   applyVehicleMix();
+
+  /** Profil de shader courant. `?fx=low` le laisse sur Nature : rien à payer. */
+  let shaderPresetId: ShaderPresetId = lowFx ? 'nature' : loadShaderPreset();
+  let graphicsPanel: GraphicsPanel | null = null;
+
+  /** Applique un profil sans reconstruire la scène, et le mémorise au clic. */
+  function selectShader(id: ShaderPresetId, announce = true): void {
+    if (lowFx && id !== 'nature') {
+      graphicsPanel?.sync(shaderPresetId);
+      hud.flash('Shaders indisponibles en mode performance', { duration: 2000 });
+      return;
+    }
+    const preset = findShaderPreset(id);
+    shaderPresetId = id;
+    if (announce) saveShaderPreset(id);
+    if (preset.grade) {
+      ensureComposer();
+      gradePass.enabled = true;
+      if (outputPass) outputPass.enabled = false;
+      applyShaderGrade(gradePass, preset.grade);
+    } else {
+      gradePass.enabled = false;
+      if (outputPass) outputPass.enabled = true;
+    }
+    graphicsPanel?.sync(id);
+    if (announce) hud.flash(`Rendu ${preset.label}`, { duration: 1200 });
+  }
+
+  graphicsPanel = new GraphicsPanel(
+    shaderPresetId,
+    lowFx,
+    (id) => selectShader(id),
+    () => closeGraphics(),
+  );
+  // Au chargement, on applique le profil mémorisé sans le réécrire : une URL
+  // `?shader=` reste une simple vue de contrôle, pas un nouveau réglage.
+  selectShader(shaderPresetId, false);
   /** Réglage « Drift » monté : le tour se compte en points, pas en secondes. */
   const DRIFT_PRESET = PRESETS.find((entry) => entry.label === 'Drift')!;
   let driftMode = false;
@@ -988,7 +1050,17 @@ async function boot() {
   })();
   const drift = new DriftScore();
   const stunt = new StuntScore();
-  const governor = lockedFx ? null : new QualityGovernor(renderer, renderer.getPixelRatio(), sky.sun);
+  const governor = lockedFx
+    ? null
+    : new QualityGovernor(
+        renderer,
+        renderer.getPixelRatio(),
+        sky.sun,
+        // Le composer a sa propre taille : sans ce relais il continuerait à
+        // rendre en pleine résolution après que le gouverneur a baissé celle du
+        // renderer.
+        (ratio) => composer?.setPixelRatio(ratio),
+      );
 
   let mode: GameMode = 'menu';
   let freeSpawn: FreeSpawn = 'city';
@@ -1721,6 +1793,17 @@ async function boot() {
     closePanel();
   }
 
+  function openGraphics(): void {
+    if (mode !== 'menu' && !paused) togglePause();
+    openPanel();
+    graphicsPanel?.open(shaderPresetId);
+  }
+
+  function closeGraphics(): void {
+    graphicsPanel?.close();
+    closePanel();
+  }
+
   /** Bascule de carte : un rechargement, la ville ne suit pas la piste. */
   function openMap(id: MapId, launch: Record<string, string> = {}): void {
     audio.init();
@@ -1789,6 +1872,8 @@ async function boot() {
   document.getElementById('btn-pause-cars')?.addEventListener('click', openShowroom);
   document.getElementById('btn-sound')?.addEventListener('click', openSound);
   document.getElementById('btn-pause-sound')?.addEventListener('click', openSound);
+  document.getElementById('btn-graphics')?.addEventListener('click', openGraphics);
+  document.getElementById('btn-pause-graphics')?.addEventListener('click', openGraphics);
   // La carte dédiée au col : un rechargement, comme les circuits.
   document.getElementById('btn-colmap')?.addEventListener('click', () => openMap('col', { start: 'free' }));
   // Le circuit a sa propre carte : le bouton y bascule, et en revient.
@@ -2713,9 +2798,15 @@ async function boot() {
 
   function render(): void {
     renderer.info.reset();
-    if (composer && motion) {
+    if (motion) {
       motion.damp = mode === 'menu' || paused ? 0 : Math.min(0.42, Math.max(0, (Math.abs(vehicle.telemetryState.speed) - 12) / 60));
-      composer.render();
+    }
+    const activeComposer = composer;
+    if (activeComposer && (motion || gradePass.enabled)) {
+      if (gradePass.enabled) {
+        updateShaderGradePass(gradePass, performance.now() / 1000, renderer.toneMappingExposure);
+      }
+      activeComposer.render();
     } else renderer.render(scene, camera);
   }
 
@@ -2753,6 +2844,7 @@ async function boot() {
 
     if (input.consume('pause')) {
       if (audioPanel.isOpen) closeSound();
+      else if (graphicsPanel?.isOpen) closeGraphics();
       else if (showroom.isOpen) showroom.close();
       else if (garage.isOpen) garage.close();
       else togglePause();
@@ -2916,8 +3008,14 @@ async function boot() {
   (window as unknown as { __sp95three: unknown }).__sp95three = {
     THREE,
     scene,
+    camera,
     renderer,
     sun: sky.sun,
+    // Accès de diagnostic : permet de chronométrer le rendu direct et le
+    // composer sur la même scène, sans ajouter de coût au jeu.
+    get composer() {
+      return composer;
+    },
   };
 
   /**
@@ -3113,6 +3211,13 @@ async function boot() {
     get soundPanelOpen() {
       return audioPanel.isOpen;
     },
+    get graphicsPanelOpen() {
+      return graphicsPanel?.isOpen ?? false;
+    },
+    get shader() {
+      return { preset: shaderPresetId, active: gradePass.enabled, lowFx };
+    },
+    setShader: (id: ShaderPresetId) => selectShader(id, false),
     get soundMix() {
       return audio.soundMix;
     },
@@ -3276,6 +3381,24 @@ declare global {
  * de sa session : c'est le chargement de cette URL qui construit le monde.
  */
 function wireMenuOnly(): void {
+  // Le choix de shader vit dans le stockage : sur l'accueil sans carte il n'y
+  // a pas de scène à retoucher, mais le profil s'appliquera dès la prochaine
+  // carte. Sans ce panneau, le bouton Graphismes de cet écran serait mort.
+  let graphicsPanel: GraphicsPanel;
+  graphicsPanel = new GraphicsPanel(
+    loadShaderPreset(),
+    false,
+    (id) => saveShaderPreset(id),
+    () => {
+      graphicsPanel.close();
+      menu.classList.remove('hidden');
+    },
+  );
+  document.getElementById('btn-graphics')?.addEventListener('click', () => {
+    menu.classList.add('hidden');
+    graphicsPanel.open(loadShaderPreset());
+  });
+
   // Chaque entrée porte sa carte : sans `map`, la navigation reviendrait sur
   // cet écran vide (MENU_ONLY teste justement l'absence de carte). `mapUrl`
   // efface la session précédente, pour qu'un `?start=` resté dans l'URL ne

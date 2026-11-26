@@ -46,6 +46,7 @@
             <button id="btn-cars">Voitures · showroom</button>
             <button id="btn-garage">Atelier · préparation</button>
             <button id="btn-sound">Son · mixage</button>
+            <button id="btn-graphics">Graphismes · shaders</button>
           </section>
         </div>
         <div class="menu-utility">
@@ -190,6 +191,7 @@
             <button id="btn-pause-tcs" class="pause-item">Antipatinage · Actif</button>
             <button id="btn-pause-abs" class="pause-item">ABS · Actif</button>
             <button id="btn-pause-sound" class="pause-item">Son<small>M</small></button>
+            <button id="btn-pause-graphics" class="pause-item">Graphismes<small>shaders</small></button>
           </section>
           <section class="pause-col">
             <h3>Véhicule</h3>
@@ -265,6 +267,22 @@
           <button id="btn-showroom-pick">Prendre au garage</button>
           <button id="btn-showroom-drive" class="primary">Conduire cette voiture</button>
           <button id="btn-showroom-close">Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="graphics" class="overlay hidden">
+      <div class="menu-card graphics-card">
+        <p class="eyebrow">Graphismes</p>
+        <h2 class="logo small">Shaders</h2>
+        <p class="graphics-intro">
+          Choisis l’ambiance de l’image. Les profils couleur tiennent en une seule passe plein écran ;
+          <b>Nature</b> la désactive complètement pour le budget maximal.
+        </p>
+        <div id="graphics-options" class="graphics-options"></div>
+        <p id="graphics-note" class="graphics-note"></p>
+        <div class="graphics-foot">
+          <button id="btn-graphics-close" class="primary">Terminer</button>
         </div>
       </div>
     </div>
